@@ -93,7 +93,6 @@ export default function PurchasesPage() {
         return;
       }
 
-      // 1) Load rows from marketplace_sales (your real table shape)
       const salesRes = await supabase
         .from("marketplace_sales")
         .select("id,catalog_item_id,sale_at,sale_price_cad,buyer_user_id,seller_user_id")
@@ -121,16 +120,11 @@ export default function PurchasesPage() {
         return;
       }
 
-      // 2) Load catalog items (title/name)
-      const itemsRes = await supabase
-        .from("catalog_items")
-        .select("id,title,name")
-        .in("id", catalogIds);
+      const itemsRes = await supabase.from("catalog_items").select("id,title,name").in("id", catalogIds);
 
       if (cancelled) return;
 
       if (itemsRes.error) {
-        // Don’t hard-fail the page if titles fail; still show rows
         setCatalogById({});
       } else {
         const map: Record<string, CatalogItem> = {};
@@ -138,7 +132,6 @@ export default function PurchasesPage() {
         setCatalogById(map);
       }
 
-      // 3) Load photos (pick primary / lowest sort)
       const photosRes = await supabase
         .from("catalog_item_photos")
         .select("catalog_item_id,image_url,is_primary,sort_order")
@@ -173,10 +166,16 @@ export default function PurchasesPage() {
   return (
     <>
       <Header />
-      <SecondaryNav title="Purchase History" subtitle="Everything you’ve bought on CollectorsHub" />
+      <SecondaryNav />
       <AuthModal open={showAuth} onClose={() => setShowAuth(false)} />
 
       <main className="mx-auto max-w-6xl px-4 pb-16 pt-6">
+        {/* Page header (since SecondaryNav doesn't take title/subtitle props) */}
+        <div className="mb-4">
+          <h1 className="text-xl font-semibold text-[#0F172A]">Purchase History</h1>
+          <p className="mt-1 text-sm text-[#64748B]">Everything you’ve bought on CollectorsHub</p>
+        </div>
+
         {authLoading && (
           <div className="rounded-2xl border bg-white p-6">
             <div className="h-6 w-48 animate-pulse rounded bg-[#F1F5F9]" />
@@ -223,9 +222,7 @@ export default function PurchasesPage() {
             )}
 
             {!err && !busy && items.length === 0 && (
-              <div className="mt-6 rounded-xl border bg-[#F8FAFC] p-6 text-sm text-[#475569]">
-                No purchases yet.
-              </div>
+              <div className="mt-6 rounded-xl border bg-[#F8FAFC] p-6 text-sm text-[#475569]">No purchases yet.</div>
             )}
 
             {!err && !busy && items.length > 0 && (
@@ -242,9 +239,7 @@ export default function PurchasesPage() {
                           // eslint-disable-next-line @next/next/no-img-element
                           <img src={photo} alt={title} className="h-full w-full object-cover" />
                         ) : (
-                          <div className="flex h-full w-full items-center justify-center text-xs text-[#94A3B8]">
-                            No photo
-                          </div>
+                          <div className="flex h-full w-full items-center justify-center text-xs text-[#94A3B8]">No photo</div>
                         )}
                       </div>
 
@@ -254,19 +249,6 @@ export default function PurchasesPage() {
                       </div>
 
                       <div className="text-right">
-                        <div className="text-sm font-semibold text-[#0F172A]">
-                          {formatMoney(r.sale_price_cad)}
-                        </div>
+                        <div className="text-sm font-semibold text-[#0F172A]">{formatMoney(r.sale_price_cad)}</div>
                         <div className="text-xs text-[#64748B]">CAD</div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-      </main>
-    </>
-  );
-}
