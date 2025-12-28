@@ -1,193 +1,303 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabaseClient";
+import { useMemo, useState } from "react";
+import { detectKindFromCategoryName } from "@/lib/catalog/normalize";
 
-type NamedRow = { id: string; name: string };
+/**
+ * IMPORTANT:
+ * We DO NOT import phantom types from "@/lib/catalog/types" because your types file
+ * is missing exports (AddItemMeta/WikiKV/etc). Keep this hook self-contained.
+ */
 
-export type CatalogMeta = {
-  categories: NamedRow[];
-  subcategories: Array<NamedRow & { category_id?: string | null }>;
-  franchises: NamedRow[];
+// minimal ItemKind union used across the app
+export type ItemKind =
+  | "building_blocks"
+  | "trading_card"
+  | "sports_card"
+  | "music"
+  | "toy"
+  | "movie"
+  | "gaming"
+  | "comic"
+  | "other";
 
-  // Building Blocks
-  bbThemes: any[];
-  bbSubthemes: any[];
+// local type to match WikiSection props
+export type WikiKV = { k: string; v: string };
 
-  // Cards
-  cardManufacturers: any[];
-  cardSets: any[];
-  cardTypes: any[];
+export type AddItemMeta = {
+  categories: Array<{ id: string; name: string }>;
+  subcategories: Array<{ id: string; name: string; category_id?: string | null }>;
+  franchises: Array<{ id: string; name: string }>;
+  people: Array<{ id: string; name: string }>;
 
-  // Music
-  musicArtists: any[];
+  bbThemes?: any[];
+  bbSubthemes?: any[];
 
-  // Toys
-  toyManufacturers: any[];
-  toyBrands: any[];
-  toyLines: any[];
+  cardManufacturers?: any[];
+  cardSets?: any[];
+  cardTypes?: any[];
 
-  // People (movies, etc.)
-  people: NamedRow[];
+  musicArtists?: any[];
 
-  // Gaming
-  gamePlatforms: any[];
-  gamePublishers: any[];
+  toyManufacturers?: any[];
+  toyBrands?: any[];
+  toyLines?: any[];
 
-  // Comics
-  comicPublishers: any[];
+  gamePlatforms?: any[];
+  gamePublishers?: any[];
+
+  comicPublishers?: any[];
 
   [key: string]: any;
 };
 
-const EMPTY_META: CatalogMeta = {
-  categories: [],
-  subcategories: [],
-  franchises: [],
+export function useAddItemForm(meta: AddItemMeta) {
+  // ---------- core classification ----------
+  const [categoryId, setCategoryId] = useState<string>("");
+  const [subcategoryId, setSubcategoryId] = useState<string>("");
+  const [franchiseId, setFranchiseId] = useState<string>("");
 
-  bbThemes: [],
-  bbSubthemes: [],
+  // ---------- image ----------
+  const [itemImageFile, setItemImageFile] = useState<File | null>(null);
+  const [itemImagePreview, setItemImagePreview] = useState<string | null>(null);
 
-  cardManufacturers: [],
-  cardSets: [],
-  cardTypes: [],
+  // ---------- global fields ----------
+  const [catalogName, setCatalogName] = useState<string>("");
+  const [catalogReleaseYear, setCatalogReleaseYear] = useState<string>("");
+  const [catalogUPC, setCatalogUPC] = useState<string>("");
+  const [catalogVersion, setCatalogVersion] = useState<string>("");
 
-  musicArtists: [],
+  // ---------- wiki ----------
+  const [wikiSummary, setWikiSummary] = useState<string>("");
+  const [wikiDescription, setWikiDescription] = useState<string>("");
+  const [wikiFacts, setWikiFacts] = useState<WikiKV[]>([]);
+  const [wikiChecklist, setWikiChecklist] = useState<string[]>([]);
+  const [wikiSources, setWikiSources] = useState<string[]>([]);
 
-  toyManufacturers: [],
-  toyBrands: [],
-  toyLines: [],
+  const [newFactKey, setNewFactKey] = useState<string>("");
+  const [newFactVal, setNewFactVal] = useState<string>("");
+  const [newChecklistItem, setNewChecklistItem] = useState<string>("");
+  const [newSource, setNewSource] = useState<string>("");
 
-  people: [],
+  // ---------- building blocks ----------
+  const [bbThemeId, setBbThemeId] = useState<string>("");
+  const [bbSubthemeId, setBbSubthemeId] = useState<string>("");
+  const [bbSetNumber, setBbSetNumber] = useState<string>("");
+  const [bbPieceCount, setBbPieceCount] = useState<string>("");
+  const [bbRetailCad, setBbRetailCad] = useState<string>("");
+  const [bbRetailUsd, setBbRetailUsd] = useState<string>("");
 
-  gamePlatforms: [],
-  gamePublishers: [],
+  // ---------- cards ----------
+  const [cardManufacturerId, setCardManufacturerId] = useState<string>("");
+  const [cardSetId, setCardSetId] = useState<string>("");
+  const [cardTypeId, setCardTypeId] = useState<string>("");
+  const [cardNumber, setCardNumber] = useState<string>("");
+  const [cardYear, setCardYear] = useState<string>("");
+  const [cardRarityDropdown, setCardRarityDropdown] = useState<string>("");
+  const [cardRarityCustom, setCardRarityCustom] = useState<string>("");
 
-  comicPublishers: [],
-};
+  // ---------- music ----------
+  const [musicArtistId, setMusicArtistId] = useState<string>("");
 
-export function useCatalogMeta(open: boolean) {
-  const [meta, setMeta] = useState<CatalogMeta>(EMPTY_META);
-  const [metaLoading, setMetaLoading] = useState(false);
-  const [metaError, setMetaError] = useState<string | null>(null);
+  // ---------- toys ----------
+  const [toyManufacturerId, setToyManufacturerId] = useState<string>("");
+  const [toyBrandId, setToyBrandId] = useState<string>("");
+  const [toyLineId, setToyLineId] = useState<string>("");
+  const [toyModelNumber, setToyModelNumber] = useState<string>("");
 
-  useEffect(() => {
-    let cancelled = false;
+  // ---------- gaming ----------
+  const [gamePlatformId, setGamePlatformId] = useState<string>("");
+  const [gamePublisherId, setGamePublisherId] = useState<string>("");
 
-    const load = async () => {
-      if (!open) return;
+  // ---------- comics ----------
+  const [comicPublisherId, setComicPublisherId] = useState<string>("");
+  const [comicSeries, setComicSeries] = useState<string>("");
+  const [comicIssueNumber, setComicIssueNumber] = useState<string>("");
+  const [comicVariant, setComicVariant] = useState<string>("");
 
-      setMetaLoading(true);
-      setMetaError(null);
+  // ---------- derived ----------
+  const itemKind: ItemKind = useMemo(() => {
+    const catName = meta?.categories?.find((c) => c.id === categoryId)?.name ?? "";
+    // detectKindFromCategoryName expects string; never pass null
+    return (detectKindFromCategoryName(String(catName)) as ItemKind) || "building_blocks";
+  }, [meta, categoryId]);
 
-      try {
-        // NOTE: keep selects conservative (id,name) so schema mismatches don't explode builds.
-        const [
-          categoriesRes,
-          subcategoriesRes,
-          franchisesRes,
-          bbThemesRes,
-          bbSubthemesRes,
-          cardManufacturersRes,
-          cardSetsRes,
-          cardTypesRes,
-          musicArtistsRes,
-          toyManufacturersRes,
-          toyBrandsRes,
-          toyLinesRes,
-          peopleRes,
-          gamePlatformsRes,
-          gamePublishersRes,
-          comicPublishersRes,
-        ] = await Promise.all([
-          supabase.from("categories").select("id,name").order("name", { ascending: true }),
-          supabase.from("subcategories").select("id,name,category_id").order("name", { ascending: true }),
-          supabase.from("franchises").select("id,name").order("name", { ascending: true }),
+  // options used by sections (basic passthrough)
+  const bbThemeOptions = useMemo(() => (meta?.bbThemes ?? []) as any[], [meta]);
+  const bbSubthemeOptions = useMemo(() => (meta?.bbSubthemes ?? []) as any[], [meta]);
+  const cardSetOptions = useMemo(() => (meta?.cardSets ?? []) as any[], [meta]);
+  const toyBrandOptions = useMemo(() => (meta?.toyBrands ?? []) as any[], [meta]);
+  const toyLineOptions = useMemo(() => (meta?.toyLines ?? []) as any[], [meta]);
 
-          supabase.from("bb_themes").select("*").order("name", { ascending: true }),
-          supabase.from("bb_subthemes").select("*").order("name", { ascending: true }),
+  // ---------- helpers ----------
+  const pickItemImage = (file: File | null) => {
+    setItemImageFile(file);
+    if (!file) {
+      setItemImagePreview(null);
+      return;
+    }
+    setItemImagePreview(URL.createObjectURL(file));
+  };
 
-          supabase.from("card_manufacturers").select("*").order("name", { ascending: true }),
-          supabase.from("card_sets").select("*").order("name", { ascending: true }),
-          supabase.from("card_types").select("*").order("name", { ascending: true }),
+  const reset = () => {
+    setCategoryId("");
+    setSubcategoryId("");
+    setFranchiseId("");
 
-          supabase.from("music_artists").select("*").order("name", { ascending: true }),
+    setItemImageFile(null);
+    setItemImagePreview(null);
 
-          supabase.from("toy_manufacturers").select("*").order("name", { ascending: true }),
-          supabase.from("toy_brands").select("*").order("name", { ascending: true }),
-          supabase.from("toy_lines").select("*").order("name", { ascending: true }),
+    setCatalogName("");
+    setCatalogReleaseYear("");
+    setCatalogUPC("");
+    setCatalogVersion("");
 
-          supabase.from("people").select("id,name").order("name", { ascending: true }),
+    setWikiSummary("");
+    setWikiDescription("");
+    setWikiFacts([]);
+    setWikiChecklist([]);
+    setWikiSources([]);
 
-          supabase.from("game_platforms").select("*").order("name", { ascending: true }),
-          supabase.from("game_publishers").select("*").order("name", { ascending: true }),
+    setNewFactKey("");
+    setNewFactVal("");
+    setNewChecklistItem("");
+    setNewSource("");
 
-          supabase.from("comic_publishers").select("*").order("name", { ascending: true }),
-        ]);
+    setBbThemeId("");
+    setBbSubthemeId("");
+    setBbSetNumber("");
+    setBbPieceCount("");
+    setBbRetailCad("");
+    setBbRetailUsd("");
 
-        const firstErr =
-          categoriesRes.error ||
-          subcategoriesRes.error ||
-          franchisesRes.error ||
-          bbThemesRes.error ||
-          bbSubthemesRes.error ||
-          cardManufacturersRes.error ||
-          cardSetsRes.error ||
-          cardTypesRes.error ||
-          musicArtistsRes.error ||
-          toyManufacturersRes.error ||
-          toyBrandsRes.error ||
-          toyLinesRes.error ||
-          peopleRes.error ||
-          gamePlatformsRes.error ||
-          gamePublishersRes.error ||
-          comicPublishersRes.error;
+    setCardManufacturerId("");
+    setCardSetId("");
+    setCardTypeId("");
+    setCardNumber("");
+    setCardYear("");
+    setCardRarityDropdown("");
+    setCardRarityCustom("");
 
-        if (firstErr) throw firstErr;
+    setMusicArtistId("");
 
-        if (cancelled) return;
+    setToyManufacturerId("");
+    setToyBrandId("");
+    setToyLineId("");
+    setToyModelNumber("");
 
-        setMeta({
-          categories: (categoriesRes.data ?? []) as any,
-          subcategories: (subcategoriesRes.data ?? []) as any,
-          franchises: (franchisesRes.data ?? []) as any,
+    setGamePlatformId("");
+    setGamePublisherId("");
 
-          bbThemes: (bbThemesRes.data ?? []) as any,
-          bbSubthemes: (bbSubthemesRes.data ?? []) as any,
+    setComicPublisherId("");
+    setComicSeries("");
+    setComicIssueNumber("");
+    setComicVariant("");
+  };
 
-          cardManufacturers: (cardManufacturersRes.data ?? []) as any,
-          cardSets: (cardSetsRes.data ?? []) as any,
-          cardTypes: (cardTypesRes.data ?? []) as any,
+  return {
+    itemKind,
 
-          musicArtists: (musicArtistsRes.data ?? []) as any,
+    categoryId,
+    setCategoryId,
+    subcategoryId,
+    setSubcategoryId,
+    franchiseId,
+    setFranchiseId,
 
-          toyManufacturers: (toyManufacturersRes.data ?? []) as any,
-          toyBrands: (toyBrandsRes.data ?? []) as any,
-          toyLines: (toyLinesRes.data ?? []) as any,
+    itemImageFile,
+    itemImagePreview,
+    pickItemImage,
 
-          people: (peopleRes.data ?? []) as any,
+    catalogName,
+    setCatalogName,
+    catalogReleaseYear,
+    setCatalogReleaseYear,
+    catalogUPC,
+    setCatalogUPC,
+    catalogVersion,
+    setCatalogVersion,
 
-          gamePlatforms: (gamePlatformsRes.data ?? []) as any,
-          gamePublishers: (gamePublishersRes.data ?? []) as any,
+    wikiSummary,
+    setWikiSummary,
+    wikiDescription,
+    setWikiDescription,
+    wikiFacts,
+    setWikiFacts,
+    wikiChecklist,
+    setWikiChecklist,
+    wikiSources,
+    setWikiSources,
+    newFactKey,
+    setNewFactKey,
+    newFactVal,
+    setNewFactVal,
+    newChecklistItem,
+    setNewChecklistItem,
+    newSource,
+    setNewSource,
 
-          comicPublishers: (comicPublishersRes.data ?? []) as any,
-        });
-      } catch (e: any) {
-        console.error(e);
-        if (!cancelled) {
-          setMeta(EMPTY_META);
-          setMetaError(e?.message || "Failed to load catalog metadata.");
-        }
-      } finally {
-        if (!cancelled) setMetaLoading(false);
-      }
-    };
+    bbThemeId,
+    setBbThemeId,
+    bbSubthemeId,
+    setBbSubthemeId,
+    bbSetNumber,
+    setBbSetNumber,
+    bbPieceCount,
+    setBbPieceCount,
+    bbRetailCad,
+    setBbRetailCad,
+    bbRetailUsd,
+    setBbRetailUsd,
+    bbThemeOptions,
+    bbSubthemeOptions,
 
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [open]);
+    cardManufacturerId,
+    setCardManufacturerId,
+    cardSetId,
+    setCardSetId,
+    cardTypeId,
+    setCardTypeId,
+    cardNumber,
+    setCardNumber,
+    cardYear,
+    setCardYear,
+    cardRarityDropdown,
+    setCardRarityDropdown,
+    cardRarityCustom,
+    setCardRarityCustom,
+    cardSetOptions,
 
-  return { meta, setMeta, metaLoading, metaError };
+    musicArtistId,
+    setMusicArtistId,
+
+    toyManufacturerId,
+    setToyManufacturerId,
+    toyBrandId,
+    setToyBrandId,
+    toyLineId,
+    setToyLineId,
+    toyModelNumber,
+    setToyModelNumber,
+    toyBrandOptions,
+    toyLineOptions,
+
+    gamePlatformId,
+    setGamePlatformId,
+    gamePublisherId,
+    setGamePublisherId,
+
+    comicPublisherId,
+    setComicPublisherId,
+    comicSeries,
+    setComicSeries,
+    comicIssueNumber,
+    setComicIssueNumber,
+    comicVariant,
+    setComicVariant,
+
+    reset,
+  };
 }
+
+// ALSO export default so either import style works
+export default useAddItemForm;
