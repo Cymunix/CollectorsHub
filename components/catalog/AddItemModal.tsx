@@ -244,7 +244,6 @@ export default function AddItemModal({
 
           <WikiSection {...form} />
 
-          {/* ✅ FIXED: LINK_TYPES PASSED */}
           <VariantsSection
             LINK_TYPES={variants.LINK_TYPES}
             variantQuery={variants.variantQuery}
@@ -264,7 +263,19 @@ export default function AddItemModal({
         </form>
       </AddItemModalShell>
 
-      <CreateMinifigModal {...minifigs} />
+      {/* ✅ FIXED: pass the modal props explicitly (don’t spread the hook object) */}
+      <CreateMinifigModal
+        open={minifigs.minifigCreateOpen}
+        creating={minifigs.creatingMinifig}
+        onClose={() => minifigs.setMinifigCreateOpen(false)}
+        newMinifigNumber={minifigs.newMinifigNumber}
+        setNewMinifigNumber={minifigs.setNewMinifigNumber}
+        newMinifigName={minifigs.newMinifigName}
+        setNewMinifigName={minifigs.setNewMinifigName}
+        newMinifigImagePreview={minifigs.newMinifigImagePreview}
+        onPickImage={minifigs.pickNewMinifigImage}
+        onCreate={minifigs.createMinifigWithImage}
+      />
     </>
   );
 }
