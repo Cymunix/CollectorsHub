@@ -5,7 +5,10 @@ import React from "react";
 import FieldLabel from "../../blocks/FieldLabel";
 import Select from "../../blocks/Select";
 import InlineCreateButton from "../../blocks/InlineCreateButton";
-import type { GamePlatform, GamePublisher } from "@/lib/catalog/types";
+
+// local types (because "@/lib/catalog/types" does NOT export these)
+type GamePlatform = { id: string; name: string };
+type GamePublisher = { id: string; name: string };
 
 export default function GamingSection({
   gamePlatforms,
@@ -41,7 +44,7 @@ export default function GamingSection({
           </div>
           <Select value={gamePlatformId} onChange={(e) => setGamePlatformId(e.target.value)}>
             <option value="">Select…</option>
-            {gamePlatforms.map((p) => (
+            {(gamePlatforms ?? []).map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
               </option>
@@ -56,7 +59,7 @@ export default function GamingSection({
           </div>
           <Select value={gamePublisherId} onChange={(e) => setGamePublisherId(e.target.value)}>
             <option value="">(optional)</option>
-            {gamePublishers.map((p) => (
+            {(gamePublishers ?? []).map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
               </option>
