@@ -24,6 +24,9 @@ export default function CollectionItemPage() {
   const [meta, setMeta] = useState<CatalogMeta | null>(null);
   const [isMinifig, setIsMinifig] = useState(false);
 
+  // ✅ FIX: AuthModal requires props
+  const [authOpen, setAuthOpen] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -53,11 +56,7 @@ export default function CollectionItemPage() {
         setMeta({ id: metaRes.data.id, name: metaRes.data.name ?? null });
 
         // minifig check (if errors, treat as not-minifig -> fall back to existing screen)
-        const mfRes = await supabase
-          .from("catalog_minifigs")
-          .select("id")
-          .eq("catalog_item_id", catalogItemId)
-          .limit(1);
+        const mfRes = await supabase.from("catalog_minifigs").select("id").eq("catalog_item_id", catalogItemId).limit(1);
 
         if (cancelled) return;
 
@@ -80,7 +79,9 @@ export default function CollectionItemPage() {
     <>
       <Header />
       <SecondaryNav />
-      <AuthModal />
+
+      {/* ✅ FIX: pass required props */}
+      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
 
       <main className="mx-auto max-w-6xl px-4 pb-16 pt-6">
         {!catalogItemId ? (
@@ -100,11 +101,8 @@ export default function CollectionItemPage() {
             <div className="mt-3 text-sm text-red-600">{err}</div>
           </div>
         ) : isMinifig ? (
-          // ✅ minifigs route here
           <MinifigDetail catalogItemId={catalogItemId} meta={meta} />
         ) : (
-          // ✅ EVERYTHING ELSE (including building blocks) stays your existing screen
-          // Passing id/meta only so it can load; UI/logic remains in the component
           <CollectionItemScreen catalogItemId={catalogItemId} meta={meta} key={catalogItemId} />
         )}
       </main>
