@@ -634,10 +634,9 @@ export default function Page({ params }: { params: { id: string } }) {
             {tab === "reviews" ? <ItemReviewsTab catalogItemId={catalogItemId} /> : null}
             {tab === "sales_history" ? (
               <ItemSalesHistoryTab
-                catalogItemId={catalogItemId}
-                selectedCondition={conditionValues}
-                selectedConditionScore={conditionScore}
-              />
+  catalogItemId={catalogItemId}
+  selectedConditionJson={conditionValues}
+/>
             ) : null}
             {tab === "listings" ? (
               <ItemListingsTab
@@ -654,3 +653,4 @@ export default function Page({ params }: { params: { id: string } }) {
     </main>
   );
 }
+
