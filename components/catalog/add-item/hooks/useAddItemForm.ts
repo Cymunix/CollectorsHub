@@ -1,27 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import type { ItemKind } from "@/lib/catalog/types";
 import { detectKindFromCategoryName } from "@/lib/catalog/normalize";
 
-/**
- * IMPORTANT:
- * We DO NOT import phantom types from "@/lib/catalog/types" because your types file
- * is missing exports (AddItemMeta/WikiKV/etc). Keep this hook self-contained.
- */
-
-// minimal ItemKind union used across the app
-export type ItemKind =
-  | "building_blocks"
-  | "trading_card"
-  | "sports_card"
-  | "music"
-  | "toy"
-  | "movie"
-  | "gaming"
-  | "comic"
-  | "other";
-
-// local type to match WikiSection props
+/** local type to match WikiSection props */
 export type WikiKV = { k: string; v: string };
 
 export type AddItemMeta = {
@@ -118,8 +101,8 @@ export function useAddItemForm(meta: AddItemMeta) {
   // ---------- derived ----------
   const itemKind: ItemKind = useMemo(() => {
     const catName = meta?.categories?.find((c) => c.id === categoryId)?.name ?? "";
-    // detectKindFromCategoryName expects string; never pass null
-    return (detectKindFromCategoryName(String(catName)) as ItemKind) || "building_blocks";
+    // detectKindFromCategoryName expects a string; it returns your app's ItemKind
+    return detectKindFromCategoryName(String(catName)) as ItemKind;
   }, [meta, categoryId]);
 
   // options used by sections (basic passthrough)
@@ -299,5 +282,4 @@ export function useAddItemForm(meta: AddItemMeta) {
   };
 }
 
-// ALSO export default so either import style works
 export default useAddItemForm;
