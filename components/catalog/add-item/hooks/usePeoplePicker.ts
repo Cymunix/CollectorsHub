@@ -3,8 +3,10 @@
 
 import { useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import type { Person } from "@/lib/catalog/types";
 import { normalizeName } from "@/lib/catalog/normalize";
+
+/** local type (because "@/lib/catalog/types" does NOT export Person) */
+export type Person = { id: string; name: string };
 
 export function usePeoplePicker(allPeople: Person[]) {
   const [personQuery, setPersonQuery] = useState("");
@@ -46,8 +48,15 @@ export function usePeoplePicker(allPeople: Person[]) {
   const addActor = (p: Person) => setMovieActorIds((prev) => (prev.includes(p.id) ? prev : [...prev, p.id]));
   const removeActor = (id: string) => setMovieActorIds((prev) => prev.filter((x) => x !== id));
 
-  const directorPeople = useMemo(() => allPeople.filter((p) => movieDirectorIds.includes(p.id)), [allPeople, movieDirectorIds]);
-  const actorPeople = useMemo(() => allPeople.filter((p) => movieActorIds.includes(p.id)), [allPeople, movieActorIds]);
+  const directorPeople = useMemo(
+    () => (allPeople ?? []).filter((p) => movieDirectorIds.includes(p.id)),
+    [allPeople, movieDirectorIds]
+  );
+
+  const actorPeople = useMemo(
+    () => (allPeople ?? []).filter((p) => movieActorIds.includes(p.id)),
+    [allPeople, movieActorIds]
+  );
 
   const resetPeople = () => {
     setPersonQuery("");
@@ -76,3 +85,5 @@ export function usePeoplePicker(allPeople: Person[]) {
     resetPeople,
   };
 }
+
+export default usePeoplePicker;
