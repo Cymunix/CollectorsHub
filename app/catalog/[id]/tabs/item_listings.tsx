@@ -229,7 +229,7 @@ export default function ItemListingsTab({
 
       if (sort === "newest") q = q.order("created_at", { ascending: false });
       if (sort === "price_asc") q = q.order("price_cad", { ascending: true, nullsFirst: false });
-      if (sort === "price_desc") q = q.order("price_cad", { ascending: false, nullsLast: false });
+      if (sort === "price_desc") q = q.order("price_cad", { ascending: false, nullsFirst: false });
 
       const res = await q.limit(50);
       if (res.error) throw res.error;
@@ -423,3 +423,4 @@ export default function ItemListingsTab({
     </div>
   );
 }
+
