@@ -62,7 +62,13 @@ function normalizeFairValueResult(raw: any): { value: number | null; confidence:
   if (typeof raw === "number" && Number.isFinite(raw)) return { value: raw, confidence: "exact", reason: null };
   if (raw && typeof raw === "object") {
     const v =
-      typeof raw.value === "number" ? raw.value : typeof raw.fairValue === "number" ? raw.fairValue : typeof raw.price === "number" ? raw.price : null;
+      typeof raw.value === "number"
+        ? raw.value
+        : typeof raw.fairValue === "number"
+        ? raw.fairValue
+        : typeof raw.price === "number"
+        ? raw.price
+        : null;
     const conf = raw.confidence === "estimated" || raw.confidence === "exact" ? raw.confidence : "unknown";
     const reason = typeof raw.reason === "string" && raw.reason.trim().length ? raw.reason : null;
     return { value: v !== null && Number.isFinite(v) ? v : null, confidence: conf, reason };
@@ -111,7 +117,10 @@ function DealBadgePill({ badge }: { badge: DealBadge }) {
   };
 
   return (
-    <span title={tooltip} className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${stylesByColor[badge.color]}`}>
+    <span
+      title={tooltip}
+      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${stylesByColor[badge.color]}`}
+    >
       {badge.label}
     </span>
   );
@@ -151,7 +160,6 @@ export default function ItemListingsTab({
   const [listings, setListings] = useState<MarketplaceListing[]>([]);
   const [sort, setSort] = useState<"newest" | "price_asc" | "price_desc">("newest");
 
-  // base price for fair comparisons (same logic as original)
   const [marketCurrent, setMarketCurrent] = useState<number | null>(null);
   const [market30DayAvg, setMarket30DayAvg] = useState<number | null>(null);
   const [avgCH, setAvgCH] = useState<number | null>(null);
@@ -229,7 +237,7 @@ export default function ItemListingsTab({
 
       if (sort === "newest") q = q.order("created_at", { ascending: false });
       if (sort === "price_asc") q = q.order("price_cad", { ascending: true, nullsFirst: false });
-      if (sort === "price_desc") q = q.order("price_cad", { ascending: false, nullsFirst: false });
+      if (sort === "price_desc") q = q.order("price_cad", { ascending: false, nullsFirst: false }); // ✅ nulls last
 
       const res = await q.limit(50);
       if (res.error) throw res.error;
@@ -331,13 +339,21 @@ export default function ItemListingsTab({
               <div className="text-[11px] text-[#64748B]">Showing active listings for this item.</div>
 
               <div className="flex items-center gap-2">
-                <select className="rounded-lg border border-[#E5E9F2] bg-white px-2 py-1.5 text-[11px]" value={sort} onChange={(e) => setSort(e.target.value as any)}>
+                <select
+                  className="rounded-lg border border-[#E5E9F2] bg-white px-2 py-1.5 text-[11px]"
+                  value={sort}
+                  onChange={(e) => setSort(e.target.value as any)}
+                >
                   <option value="newest">Newest</option>
                   <option value="price_asc">Price: Low → High</option>
                   <option value="price_desc">Price: High → Low</option>
                 </select>
 
-                <button type="button" onClick={load} className="rounded-lg border border-[#E5E9F2] bg-white px-3 py-1.5 text-[11px] font-semibold hover:bg-[#F8FAFC]">
+                <button
+                  type="button"
+                  onClick={load}
+                  className="rounded-lg border border-[#E5E9F2] bg-white px-3 py-1.5 text-[11px] font-semibold hover:bg-[#F8FAFC]"
+                >
                   Refresh
                 </button>
               </div>
@@ -354,31 +370,53 @@ export default function ItemListingsTab({
                 {listings.map((l) => {
                   const { conditionScore: lScore, gradingCompany, gradeValue, gradeLabel } = listingPricingInputs(l);
 
-                const fairRaw = getFairValue({
-  baseMarketPrice: baseMarketPrice ?? 0,
-  category: categoryName ?? "unknown",
-  conditionScore: lScore,
-  gradingCompany,
-  gradeValue,
-});
+                  // ✅ Normalize inputs so helpers never receive nulls for required fields
+                  const safeBase = typeof baseMarketPrice === "number" && Number.isFinite(baseMarketPrice) ? baseMarketPrice : 0;
+                  const safeCategory = typeof categoryName === "string" && categoryName.trim().length ? categoryName : "unknown";
 
+                  const fairRaw = getFairValue({
+                    baseMarketPrice: safeBase,
+                    category: safeCategory,
+                    conditionScore: lScore,
+                    gradingCompany,
+                    gradeValue,
+                    gradeLabel,
+                  });
 
                   const fair = normalizeFairValueResult(fairRaw);
 
-                  const badge = getDealBadge({
-                    listingPrice:
-  typeof l.price_cad === "number"
-    ? l.price_cad
-    : Number(l.price_cad ?? 0),
-                    fairValue: fair.value,
-                  });
+                  // ✅ Only call getDealBadge if both numbers exist
+                  const listingPrice =
+                    typeof l.price_cad === "number"
+                      ? l.price_cad
+                      : l.price_cad == null
+                      ? NaN
+                      : Number(l.price_cad);
+
+                  const fairValue = typeof fair.value === "number" && Number.isFinite(fair.value) ? fair.value : NaN;
+
+                  const badge =
+                    Number.isFinite(listingPrice) && Number.isFinite(fairValue)
+                      ? getDealBadge({
+                          listingPrice,
+                          fairValue,
+                        })
+                      : null;
 
                   return (
                     <div key={l.id} className="rounded-xl border border-[#E5E9F2] bg-white p-3">
                       <div className="flex items-start gap-3">
                         <div className="h-14 w-14 rounded-lg border border-[#E5E9F2] bg-[#F8FAFC] overflow-hidden flex items-center justify-center shrink-0">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
-                          {l.photo_url ? <img src={l.photo_url} alt={safeText(l.title ?? itemName)} className="h-full w-full object-cover" /> : <div className="text-[10px] text-[#94A3B8]">No photo</div>}
+                          {l.photo_url ? (
+                            <img
+                              src={l.photo_url}
+                              alt={safeText(l.title ?? itemName)}
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <div className="text-[10px] text-[#94A3B8]">No photo</div>
+                          )}
                         </div>
 
                         <div className="min-w-0 flex-1">
@@ -395,7 +433,9 @@ export default function ItemListingsTab({
                             <div className="text-sm font-bold text-[#0F172A] shrink-0">{money(l.price_cad)}</div>
                           </div>
 
-                          <div className="mt-0.5 text-[11px] text-[#94A3B8]">{l.created_at ? `listed • ${new Date(l.created_at).toLocaleDateString()}` : ""}</div>
+                          <div className="mt-0.5 text-[11px] text-[#94A3B8]">
+                            {l.created_at ? `listed • ${new Date(l.created_at).toLocaleDateString()}` : ""}
+                          </div>
 
                           <div className="mt-2 flex items-center gap-2">
                             <button
@@ -426,6 +466,3 @@ export default function ItemListingsTab({
     </div>
   );
 }
-
-
-
