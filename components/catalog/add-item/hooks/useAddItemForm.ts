@@ -4,8 +4,8 @@ import { useMemo, useState } from "react";
 import type { ItemKind } from "@/lib/catalog/types";
 import { detectKindFromCategoryName } from "@/lib/catalog/normalize";
 
-/** local type (since "@/lib/catalog/types" does not export WikiKV) */
-export type WikiKV = { key: string; value: string };
+/** local type to match WikiSection props */
+export type WikiKV = { k: string; v: string };
 
 /**
  * Minimal meta shape required by this hook.
