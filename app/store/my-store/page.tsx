@@ -25,6 +25,9 @@ export default function MyStorePage() {
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
 
+  // ✅ FIX: AuthModal requires these
+  const [authOpen, setAuthOpen] = useState(false);
+
   const [form, setForm] = useState<StoreProfileForm>({
     username: "",
     store_name: "",
@@ -41,7 +44,6 @@ export default function MyStorePage() {
     return storeUserId ? `/stores/${storeUserId}` : "/stores";
   }, [storeUserId]);
 
-  // Load editable fields from profiles using the userId from the hook (NOT getUser()).
   useEffect(() => {
     let cancelled = false;
 
@@ -89,7 +91,6 @@ export default function MyStorePage() {
       }
     }
 
-    // only run once hook finished
     if (!userLoading) load();
 
     return () => {
@@ -105,6 +106,7 @@ export default function MyStorePage() {
     if (!storeUserId) {
       setSaving(false);
       setErr("Not logged in.");
+      setAuthOpen(true);
       return;
     }
 
@@ -133,22 +135,19 @@ export default function MyStorePage() {
     <>
       <Header />
       <SecondaryNav />
-      <AuthModal />
+
+      {/* ✅ FIX: pass required props */}
+      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
 
       <main className="mx-auto max-w-6xl px-4 pb-16 pt-6">
         <div className="flex items-center justify-between gap-4 mb-4">
           <div>
             <h1 className="text-xl font-semibold">My Store</h1>
-            <p className="text-sm text-gray-500">
-              Edit your store profile and preview the public page.
-            </p>
+            <p className="text-sm text-gray-500">Edit your store profile and preview the public page.</p>
           </div>
 
           <div className="flex items-center gap-2">
-            <Link
-              href={publicUrl}
-              className="px-4 py-2 rounded-xl border bg-white text-sm hover:bg-gray-50"
-            >
+            <Link href={publicUrl} className="px-4 py-2 rounded-xl border bg-white text-sm hover:bg-gray-50">
               View Public Page
             </Link>
 
@@ -168,16 +167,20 @@ export default function MyStorePage() {
         ) : !user ? (
           <div className="rounded-2xl border bg-white p-6">
             <div className="text-sm font-semibold">You’re not logged in</div>
-            <div className="mt-2 text-sm text-gray-600">
-              Open the login modal and sign in.
-            </div>
+            <div className="mt-2 text-sm text-gray-600">Open the login modal and sign in.</div>
+            <button
+              type="button"
+              onClick={() => setAuthOpen(true)}
+              className="mt-4 rounded-xl bg-[#0B1120] px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
+            >
+              Login
+            </button>
           </div>
         ) : !allowed ? (
           <div className="rounded-2xl border bg-white p-6">
             <div className="text-sm font-semibold">Not authorized</div>
             <div className="mt-2 text-sm text-gray-600">
-              This page is only for Store / Pawn accounts. Your role is:{" "}
-              <span className="font-mono">{user.roleRaw}</span>
+              This page is only for Store / Pawn accounts. Your role is: <span className="font-mono">{user.roleRaw}</span>
             </div>
           </div>
         ) : loading ? (
@@ -187,46 +190,33 @@ export default function MyStorePage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            {/* Preview card */}
             <div className="rounded-2xl border bg-white p-6">
               <div className="flex items-center gap-4">
                 <div className="h-14 w-14 rounded-2xl overflow-hidden border bg-gray-50 flex items-center justify-center">
                   {form.profile_picture_url ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={form.profile_picture_url}
-                      alt="Store logo"
-                      className="h-full w-full object-cover"
-                    />
+                    <img src={form.profile_picture_url} alt="Store logo" className="h-full w-full object-cover" />
                   ) : (
                     <span className="text-xs text-gray-400">No logo</span>
                   )}
                 </div>
 
                 <div className="min-w-0">
-                  <div className="text-sm font-semibold truncate">
-                    {form.store_name?.trim() || "Store Name"}
-                  </div>
+                  <div className="text-sm font-semibold truncate">{form.store_name?.trim() || "Store Name"}</div>
                   <div className="text-xs text-gray-500 truncate">
                     @{form.username?.trim() || "username"} · {role === "pawn" ? "Pawn Store" : "Store"}
                   </div>
                 </div>
               </div>
 
-              <div className="mt-4 text-sm text-gray-600 whitespace-pre-wrap">
-                {form.bio?.trim() || "Add a short bio about your store…"}
-              </div>
+              <div className="mt-4 text-sm text-gray-600 whitespace-pre-wrap">{form.bio?.trim() || "Add a short bio about your store…"}</div>
 
-              <div className="mt-3 text-xs text-gray-500">
-                {form.location?.trim() || "Add a location (city)…"}
-              </div>
+              <div className="mt-3 text-xs text-gray-500">{form.location?.trim() || "Add a location (city)…"}</div>
 
               {(err || ok || userError) && (
                 <div
                   className={`mt-4 rounded-xl border p-3 text-sm ${
-                    err || userError
-                      ? "bg-red-50 border-red-200 text-red-700"
-                      : "bg-green-50 border-green-200 text-green-700"
+                    err || userError ? "bg-red-50 border-red-200 text-red-700" : "bg-green-50 border-green-200 text-green-700"
                   }`}
                 >
                   {err ?? userError ?? ok}
@@ -234,7 +224,6 @@ export default function MyStorePage() {
               )}
             </div>
 
-            {/* Edit form */}
             <div className="lg:col-span-2 rounded-2xl border bg-white p-6">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
@@ -265,9 +254,7 @@ export default function MyStorePage() {
                     className="w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-black/10"
                     placeholder="https://…"
                   />
-                  <div className="mt-1 text-[11px] text-gray-500">
-                    MVP: paste an image URL. Later we’ll add upload.
-                  </div>
+                  <div className="mt-1 text-[11px] text-gray-500">MVP: paste an image URL. Later we’ll add upload.</div>
                 </div>
 
                 <div>
@@ -282,12 +269,8 @@ export default function MyStorePage() {
 
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">Account Type</label>
-                  <div className="w-full rounded-xl border px-3 py-2 text-sm bg-gray-50 text-gray-700">
-                    {role === "pawn" ? "Pawn Store" : "Store"}
-                  </div>
-                  <div className="mt-1 text-[11px] text-gray-500">
-                    Controlled by profiles.role (store/pawn).
-                  </div>
+                  <div className="w-full rounded-xl border px-3 py-2 text-sm bg-gray-50 text-gray-700">{role === "pawn" ? "Pawn Store" : "Store"}</div>
+                  <div className="mt-1 text-[11px] text-gray-500">Controlled by profiles.role (store/pawn).</div>
                 </div>
 
                 <div className="sm:col-span-2">
