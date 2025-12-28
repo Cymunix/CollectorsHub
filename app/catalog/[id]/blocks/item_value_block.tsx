@@ -166,7 +166,7 @@ export default function ItemValueBlock({
 
     const raw = getFairValue({
       baseMarketPrice,
-      category: categoryName,
+      category: categoryName ?? "",
       conditionScore: score,
       gradingCompany,
       gradeValue,
