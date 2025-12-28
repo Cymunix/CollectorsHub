@@ -366,7 +366,10 @@ export default function ItemListingsTab({
                   const fair = normalizeFairValueResult(fairRaw);
 
                   const badge = getDealBadge({
-                    listingPrice: typeof l.price_cad === "number" ? l.price_cad : l.price_cad === null ? null : Number(l.price_cad),
+                    listingPrice:
+  typeof l.price_cad === "number"
+    ? l.price_cad
+    : Number(l.price_cad ?? 0),
                     fairValue: fair.value,
                   });
 
@@ -423,5 +426,6 @@ export default function ItemListingsTab({
     </div>
   );
 }
+
 
 
