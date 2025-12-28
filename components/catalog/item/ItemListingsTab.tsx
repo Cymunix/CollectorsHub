@@ -237,8 +237,6 @@ export default function ItemListingsTab({
 
       if (sort === "newest") q = q.order("created_at", { ascending: false });
       if (sort === "price_asc") q = q.order("price_cad", { ascending: true, nullsFirst: false });
-
-      // ✅ FIX: Supabase types don't allow `nullsLast`
       if (sort === "price_desc") q = q.order("price_cad", { ascending: false, nullsFirst: false });
 
       const res = await q.limit(50);
@@ -315,6 +313,8 @@ export default function ItemListingsTab({
     alert(`Added to cart: ${l.title ?? itemName}`);
   };
 
+  const pricingCategory = categoryName ?? "unknown";
+
   return (
     <div className="rounded-2xl border border-[#E5E9F2] bg-white shadow-sm overflow-hidden flex flex-col flex-1 min-h-[420px]">
       <div className="flex items-center justify-between border-b border-[#EEF2F7] px-4 py-3">
@@ -372,13 +372,12 @@ export default function ItemListingsTab({
                 {listings.map((l) => {
                   const { conditionScore: lScore, gradingCompany, gradeValue, gradeLabel } = listingPricingInputs(l);
 
-                  // ✅ FIX: only call getFairValue when we have market data
                   const fairRaw =
                     baseMarketPrice == null
                       ? null
                       : getFairValue({
                           baseMarketPrice,
-                          category: categoryName ?? null,
+                          category: pricingCategory, // ✅ always string
                           conditionScore: lScore,
                           gradingCompany,
                           gradeValue,
