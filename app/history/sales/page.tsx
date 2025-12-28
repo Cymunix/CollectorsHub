@@ -118,10 +118,7 @@ export default function SalesPage() {
         return;
       }
 
-      const itemsRes = await supabase
-        .from("catalog_items")
-        .select("id,title,name")
-        .in("id", catalogIds);
+      const itemsRes = await supabase.from("catalog_items").select("id,title,name").in("id", catalogIds);
 
       if (cancelled) return;
 
@@ -167,10 +164,16 @@ export default function SalesPage() {
   return (
     <>
       <Header />
-      <SecondaryNav title="Sales History" subtitle="Everything you’ve sold on CollectorsHub" />
+      <SecondaryNav />
       <AuthModal open={showAuth} onClose={() => setShowAuth(false)} />
 
       <main className="mx-auto max-w-6xl px-4 pb-16 pt-6">
+        {/* Page header (since SecondaryNav doesn't take title/subtitle props) */}
+        <div className="mb-4">
+          <h1 className="text-xl font-semibold text-[#0F172A]">Sales History</h1>
+          <p className="mt-1 text-sm text-[#64748B]">Everything you’ve sold on CollectorsHub</p>
+        </div>
+
         {authLoading && (
           <div className="rounded-2xl border bg-white p-6">
             <div className="h-6 w-40 animate-pulse rounded bg-[#F1F5F9]" />
@@ -217,16 +220,14 @@ export default function SalesPage() {
             )}
 
             {!err && !busy && items.length === 0 && (
-              <div className="mt-6 rounded-xl border bg-[#F8FAFC] p-6 text-sm text-[#475569]">
-                No sales yet.
-              </div>
+              <div className="mt-6 rounded-xl border bg-[#F8FAFC] p-6 text-sm text-[#475569]">No sales yet.</div>
             )}
 
             {!err && !busy && items.length > 0 && (
               <div className="mt-6 divide-y">
                 {items.map((r) => {
                   const ci = catalogById[r.catalog_item_id];
-                  const title = (ci?.title ?? ci?.name ?? "Untitled item") as string;
+                  const title = String(ci?.title ?? ci?.name ?? "Untitled item");
                   const photo = photoByCatalogId[r.catalog_item_id] ?? null;
 
                   return (
@@ -236,9 +237,7 @@ export default function SalesPage() {
                           // eslint-disable-next-line @next/next/no-img-element
                           <img src={photo} alt={title} className="h-full w-full object-cover" />
                         ) : (
-                          <div className="flex h-full w-full items-center justify-center text-xs text-[#94A3B8]">
-                            No photo
-                          </div>
+                          <div className="flex h-full w-full items-center justify-center text-xs text-[#94A3B8]">No photo</div>
                         )}
                       </div>
 
@@ -248,9 +247,7 @@ export default function SalesPage() {
                       </div>
 
                       <div className="text-right">
-                        <div className="text-sm font-semibold text-[#0F172A]">
-                          {formatMoney(r.sale_price_cad)}
-                        </div>
+                        <div className="text-sm font-semibold text-[#0F172A]">{formatMoney(r.sale_price_cad)}</div>
                         <div className="text-xs text-[#64748B]">CAD</div>
                       </div>
                     </div>
