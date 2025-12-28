@@ -33,6 +33,38 @@ import ComicsSection from "./add-item/sections/kinds/ComicsSection";
 
 import CreateMinifigModal from "./add-item/modals/CreateMinifigModal";
 
+// ---- local meta typings (keeps TS happy without needing to retype your hook today) ----
+type NamedRow = { id: string; name: string };
+
+type CatalogMeta = {
+  categories: any[];
+  subcategories: any[];
+  franchises: NamedRow[];
+
+  bbThemes: any[];
+  bbSubthemes: any[];
+
+  cardManufacturers: any[];
+  cardSets: any[];
+  cardTypes: any[];
+
+  musicArtists: any[];
+
+  toyManufacturers: any[];
+  toyBrands: any[];
+  toyLines: any[];
+
+  people: NamedRow[];
+
+  gamePlatforms: any[];
+  gamePublishers: any[];
+
+  comicPublishers: any[];
+
+  // allow extra keys your hook may include
+  [key: string]: any;
+};
+
 export default function AddItemModal({
   open,
   onClose,
@@ -42,7 +74,12 @@ export default function AddItemModal({
   onClose: () => void;
   onCreated?: (catalogItemId: string) => void;
 }) {
-  const { meta, setMeta, metaLoading, metaError } = useCatalogMeta(open);
+  const { meta, setMeta, metaLoading, metaError } = useCatalogMeta(open) as {
+    meta: CatalogMeta;
+    setMeta: React.Dispatch<React.SetStateAction<CatalogMeta>>;
+    metaLoading: boolean;
+    metaError: string | null;
+  };
 
   const form = useAddItemForm(meta);
   const variants = useVariantLinks();
@@ -85,7 +122,12 @@ export default function AddItemModal({
     try {
       const row = await safeInsertLookup("franchises", name);
       if (!row) return;
-      setMeta((m) => ({ ...m, franchises: [...m.franchises, row].sort((a, b) => a.name.localeCompare(b.name)) }));
+
+      setMeta((m: CatalogMeta) => ({
+        ...m,
+        franchises: [...(m.franchises ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
+      }));
+
       form.setFranchiseId(row.id);
     } catch (e: any) {
       alert(e?.message || "Failed to create franchise.");
@@ -104,7 +146,12 @@ export default function AddItemModal({
         "id,name,subcategory_id"
       );
       if (!row) return;
-      setMeta((m) => ({ ...m, bbThemes: [...m.bbThemes, row as any].sort((a, b) => a.name.localeCompare(b.name)) }));
+
+      setMeta((m: CatalogMeta) => ({
+        ...m,
+        bbThemes: [...(m.bbThemes ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
+      }));
+
       form.setBbThemeId(row.id);
       form.setBbSubthemeId("");
     } catch (e: any) {
@@ -119,10 +166,12 @@ export default function AddItemModal({
     try {
       const row = await safeInsertLookup("bb_subthemes", name, { theme_id: form.bbThemeId }, "id,name,theme_id");
       if (!row) return;
-      setMeta((m) => ({
+
+      setMeta((m: CatalogMeta) => ({
         ...m,
-        bbSubthemes: [...m.bbSubthemes, row as any].sort((a, b) => a.name.localeCompare(b.name)),
+        bbSubthemes: [...(m.bbSubthemes ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
       }));
+
       form.setBbSubthemeId(row.id);
     } catch (e: any) {
       alert(e?.message || "Failed to create subtheme.");
@@ -135,10 +184,12 @@ export default function AddItemModal({
     try {
       const row = await safeInsertLookup("card_manufacturers", name);
       if (!row) return;
-      setMeta((m) => ({
+
+      setMeta((m: CatalogMeta) => ({
         ...m,
-        cardManufacturers: [...m.cardManufacturers, row as any].sort((a, b) => a.name.localeCompare(b.name)),
+        cardManufacturers: [...(m.cardManufacturers ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
       }));
+
       form.setCardManufacturerId(row.id);
       form.setCardSetId("");
     } catch (e: any) {
@@ -158,7 +209,12 @@ export default function AddItemModal({
         "id,name,manufacturer_id"
       );
       if (!row) return;
-      setMeta((m) => ({ ...m, cardSets: [...m.cardSets, row as any].sort((a, b) => a.name.localeCompare(b.name)) }));
+
+      setMeta((m: CatalogMeta) => ({
+        ...m,
+        cardSets: [...(m.cardSets ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
+      }));
+
       form.setCardSetId(row.id);
     } catch (e: any) {
       alert(e?.message || "Failed to create set.");
@@ -171,7 +227,12 @@ export default function AddItemModal({
     try {
       const row = await safeInsertLookup("card_types", name);
       if (!row) return;
-      setMeta((m) => ({ ...m, cardTypes: [...m.cardTypes, row as any].sort((a, b) => a.name.localeCompare(b.name)) }));
+
+      setMeta((m: CatalogMeta) => ({
+        ...m,
+        cardTypes: [...(m.cardTypes ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
+      }));
+
       form.setCardTypeId(row.id);
     } catch (e: any) {
       alert(e?.message || "Failed to create card type.");
@@ -184,10 +245,12 @@ export default function AddItemModal({
     try {
       const row = await safeInsertLookup("music_artists", name);
       if (!row) return;
-      setMeta((m) => ({
+
+      setMeta((m: CatalogMeta) => ({
         ...m,
-        musicArtists: [...m.musicArtists, row as any].sort((a, b) => a.name.localeCompare(b.name)),
+        musicArtists: [...(m.musicArtists ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
       }));
+
       form.setMusicArtistId(row.id);
     } catch (e: any) {
       alert(e?.message || "Failed to create artist.");
@@ -200,10 +263,12 @@ export default function AddItemModal({
     try {
       const row = await safeInsertLookup("toy_manufacturers", name);
       if (!row) return;
-      setMeta((m) => ({
+
+      setMeta((m: CatalogMeta) => ({
         ...m,
-        toyManufacturers: [...m.toyManufacturers, row as any].sort((a, b) => a.name.localeCompare(b.name)),
+        toyManufacturers: [...(m.toyManufacturers ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
       }));
+
       form.setToyManufacturerId(row.id);
       form.setToyBrandId("");
       form.setToyLineId("");
@@ -224,7 +289,12 @@ export default function AddItemModal({
         "id,name,manufacturer_id"
       );
       if (!row) return;
-      setMeta((m) => ({ ...m, toyBrands: [...m.toyBrands, row as any].sort((a, b) => a.name.localeCompare(b.name)) }));
+
+      setMeta((m: CatalogMeta) => ({
+        ...m,
+        toyBrands: [...(m.toyBrands ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
+      }));
+
       form.setToyBrandId(row.id);
       form.setToyLineId("");
     } catch (e: any) {
@@ -239,7 +309,12 @@ export default function AddItemModal({
     try {
       const row = await safeInsertLookup("toy_lines", name, { brand_id: form.toyBrandId }, "id,name,brand_id");
       if (!row) return;
-      setMeta((m) => ({ ...m, toyLines: [...m.toyLines, row as any].sort((a, b) => a.name.localeCompare(b.name)) }));
+
+      setMeta((m: CatalogMeta) => ({
+        ...m,
+        toyLines: [...(m.toyLines ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
+      }));
+
       form.setToyLineId(row.id);
     } catch (e: any) {
       alert(e?.message || "Failed to create toy line.");
@@ -252,7 +327,11 @@ export default function AddItemModal({
     try {
       const row = await safeInsertLookup("people", name);
       if (!row) return;
-      setMeta((m) => ({ ...m, people: [...m.people, row as any].sort((a, b) => a.name.localeCompare(b.name)) }));
+
+      setMeta((m: CatalogMeta) => ({
+        ...m,
+        people: [...(m.people ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
+      }));
     } catch (e: any) {
       alert(e?.message || "Failed to create person.");
     }
@@ -264,10 +343,12 @@ export default function AddItemModal({
     try {
       const row = await safeInsertLookup("game_platforms", name);
       if (!row) return;
-      setMeta((m) => ({
+
+      setMeta((m: CatalogMeta) => ({
         ...m,
-        gamePlatforms: [...m.gamePlatforms, row as any].sort((a, b) => a.name.localeCompare(b.name)),
+        gamePlatforms: [...(m.gamePlatforms ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
       }));
+
       form.setGamePlatformId(row.id);
     } catch (e: any) {
       alert(e?.message || "Failed to create platform.");
@@ -280,10 +361,12 @@ export default function AddItemModal({
     try {
       const row = await safeInsertLookup("game_publishers", name);
       if (!row) return;
-      setMeta((m) => ({
+
+      setMeta((m: CatalogMeta) => ({
         ...m,
-        gamePublishers: [...m.gamePublishers, row as any].sort((a, b) => a.name.localeCompare(b.name)),
+        gamePublishers: [...(m.gamePublishers ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
       }));
+
       form.setGamePublisherId(row.id);
     } catch (e: any) {
       alert(e?.message || "Failed to create publisher.");
@@ -296,10 +379,12 @@ export default function AddItemModal({
     try {
       const row = await safeInsertLookup("comic_publishers", name);
       if (!row) return;
-      setMeta((m) => ({
+
+      setMeta((m: CatalogMeta) => ({
         ...m,
-        comicPublishers: [...m.comicPublishers, row as any].sort((a, b) => a.name.localeCompare(b.name)),
+        comicPublishers: [...(m.comicPublishers ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
       }));
+
       form.setComicPublisherId(row.id);
     } catch (e: any) {
       alert(e?.message || "Failed to create comic publisher.");
