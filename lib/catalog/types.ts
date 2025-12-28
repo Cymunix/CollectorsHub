@@ -54,9 +54,9 @@ export type MinifigRow = {
   created_at: string | null;
 };
 
-// ✅ UI-friendly minifig type (your queries alias minifig_id -> id)
+// UI-friendly minifig type (queries alias minifig_id → id)
 export type CatalogMinifig = {
-  id: string; // aliased from minifig_id
+  id: string;
   name: string | null;
   minifig_number: string;
   image_url: string | null;
@@ -65,7 +65,7 @@ export type CatalogMinifig = {
   created_at?: string | null;
 };
 
-// ✅ Selected minifigs carry qty (so sets can have duplicates)
+// Selected minifigs carry qty (sets can contain duplicates)
 export type SelectedMinifig = CatalogMinifig & { qty: number };
 
 export type CatalogCard = {
@@ -103,3 +103,17 @@ export type CatalogCard = {
 };
 
 export type QuickAddDefault = "collection" | "wishlist" | "both" | "ask";
+
+/* ============================================================
+   BACK-COMPAT / SHIMS (required for validators + older code)
+   ============================================================ */
+
+// Older validators expect VariantDraft to exist.
+// This keeps the build green without locking the shape yet.
+export type VariantDraft = Record<string, any>;
+
+// Simple key/value helper used by validators & wiki-style metadata
+export type WikiKV = {
+  k: string;
+  v: string;
+};
