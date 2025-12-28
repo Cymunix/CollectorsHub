@@ -1,118 +1,127 @@
-// components/catalog/add-item/hooks/useAddItemForm.ts
 "use client";
 
 import { useMemo, useState } from "react";
-import type { AddItemMeta, ItemKind, WikiKV } from "@/lib/catalog/types";
+import type { ItemKind, WikiKV } from "@/lib/catalog/types";
 import { detectKindFromCategoryName } from "@/lib/catalog/normalize";
 
+/**
+ * Minimal meta shape required by this hook.
+ * We intentionally keep it loose to avoid build breaks when meta evolves.
+ */
+export type AddItemMeta = {
+  categories: Array<{ id: string; name: string }>;
+  subcategories: Array<{ id: string; name: string; category_id?: string | null }>;
+  franchises: Array<{ id: string; name: string }>;
+  people: Array<{ id: string; name: string }>;
+
+  bbThemes?: any[];
+  bbSubthemes?: any[];
+
+  cardManufacturers?: any[];
+  cardSets?: any[];
+  cardTypes?: any[];
+
+  musicArtists?: any[];
+
+  toyManufacturers?: any[];
+  toyBrands?: any[];
+  toyLines?: any[];
+
+  gamePlatforms?: any[];
+  gamePublishers?: any[];
+
+  comicPublishers?: any[];
+
+  [key: string]: any;
+};
+
 export function useAddItemForm(meta: AddItemMeta) {
-  // classification
-  const [categoryId, setCategoryId] = useState("");
-  const [subcategoryId, setSubcategoryId] = useState("");
-  const [franchiseId, setFranchiseId] = useState("");
+  // ---------- core classification ----------
+  const [categoryId, setCategoryId] = useState<string>("");
+  const [subcategoryId, setSubcategoryId] = useState<string>("");
+  const [franchiseId, setFranchiseId] = useState<string>("");
 
-  const selectedCategory = useMemo(() => meta.categories.find((c) => c.id === categoryId) ?? null, [meta.categories, categoryId]);
-
-  const itemKind = useMemo<ItemKind>(() => {
-    if (!selectedCategory) return "building_blocks";
-    return detectKindFromCategoryName(selectedCategory.name);
-  }, [selectedCategory]);
-
-  const modalSubcategories = useMemo(
-    () => meta.subcategories.filter((sc) => !categoryId || sc.category_id === categoryId),
-    [meta.subcategories, categoryId]
-  );
-
-  // shared image
+  // ---------- image ----------
   const [itemImageFile, setItemImageFile] = useState<File | null>(null);
   const [itemImagePreview, setItemImagePreview] = useState<string | null>(null);
 
-  // global fields
+  // ---------- global fields ----------
   const [catalogName, setCatalogName] = useState("");
-  const [catalogReleaseYear, setCatalogReleaseYear] = useState("");
-  const [catalogUPC, setCatalogUPC] = useState("");
-  const [catalogVersion, setCatalogVersion] = useState("");
+  const [catalogReleaseYear, setCatalogReleaseYear] = useState<string>("");
+  const [catalogUPC, setCatalogUPC] = useState<string>("");
+  const [catalogVersion, setCatalogVersion] = useState<string>("");
 
-  // wiki
+  // ---------- wiki ----------
   const [wikiSummary, setWikiSummary] = useState("");
   const [wikiDescription, setWikiDescription] = useState("");
   const [wikiFacts, setWikiFacts] = useState<WikiKV[]>([]);
   const [wikiChecklist, setWikiChecklist] = useState<string[]>([]);
   const [wikiSources, setWikiSources] = useState<string[]>([]);
+
   const [newFactKey, setNewFactKey] = useState("");
   const [newFactVal, setNewFactVal] = useState("");
   const [newChecklistItem, setNewChecklistItem] = useState("");
   const [newSource, setNewSource] = useState("");
 
-  // building blocks
-  const [bbThemeId, setBbThemeId] = useState("");
-  const [bbSubthemeId, setBbSubthemeId] = useState("");
-  const [bbSetNumber, setBbSetNumber] = useState("");
-  const [bbPieceCount, setBbPieceCount] = useState("");
-  const [bbRetailCad, setBbRetailCad] = useState("");
-  const [bbRetailUsd, setBbRetailUsd] = useState("");
+  // ---------- building blocks ----------
+  const [bbThemeId, setBbThemeId] = useState<string>("");
+  const [bbSubthemeId, setBbSubthemeId] = useState<string>("");
+  const [bbSetNumber, setBbSetNumber] = useState<string>("");
+  const [bbPieceCount, setBbPieceCount] = useState<string>("");
+  const [bbRetailCad, setBbRetailCad] = useState<string>("");
+  const [bbRetailUsd, setBbRetailUsd] = useState<string>("");
 
-  const bbThemeOptions = useMemo(
-    () => meta.bbThemes.filter((t) => !subcategoryId || t.subcategory_id === subcategoryId),
-    [meta.bbThemes, subcategoryId]
-  );
-  const bbSubthemeOptions = useMemo(
-    () => meta.bbSubthemes.filter((st) => !bbThemeId || st.theme_id === bbThemeId),
-    [meta.bbSubthemes, bbThemeId]
-  );
+  // ---------- cards ----------
+  const [cardManufacturerId, setCardManufacturerId] = useState<string>("");
+  const [cardSetId, setCardSetId] = useState<string>("");
+  const [cardTypeId, setCardTypeId] = useState<string>("");
+  const [cardNumber, setCardNumber] = useState<string>("");
+  const [cardYear, setCardYear] = useState<string>("");
+  const [cardRarityDropdown, setCardRarityDropdown] = useState<string>("");
+  const [cardRarityCustom, setCardRarityCustom] = useState<string>("");
 
-  // cards
-  const [cardManufacturerId, setCardManufacturerId] = useState("");
-  const [cardSetId, setCardSetId] = useState("");
-  const [cardTypeId, setCardTypeId] = useState("");
-  const [cardNumber, setCardNumber] = useState("");
-  const [cardYear, setCardYear] = useState("");
+  // ---------- music ----------
+  const [musicArtistId, setMusicArtistId] = useState<string>("");
 
-  // ✅ rarity (dropdown + custom)
-  const [cardRarityDropdown, setCardRarityDropdown] = useState("");
-  const [cardRarityCustom, setCardRarityCustom] = useState("");
+  // ---------- toys ----------
+  const [toyManufacturerId, setToyManufacturerId] = useState<string>("");
+  const [toyBrandId, setToyBrandId] = useState<string>("");
+  const [toyLineId, setToyLineId] = useState<string>("");
+  const [toyModelNumber, setToyModelNumber] = useState<string>("");
 
-  const cardSetOptions = useMemo(
-    () => meta.cardSets.filter((s) => !cardManufacturerId || s.manufacturer_id === cardManufacturerId),
-    [meta.cardSets, cardManufacturerId]
-  );
+  // ---------- gaming ----------
+  const [gamePlatformId, setGamePlatformId] = useState<string>("");
+  const [gamePublisherId, setGamePublisherId] = useState<string>("");
 
-  // music
-  const [musicArtistId, setMusicArtistId] = useState("");
+  // ---------- comics ----------
+  const [comicPublisherId, setComicPublisherId] = useState<string>("");
+  const [comicSeries, setComicSeries] = useState<string>("");
+  const [comicIssueNumber, setComicIssueNumber] = useState<string>("");
+  const [comicVariant, setComicVariant] = useState<string>("");
 
-  // toys
-  const [toyManufacturerId, setToyManufacturerId] = useState("");
-  const [toyBrandId, setToyBrandId] = useState("");
-  const [toyLineId, setToyLineId] = useState("");
-  const [toyModelNumber, setToyModelNumber] = useState("");
+  // ---------- derived ----------
+  const itemKind: ItemKind = useMemo(() => {
+    const cat = meta?.categories?.find((c) => c.id === categoryId)?.name ?? null;
+    return detectKindFromCategoryName(cat);
+  }, [meta, categoryId]);
 
-  const toyBrandOptions = useMemo(
-    () => meta.toyBrands.filter((b) => !toyManufacturerId || b.manufacturer_id === toyManufacturerId),
-    [meta.toyBrands, toyManufacturerId]
-  );
-  const toyLineOptions = useMemo(
-    () => meta.toyLines.filter((l) => !toyBrandId || l.brand_id === toyBrandId),
-    [meta.toyLines, toyBrandId]
-  );
+  // Options used by sections (keep it simple; if you have richer filtering elsewhere it can replace this)
+  const bbThemeOptions = useMemo(() => (meta?.bbThemes ?? []) as any[], [meta]);
+  const bbSubthemeOptions = useMemo(() => (meta?.bbSubthemes ?? []) as any[], [meta]);
 
-  // gaming
-  const [gamePlatformId, setGamePlatformId] = useState("");
-  const [gamePublisherId, setGamePublisherId] = useState("");
+  const cardSetOptions = useMemo(() => (meta?.cardSets ?? []) as any[], [meta]);
+  const toyBrandOptions = useMemo(() => (meta?.toyBrands ?? []) as any[], [meta]);
+  const toyLineOptions = useMemo(() => (meta?.toyLines ?? []) as any[], [meta]);
 
-  // comics
-  const [comicPublisherId, setComicPublisherId] = useState("");
-  const [comicSeries, setComicSeries] = useState("");
-  const [comicIssueNumber, setComicIssueNumber] = useState("");
-  const [comicVariant, setComicVariant] = useState("");
-
+  // ---------- helpers ----------
   const pickItemImage = (file: File | null) => {
     setItemImageFile(file);
-    if (itemImagePreview) URL.revokeObjectURL(itemImagePreview);
     if (!file) {
       setItemImagePreview(null);
       return;
     }
-    setItemImagePreview(URL.createObjectURL(file));
+    const url = URL.createObjectURL(file);
+    setItemImagePreview(url);
   };
 
   const reset = () => {
@@ -121,7 +130,6 @@ export function useAddItemForm(meta: AddItemMeta) {
     setFranchiseId("");
 
     setItemImageFile(null);
-    if (itemImagePreview) URL.revokeObjectURL(itemImagePreview);
     setItemImagePreview(null);
 
     setCatalogName("");
@@ -134,6 +142,7 @@ export function useAddItemForm(meta: AddItemMeta) {
     setWikiFacts([]);
     setWikiChecklist([]);
     setWikiSources([]);
+
     setNewFactKey("");
     setNewFactVal("");
     setNewChecklistItem("");
@@ -171,15 +180,8 @@ export function useAddItemForm(meta: AddItemMeta) {
   };
 
   return {
-    // derived
-    selectedCategory,
+    // derived kind
     itemKind,
-    modalSubcategories,
-    bbThemeOptions,
-    bbSubthemeOptions,
-    cardSetOptions,
-    toyBrandOptions,
-    toyLineOptions,
 
     // classification
     categoryId,
@@ -237,6 +239,8 @@ export function useAddItemForm(meta: AddItemMeta) {
     setBbRetailCad,
     bbRetailUsd,
     setBbRetailUsd,
+    bbThemeOptions,
+    bbSubthemeOptions,
 
     // cards
     cardManufacturerId,
@@ -249,11 +253,11 @@ export function useAddItemForm(meta: AddItemMeta) {
     setCardNumber,
     cardYear,
     setCardYear,
-
     cardRarityDropdown,
     setCardRarityDropdown,
     cardRarityCustom,
     setCardRarityCustom,
+    cardSetOptions,
 
     // music
     musicArtistId,
@@ -268,6 +272,8 @@ export function useAddItemForm(meta: AddItemMeta) {
     setToyLineId,
     toyModelNumber,
     setToyModelNumber,
+    toyBrandOptions,
+    toyLineOptions,
 
     // gaming
     gamePlatformId,
@@ -285,6 +291,7 @@ export function useAddItemForm(meta: AddItemMeta) {
     comicVariant,
     setComicVariant,
 
+    // reset
     reset,
   };
 }
