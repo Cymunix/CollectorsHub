@@ -8,6 +8,23 @@ import ChipList from "../../blocks/ChipList";
 // local type (because "@/lib/catalog/types" does NOT export Person)
 type Person = { id: string; name: string };
 
+function RemoveChip({ label, onRemove }: { label: string; onRemove: () => void }) {
+  return (
+    <span className="inline-flex items-center gap-2 rounded-full border bg-white px-2 py-1 text-[11px]">
+      <span className="max-w-[200px] truncate">{label}</span>
+      <button
+        type="button"
+        onClick={onRemove}
+        className="rounded-full border px-1.5 py-0.5 text-[10px] font-semibold hover:bg-gray-50"
+        aria-label={`Remove ${label}`}
+        title="Remove"
+      >
+        ×
+      </button>
+    </span>
+  );
+}
+
 export default function MoviesSection({
   personQuery,
   setPersonQuery,
@@ -43,93 +60,55 @@ export default function MoviesSection({
         <span className="text-[11px] text-gray-500">Directors & cast (optional)</span>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div className="space-y-4">
+        {/* Search */}
         <div className="space-y-2">
           <div className="text-[11px] font-semibold text-gray-700">Search people</div>
-          <div className="flex gap-2">
-            <TextInput
-              value={personQuery}
-              onChange={(e) => setPersonQuery(e.target.value)}
-              placeholder="Type a name…"
-            />
+          <div className="flex flex-wrap gap-2 items-center">
+            <div className="min-w-[220px] flex-1">
+              <TextInput
+                value={personQuery}
+                onChange={(e) => setPersonQuery(e.target.value)}
+                placeholder="Type a name…"
+              />
+            </div>
+
             <button
               type="button"
               onClick={onSearchPeople}
-              className="rounded-lg border px-3 text-[11px] font-semibold hover:bg-gray-50"
+              className="rounded-lg border px-3 py-2 text-[11px] font-semibold hover:bg-gray-50"
               disabled={personSearching}
             >
-              {personSearching ? "…" : "Search"}
+              {personSearching ? "Searching…" : "Search"}
             </button>
+
             <button
               type="button"
               onClick={onCreatePerson}
-              className="rounded-lg border px-3 text-[11px] font-semibold hover:bg-gray-50"
+              className="rounded-lg border px-3 py-2 text-[11px] font-semibold hover:bg-gray-50"
             >
               + New
             </button>
           </div>
 
+          {/* Results */}
           {personResults.length ? (
-            <div className="rounded-xl border p-2">
-              <div className="text-[11px] text-gray-500 mb-1">Results</div>
+            <div className="rounded-xl border p-3">
+              <div className="text-[11px] text-gray-500 mb-2">Results</div>
               <div className="flex flex-wrap gap-2">
                 {personResults.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    className="rounded-full border px-2 py-1 text-[11px] hover:bg-gray-50"
-                    onClick={() => onAddActor(p)}
-                    title="Click to add as Actor"
-                  >
-                    {p.name}
-                  </button>
-                ))}
-              </div>
-              <div className="mt-2 text-[10px] text-gray-400">
-                Tip: click a name to add as Actor, then move to Director below if needed.
-              </div>
-            </div>
-          ) : (
-            <div className="text-[11px] text-gray-400">No results yet.</div>
-          )}
-        </div>
-
-        <div className="space-y-3">
-          <div>
-            <div className="text-[11px] font-semibold text-gray-700 mb-1">Directors</div>
-            <ChipList
-              items={directorPeople.map((p) => ({ id: p.id, label: p.name }))}
-              onRemove={(id) => onRemoveDirector(id)}
-              emptyText="None"
-            />
-          </div>
-
-          <div>
-            <div className="text-[11px] font-semibold text-gray-700 mb-1">Actors</div>
-            <ChipList
-              items={actorPeople.map((p) => ({ id: p.id, label: p.name }))}
-              onRemove={(id) => onRemoveActor(id)}
-              emptyText="None"
-            />
-          </div>
-
-          {/* optional: quick add buttons if your UI expects it */}
-          {personResults.length ? (
-            <div className="rounded-xl border p-2">
-              <div className="text-[11px] text-gray-500 mb-2">Add from results</div>
-              <div className="flex flex-wrap gap-2">
-                {personResults.map((p) => (
-                  <div key={p.id} className="flex gap-1">
+                  <div key={p.id} className="flex items-center gap-2">
+                    <span className="text-[11px]">{p.name}</span>
                     <button
                       type="button"
-                      className="rounded-lg border px-2 py-1 text-[11px] hover:bg-gray-50"
+                      className="rounded-lg border px-2 py-1 text-[11px] font-semibold hover:bg-gray-50"
                       onClick={() => onAddDirector(p)}
                     >
                       + Director
                     </button>
                     <button
                       type="button"
-                      className="rounded-lg border px-2 py-1 text-[11px] hover:bg-gray-50"
+                      className="rounded-lg border px-2 py-1 text-[11px] font-semibold hover:bg-gray-50"
                       onClick={() => onAddActor(p)}
                     >
                       + Actor
@@ -138,7 +117,37 @@ export default function MoviesSection({
                 ))}
               </div>
             </div>
-          ) : null}
+          ) : (
+            <div className="text-[11px] text-gray-400">No results yet.</div>
+          )}
+        </div>
+
+        {/* Directors */}
+        <div className="space-y-2">
+          <div className="text-[11px] font-semibold text-gray-700">Directors</div>
+          {directorPeople.length ? (
+            <ChipList
+              items={directorPeople}
+              getKey={(p) => p.id}
+              render={(p) => <RemoveChip label={p.name} onRemove={() => onRemoveDirector(p.id)} />}
+            />
+          ) : (
+            <div className="text-[11px] text-gray-400">None</div>
+          )}
+        </div>
+
+        {/* Actors */}
+        <div className="space-y-2">
+          <div className="text-[11px] font-semibold text-gray-700">Actors</div>
+          {actorPeople.length ? (
+            <ChipList
+              items={actorPeople}
+              getKey={(p) => p.id}
+              render={(p) => <RemoveChip label={p.name} onRemove={() => onRemoveActor(p.id)} />}
+            />
+          ) : (
+            <div className="text-[11px] text-gray-400">None</div>
+          )}
         </div>
       </div>
     </div>
