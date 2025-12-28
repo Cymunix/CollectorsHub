@@ -58,12 +58,16 @@ export function useUserProfile(): UseUserProfileState {
 
     inflightRef.current = (async () => {
       try {
+        // ✅ FIX: Supabase PostgrestBuilder is not typed as Promise.
+        // Wrap it so withTimeout receives a real Promise.
         const res = await withTimeout(
-          supabase
-            .from("profiles")
-            .select("username, first_name, last_name, role, shipping_address, residential_address")
-            .eq("id", userId)
-            .maybeSingle(),
+          (async () => {
+            return await supabase
+              .from("profiles")
+              .select("username, first_name, last_name, role, shipping_address, residential_address")
+              .eq("id", userId)
+              .maybeSingle();
+          })(),
           3000
         );
 
@@ -98,7 +102,6 @@ export function useUserProfile(): UseUserProfileState {
           return;
         }
 
-        // IMPORTANT:
         // maybeSingle() can return { data: null, error: null } when no row found.
         // Do NOT overwrite role to "collector" in that case — keep stable previous.
         if (!profileData) {
@@ -142,10 +145,7 @@ export function useUserProfile(): UseUserProfileState {
           const shipping = profileData.shipping_address ?? prevUser?.shippingAddress ?? null;
           const residential = profileData.residential_address ?? prevUser?.residentialAddress ?? null;
 
-          const rawAddress =
-            (shipping && String(shipping).trim()) ||
-            (residential && String(residential).trim()) ||
-            "";
+          const rawAddress = (shipping && String(shipping).trim()) || (residential && String(residential).trim()) || "";
           const addressLabel = rawAddress ? rawAddress.split("\n")[0].trim() : "Set mailing address";
 
           return {
@@ -233,7 +233,6 @@ export function useUserProfile(): UseUserProfileState {
       }
 
       // Don’t thrash UI on refresh events — keep existing UI while we refresh in background.
-      // If you *want* a spinner, do it in the component, not by nuking role.
       setState((s) => ({ ...s, error: null }));
       await loadProfile(session.user.id, session.user.email ?? null);
     });
