@@ -11,14 +11,21 @@ import { useUserProfile } from "@/lib/useUserProfile";
 type StoreType = "pawn" | "retail";
 type TabKey = "all" | "followed";
 
+type StoreRole = "store" | "pawn";
+
 type StoreRow = {
   id: string; // profiles.id
   username: string;
-  role: "store" | "pawn";
+  role: StoreRole;
   profile_picture_url: string | null;
 };
 
-function StoreBadge({ role }: { role: "store" | "pawn" }) {
+function normalizeStoreRole(raw: any): StoreRole {
+  const r = String(raw ?? "").trim().toLowerCase();
+  return r === "pawn" ? "pawn" : "store"; // default to store
+}
+
+function StoreBadge({ role }: { role: StoreRole }) {
   const label = role === "pawn" ? "Pawn Store" : "Store";
   return (
     <span className="inline-flex items-center rounded-full border bg-white px-2 py-0.5 text-[10px] font-semibold text-gray-700">
@@ -69,7 +76,6 @@ export default function StoresPage() {
   const [rows, setRows] = useState<StoreRow[]>([]);
   const [typeFilter, setTypeFilter] = useState<"all" | StoreType>("all");
 
-  // NEW: dedicated store search (not tied to header search)
   const [storeSearch, setStoreSearch] = useState("");
 
   const [followedIds, setFollowedIds] = useState<string[]>([]);
@@ -121,7 +127,7 @@ export default function StoresPage() {
         .map((r) => ({
           id: String(r.id),
           username: String(r.username ?? "Store").trim() || "Store",
-          role: r.role === "pawn" ? "pawn" : "store",
+          role: normalizeStoreRole(r.role),
           profile_picture_url: r.profile_picture_url ? String(r.profile_picture_url) : null,
         }))
         .filter((s) => Boolean(s.id));
@@ -184,11 +190,7 @@ export default function StoresPage() {
 
             <div className="mt-3 flex items-center gap-2">
               <TabButton active={tab === "all"} label="All Stores" onClick={() => setTab("all")} />
-              <TabButton
-                active={tab === "followed"}
-                label={`Followed (${followedIds.length})`}
-                onClick={() => setTab("followed")}
-              />
+              <TabButton active={tab === "followed"} label={`Followed (${followedIds.length})`} onClick={() => setTab("followed")} />
             </div>
           </div>
 
@@ -238,8 +240,8 @@ export default function StoresPage() {
                   ? "No followed stores match your search."
                   : "You aren’t following any stores yet."
                 : storeSearch
-                  ? "No stores match your search."
-                  : "No stores found."}
+                ? "No stores match your search."
+                : "No stores found."}
             </div>
           </div>
         ) : (
@@ -248,15 +250,8 @@ export default function StoresPage() {
               const isFollowing = followedIds.includes(s.id);
 
               return (
-                <div
-                  key={s.id}
-                  className="rounded-2xl border bg-white shadow-sm hover:shadow-md transition overflow-hidden"
-                >
-                  <button
-                    type="button"
-                    onClick={() => router.push(`/stores/${s.id}`)}
-                    className="w-full text-left"
-                  >
+                <div key={s.id} className="rounded-2xl border bg-white shadow-sm hover:shadow-md transition overflow-hidden">
+                  <button type="button" onClick={() => router.push(`/stores/${s.id}`)} className="w-full text-left">
                     <div className="flex items-center gap-3 p-4">
                       <div className="h-12 w-12 rounded-xl bg-[#EEF2F7] overflow-hidden flex items-center justify-center">
                         {s.profile_picture_url ? (
@@ -282,7 +277,7 @@ export default function StoresPage() {
                       type="button"
                       onClick={(e) => {
                         e.preventDefault();
-                        e.stopPropagation(); // critical: don't open store
+                        e.stopPropagation();
                         toggleFollow(s.id);
                       }}
                       className={[
