@@ -3,25 +3,61 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import type {
-  AddItemMeta,
-  Category,
-  Subcategory,
-  Franchise,
-  BbTheme,
-  BbSubtheme,
-  CardManufacturer,
-  CardSet,
-  CardType,
-  MusicArtist,
-  ToyManufacturer,
-  ToyBrand,
-  ToyLine,
-  Person,
-  GamePlatform,
-  GamePublisher,
-  ComicPublisher,
-} from "@/lib/catalog/types";
+
+/* ---------------- local types ---------------- */
+
+type Category = { id: string; name: string };
+type Subcategory = { id: string; name: string; category_id: string | null };
+
+type Franchise = { id: string; name: string };
+
+type BbTheme = { id: string; name: string; subcategory_id: string | null };
+type BbSubtheme = { id: string; name: string; theme_id: string | null };
+
+type CardManufacturer = { id: string; name: string };
+type CardSet = { id: string; name: string; manufacturer_id: string | null };
+type CardType = { id: string; name: string };
+
+type MusicArtist = { id: string; name: string };
+
+type ToyManufacturer = { id: string; name: string };
+type ToyBrand = { id: string; name: string; manufacturer_id: string | null };
+type ToyLine = { id: string; name: string; brand_id: string | null };
+
+type Person = { id: string; name: string };
+
+type GamePlatform = { id: string; name: string };
+type GamePublisher = { id: string; name: string };
+
+type ComicPublisher = { id: string; name: string };
+
+export type AddItemMeta = {
+  categories: Category[];
+  subcategories: Subcategory[];
+  franchises: Franchise[];
+
+  bbThemes: BbTheme[];
+  bbSubthemes: BbSubtheme[];
+
+  cardManufacturers: CardManufacturer[];
+  cardSets: CardSet[];
+  cardTypes: CardType[];
+
+  musicArtists: MusicArtist[];
+
+  toyManufacturers: ToyManufacturer[];
+  toyBrands: ToyBrand[];
+  toyLines: ToyLine[];
+
+  people: Person[];
+
+  gamePlatforms: GamePlatform[];
+  gamePublishers: GamePublisher[];
+
+  comicPublishers: ComicPublisher[];
+};
+
+/* ---------------- hook ---------------- */
 
 export function useCatalogMeta(open: boolean) {
   const [metaLoading, setMetaLoading] = useState(false);
@@ -106,6 +142,7 @@ export function useCatalogMeta(open: boolean) {
           supabase.from("comic_publishers").select("id,name").order("name"),
         ]);
 
+        // hard fail only on the foundational tables
         if (catRes.error) throw catRes.error;
         if (subRes.error) throw subRes.error;
 
@@ -137,6 +174,7 @@ export function useCatalogMeta(open: boolean) {
           comicPublishers: comicPubRes.error ? [] : ((comicPubRes.data ?? []) as ComicPublisher[]),
         });
       } catch (e: any) {
+        console.error(e);
         if (!cancelled) setMetaError(e?.message || "Failed to load catalog metadata.");
       } finally {
         if (!cancelled) setMetaLoading(false);
@@ -150,3 +188,5 @@ export function useCatalogMeta(open: boolean) {
 
   return { meta, setMeta, metaLoading, metaError };
 }
+
+export default useCatalogMeta;
