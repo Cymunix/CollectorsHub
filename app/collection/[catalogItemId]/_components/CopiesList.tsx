@@ -52,10 +52,7 @@ export default function CopiesList({
   const [open, setOpen] = useState(false);
   const [activeCopyId, setActiveCopyId] = useState<string | null>(null);
 
-  const activeCopy = useMemo(
-    () => copies.find((c) => c.id === activeCopyId) ?? null,
-    [copies, activeCopyId]
-  );
+  const activeCopy = useMemo(() => copies.find((c) => c.id === activeCopyId) ?? null, [copies, activeCopyId]);
 
   return (
     <div className="rounded-3xl border bg-white shadow-sm p-5">
@@ -77,8 +74,11 @@ export default function CopiesList({
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
                       <div className="text-sm font-semibold text-gray-900">Copy #{copies.length - idx}</div>
-                      <ConditionPill grade={c.grade ?? null} copy={c as any} />
+
+                      {/* ✅ FIX: ConditionPill props */}
+                      <ConditionPill userCollectionItemId={c.id} readOnly />
                     </div>
+
                     <div className="mt-1 text-xs text-gray-500">{fmtDate(c.created_at)}</div>
 
                     <div className="mt-3 flex flex-wrap gap-2">
