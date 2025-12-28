@@ -1,4 +1,3 @@
-// app/purchases/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -42,7 +41,7 @@ function formatDate(iso: string | null | undefined) {
   return d.toLocaleString("en-CA", { year: "numeric", month: "short", day: "2-digit" });
 }
 
-export default function PurchasesPage() {
+export default function PurchasesHistoryPage() {
   const [showAuth, setShowAuth] = useState(false);
 
   const [authUserId, setAuthUserId] = useState<string | null>(null);
@@ -55,7 +54,6 @@ export default function PurchasesPage() {
   const [busy, setBusy] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  // Auth source of truth
   useEffect(() => {
     let cancelled = false;
 
@@ -77,7 +75,6 @@ export default function PurchasesPage() {
     };
   }, []);
 
-  // Load purchases
   useEffect(() => {
     let cancelled = false;
 
@@ -170,7 +167,6 @@ export default function PurchasesPage() {
       <AuthModal open={showAuth} onClose={() => setShowAuth(false)} />
 
       <main className="mx-auto max-w-6xl px-4 pb-16 pt-6">
-        {/* Page header (since SecondaryNav doesn't take title/subtitle props) */}
         <div className="mb-4">
           <h1 className="text-xl font-semibold text-[#0F172A]">Purchase History</h1>
           <p className="mt-1 text-sm text-[#64748B]">Everything you’ve bought on CollectorsHub</p>
@@ -229,7 +225,7 @@ export default function PurchasesPage() {
               <div className="mt-6 divide-y">
                 {items.map((r) => {
                   const ci = catalogById[r.catalog_item_id];
-                  const title = (ci?.title ?? ci?.name ?? "Untitled item") as string;
+                  const title = String(ci?.title ?? ci?.name ?? "Untitled item");
                   const photo = photoByCatalogId[r.catalog_item_id] ?? null;
 
                   return (
@@ -252,3 +248,14 @@ export default function PurchasesPage() {
                         <div className="text-sm font-semibold text-[#0F172A]">{formatMoney(r.sale_price_cad)}</div>
                         <div className="text-xs text-[#64748B]">CAD</div>
                       </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </main>
+    </>
+  );
+}
