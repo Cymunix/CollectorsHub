@@ -372,21 +372,31 @@ export default function ItemListingsTab({
                 {listings.map((l) => {
                   const { conditionScore: lScore, gradingCompany, gradeValue, gradeLabel } = listingPricingInputs(l);
 
-                  const fairRaw = getFairValue({
-                    baseMarketPrice,
-                    category: categoryName ?? null,
-                    conditionScore: lScore,
-                    gradingCompany,
-                    gradeValue,
-                    gradeLabel,
-                  });
+                  // ✅ FIX: only call getFairValue when we have market data
+                  const fairRaw =
+                    baseMarketPrice == null
+                      ? null
+                      : getFairValue({
+                          baseMarketPrice,
+                          category: categoryName ?? null,
+                          conditionScore: lScore,
+                          gradingCompany,
+                          gradeValue,
+                          gradeLabel,
+                        });
 
                   const fair = normalizeFairValueResult(fairRaw);
 
-                  const badge = getDealBadge({
-                    listingPrice: typeof l.price_cad === "number" ? l.price_cad : l.price_cad === null ? null : Number(l.price_cad),
-                    fairValue: fair.value,
-                  });
+                  const listingPrice =
+                    typeof l.price_cad === "number" ? l.price_cad : l.price_cad === null ? null : Number(l.price_cad);
+
+                  const badge =
+                    listingPrice != null && fair.value != null
+                      ? getDealBadge({
+                          listingPrice,
+                          fairValue: fair.value,
+                        })
+                      : null;
 
                   return (
                     <div key={l.id} className="rounded-xl border border-[#E5E9F2] bg-white p-3">
@@ -414,7 +424,9 @@ export default function ItemListingsTab({
                             <div className="text-sm font-bold text-[#0F172A] shrink-0">{money(l.price_cad)}</div>
                           </div>
 
-                          <div className="mt-0.5 text-[11px] text-[#94A3B8]">{l.created_at ? `listed • ${new Date(l.created_at).toLocaleDateString()}` : ""}</div>
+                          <div className="mt-0.5 text-[11px] text-[#94A3B8]">
+                            {l.created_at ? `listed • ${new Date(l.created_at).toLocaleDateString()}` : ""}
+                          </div>
 
                           <div className="mt-2 flex items-center gap-2">
                             <button
