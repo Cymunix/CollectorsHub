@@ -34,8 +34,6 @@ function deriveGradeLabel(gradingCompany: string, gradeValue: any, isBlackLabel:
 }
 
 function normalizeCert(input: any): string {
-  // Keep it simple: trim + collapse spaces + limit length.
-  // (No hard validation because cert formats vary by company.)
   const s = String(input ?? "").trim().replace(/\s+/g, " ");
   return s.slice(0, 64);
 }
@@ -108,7 +106,12 @@ function CheckboxRow({
   return (
     <div className={`rounded-xl border bg-white px-3 py-2 ${emphasize ? "border-[#F59E0B] bg-[#FFFBEB]" : "border-[#E5E9F2]"}`}>
       <label className="flex items-center gap-3">
-        <input type="checkbox" className="h-4 w-4 rounded border-[#CBD5E1]" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+        <input
+          type="checkbox"
+          className="h-4 w-4 rounded border-[#CBD5E1]"
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked)}
+        />
         <span className="text-sm text-[#0F172A]">{label}</span>
       </label>
       {subtext ? <div className="mt-2 text-xs text-[#64748B]">{subtext}</div> : null}
@@ -120,7 +123,11 @@ function SelectRow({ label, value, onChange, options }: { label: string; value: 
   return (
     <div className="rounded-xl border border-[#E5E9F2] bg-white px-3 py-2">
       <div className="text-sm text-[#0F172A] font-medium">{label}</div>
-      <select className="mt-2 w-full rounded-lg border border-[#E5E9F2] bg-white px-3 py-2 text-sm" value={value} onChange={(e) => onChange(e.target.value)}>
+      <select
+        className="mt-2 w-full rounded-lg border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
         <option value="">—</option>
         {options.map((o) => (
           <option key={o} value={o}>
@@ -323,11 +330,6 @@ export default function ItemConditionSelector({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isGradableCategory, isGraded, conditionValues?.gradeValue, conditionValues?.gradingCompany, conditionValues?.isBlackLabel]);
 
-  /**
-   * Compact right-side summary:
-   * - Shows only once (no duplication)
-   * - Bigger + bolder like you asked
-   */
   const summaryRight = useMemo(() => {
     if (!!conditionValues["for_parts"]) return { scoreText: "For Parts", labelText: "" };
 
@@ -336,7 +338,6 @@ export default function ItemConditionSelector({
       return { scoreText: String(s), labelText: getConditionLabel(s) };
     }
 
-    // For LEGO we keep it minimal (checkbox-based)
     const all = sections.flatMap((s) => s.fields);
     const checked = all.filter((f) => f.type === "checkbox" && !!conditionValues[f.key]).length;
     if (checked === 0) return { scoreText: "", labelText: "Select what's included" };
@@ -350,9 +351,7 @@ export default function ItemConditionSelector({
         !isBuildingBlocks ? (
           <div className="flex items-baseline gap-2">
             <span className="text-2xl font-extrabold text-[#0F172A]">{summaryRight.scoreText}</span>
-            <span className="text-base font-bold text-[#0F172A]">
-              {summaryRight.labelText ? `— ${summaryRight.labelText}` : ""}
-            </span>
+            <span className="text-base font-bold text-[#0F172A]">{summaryRight.labelText ? `— ${summaryRight.labelText}` : ""}</span>
             {isGradableCategory && isGraded && conditionValues?.gradeLabel ? (
               <span className="text-sm font-semibold text-[#64748B]">• {String(conditionValues.gradeLabel)}</span>
             ) : null}
@@ -362,7 +361,6 @@ export default function ItemConditionSelector({
         )
       }
     >
-      {/* NON-LEGO: Big 1–10 selector (grading still supported) */}
       {!isBuildingBlocks ? (
         <div className="space-y-3">
           <ScorePills
@@ -387,14 +385,14 @@ export default function ItemConditionSelector({
                   next.gradeValue = null;
                   next.gradeLabel = null;
                   next.isBlackLabel = null;
-                  next.certificationNumber = null; // ✅ clear cert when switching back to raw
+                  next.certificationNumber = null;
                   onChange(next, clampScore(conditionScore, 8));
                   return;
                 }
 
                 if (!next.gradingCompany) next.gradingCompany = "PSA";
                 if (next.gradeValue === null || next.gradeValue === undefined || next.gradeValue === "") next.gradeValue = 8;
-                if (next.certificationNumber === undefined) next.certificationNumber = ""; // ✅ default
+                if (next.certificationNumber === undefined) next.certificationNumber = "";
 
                 const derived = gradeToConditionScore(next.gradeValue, 8);
                 next.conditionScore = derived;
@@ -423,7 +421,9 @@ export default function ItemConditionSelector({
                   }
 
                   next.gradeLabel = deriveGradeLabel(String(v || ""), next.gradeValue, !!next.isBlackLabel);
-                  onChange(next, clampScore(next.conditionScore ?? conditionScore, 8));
+
+                  // ✅ don't read next.conditionScore (not guaranteed / TS-safe)
+                  onChange(next, clampScore(conditionScore, 8));
                 }}
               />
 
@@ -433,8 +433,8 @@ export default function ItemConditionSelector({
                   String(conditionValues?.gradingCompany || "").toUpperCase() === "BGS" && !!conditionValues?.isBlackLabel
                     ? "10"
                     : conditionValues?.gradeValue === null || conditionValues?.gradeValue === undefined
-                    ? ""
-                    : String(conditionValues.gradeValue)
+                      ? ""
+                      : String(conditionValues.gradeValue)
                 }
                 min={0}
                 max={10}
@@ -469,6 +469,8 @@ export default function ItemConditionSelector({
                   checked={!!conditionValues?.isBlackLabel}
                   onChange={(v) => {
                     const company = String(conditionValues?.gradingCompany || "").toUpperCase();
+
+                    // ✅ If BGS + checked => lock to 10
                     if (company === "BGS" && v) {
                       const next = {
                         ...conditionValues,
@@ -481,25 +483,28 @@ export default function ItemConditionSelector({
                       return;
                     }
 
+                    // ✅ Unchecked => keep current derived score (effect will keep it in sync)
                     const next = {
                       ...conditionValues,
                       isBlackLabel: v,
                       gradeLabel: deriveGradeLabel(String(conditionValues?.gradingCompany || ""), conditionValues?.gradeValue, !!v),
                     };
-                    onChange(next, clampScore(next.conditionScore ?? conditionScore, 8));
+
+                    // ✅ don't read next.conditionScore
+                    onChange(next, clampScore(conditionScore, 8));
                   }}
                   subtext={<span className="text-[#64748B]">If checked, grade is locked to 10.</span>}
                 />
               ) : null}
 
-              {/* ✅ NEW: Certification Number */}
               <TextRow
                 label="Certification Number"
                 value={typeof conditionValues?.certificationNumber === "string" ? conditionValues.certificationNumber : ""}
                 placeholder="e.g. PSA 12345678 (exactly as shown on the slab)"
                 onChange={(v) => {
                   const next = { ...conditionValues, certificationNumber: normalizeCert(v) };
-                  onChange(next, clampScore(next.conditionScore ?? conditionScore, 8));
+                  // ✅ don't read next.conditionScore
+                  onChange(next, clampScore(conditionScore, 8));
                 }}
                 help={<span>Optional, but recommended for graded items (use the slab’s cert/serial).</span>}
               />
@@ -513,7 +518,6 @@ export default function ItemConditionSelector({
           ) : null}
         </div>
       ) : (
-        // LEGO / Building Blocks: keep your original checkbox-based system
         <div className="space-y-4">
           {sections.map((sec) => (
             <div key={sec.title}>
@@ -558,7 +562,9 @@ export default function ItemConditionSelector({
                         onChange={(v) => onChange({ ...conditionValues, [f.key]: v }, conditionScore)}
                         emphasize={isForParts}
                         subtext={
-                          isForParts ? <span className="text-[#B45309]">Mark this if the item is damaged, incomplete, or only good for spare parts.</span> : undefined
+                          isForParts ? (
+                            <span className="text-[#B45309]">Mark this if the item is damaged, incomplete, or only good for spare parts.</span>
+                          ) : undefined
                         }
                       />
                     );
