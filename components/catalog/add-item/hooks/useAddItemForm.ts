@@ -49,22 +49,22 @@ export function useAddItemForm(meta: AddItemMeta) {
   const [itemImagePreview, setItemImagePreview] = useState<string | null>(null);
 
   // ---------- global fields ----------
-  const [catalogName, setCatalogName] = useState("");
+  const [catalogName, setCatalogName] = useState<string>("");
   const [catalogReleaseYear, setCatalogReleaseYear] = useState<string>("");
   const [catalogUPC, setCatalogUPC] = useState<string>("");
   const [catalogVersion, setCatalogVersion] = useState<string>("");
 
   // ---------- wiki ----------
-  const [wikiSummary, setWikiSummary] = useState("");
-  const [wikiDescription, setWikiDescription] = useState("");
+  const [wikiSummary, setWikiSummary] = useState<string>("");
+  const [wikiDescription, setWikiDescription] = useState<string>("");
   const [wikiFacts, setWikiFacts] = useState<WikiKV[]>([]);
   const [wikiChecklist, setWikiChecklist] = useState<string[]>([]);
   const [wikiSources, setWikiSources] = useState<string[]>([]);
 
-  const [newFactKey, setNewFactKey] = useState("");
-  const [newFactVal, setNewFactVal] = useState("");
-  const [newChecklistItem, setNewChecklistItem] = useState("");
-  const [newSource, setNewSource] = useState("");
+  const [newFactKey, setNewFactKey] = useState<string>("");
+  const [newFactVal, setNewFactVal] = useState<string>("");
+  const [newChecklistItem, setNewChecklistItem] = useState<string>("");
+  const [newSource, setNewSource] = useState<string>("");
 
   // ---------- building blocks ----------
   const [bbThemeId, setBbThemeId] = useState<string>("");
@@ -81,4 +81,206 @@ export function useAddItemForm(meta: AddItemMeta) {
   const [cardNumber, setCardNumber] = useState<string>("");
   const [cardYear, setCardYear] = useState<string>("");
   const [cardRarityDropdown, setCardRarityDropdown] = useState<string>("");
-  const
+  const [cardRarityCustom, setCardRarityCustom] = useState<string>("");
+
+  // ---------- music ----------
+  const [musicArtistId, setMusicArtistId] = useState<string>("");
+
+  // ---------- toys ----------
+  const [toyManufacturerId, setToyManufacturerId] = useState<string>("");
+  const [toyBrandId, setToyBrandId] = useState<string>("");
+  const [toyLineId, setToyLineId] = useState<string>("");
+  const [toyModelNumber, setToyModelNumber] = useState<string>("");
+
+  // ---------- gaming ----------
+  const [gamePlatformId, setGamePlatformId] = useState<string>("");
+  const [gamePublisherId, setGamePublisherId] = useState<string>("");
+
+  // ---------- comics ----------
+  const [comicPublisherId, setComicPublisherId] = useState<string>("");
+  const [comicSeries, setComicSeries] = useState<string>("");
+  const [comicIssueNumber, setComicIssueNumber] = useState<string>("");
+  const [comicVariant, setComicVariant] = useState<string>("");
+
+  // ---------- derived ----------
+  const itemKind: ItemKind = useMemo(() => {
+    const catName = meta?.categories?.find((c) => c.id === categoryId)?.name ?? null;
+    return detectKindFromCategoryName(catName);
+  }, [meta, categoryId]);
+
+  // options used by sections (basic passthrough)
+  const bbThemeOptions = useMemo(() => (meta?.bbThemes ?? []) as any[], [meta]);
+  const bbSubthemeOptions = useMemo(() => (meta?.bbSubthemes ?? []) as any[], [meta]);
+  const cardSetOptions = useMemo(() => (meta?.cardSets ?? []) as any[], [meta]);
+  const toyBrandOptions = useMemo(() => (meta?.toyBrands ?? []) as any[], [meta]);
+  const toyLineOptions = useMemo(() => (meta?.toyLines ?? []) as any[], [meta]);
+
+  // ---------- helpers ----------
+  const pickItemImage = (file: File | null) => {
+    setItemImageFile(file);
+    if (!file) {
+      setItemImagePreview(null);
+      return;
+    }
+    setItemImagePreview(URL.createObjectURL(file));
+  };
+
+  const reset = () => {
+    setCategoryId("");
+    setSubcategoryId("");
+    setFranchiseId("");
+
+    setItemImageFile(null);
+    setItemImagePreview(null);
+
+    setCatalogName("");
+    setCatalogReleaseYear("");
+    setCatalogUPC("");
+    setCatalogVersion("");
+
+    setWikiSummary("");
+    setWikiDescription("");
+    setWikiFacts([]);
+    setWikiChecklist([]);
+    setWikiSources([]);
+
+    setNewFactKey("");
+    setNewFactVal("");
+    setNewChecklistItem("");
+    setNewSource("");
+
+    setBbThemeId("");
+    setBbSubthemeId("");
+    setBbSetNumber("");
+    setBbPieceCount("");
+    setBbRetailCad("");
+    setBbRetailUsd("");
+
+    setCardManufacturerId("");
+    setCardSetId("");
+    setCardTypeId("");
+    setCardNumber("");
+    setCardYear("");
+    setCardRarityDropdown("");
+    setCardRarityCustom("");
+
+    setMusicArtistId("");
+
+    setToyManufacturerId("");
+    setToyBrandId("");
+    setToyLineId("");
+    setToyModelNumber("");
+
+    setGamePlatformId("");
+    setGamePublisherId("");
+
+    setComicPublisherId("");
+    setComicSeries("");
+    setComicIssueNumber("");
+    setComicVariant("");
+  };
+
+  return {
+    itemKind,
+
+    categoryId,
+    setCategoryId,
+    subcategoryId,
+    setSubcategoryId,
+    franchiseId,
+    setFranchiseId,
+
+    itemImageFile,
+    itemImagePreview,
+    pickItemImage,
+
+    catalogName,
+    setCatalogName,
+    catalogReleaseYear,
+    setCatalogReleaseYear,
+    catalogUPC,
+    setCatalogUPC,
+    catalogVersion,
+    setCatalogVersion,
+
+    wikiSummary,
+    setWikiSummary,
+    wikiDescription,
+    setWikiDescription,
+    wikiFacts,
+    setWikiFacts,
+    wikiChecklist,
+    setWikiChecklist,
+    wikiSources,
+    setWikiSources,
+    newFactKey,
+    setNewFactKey,
+    newFactVal,
+    setNewFactVal,
+    newChecklistItem,
+    setNewChecklistItem,
+    newSource,
+    setNewSource,
+
+    bbThemeId,
+    setBbThemeId,
+    bbSubthemeId,
+    setBbSubthemeId,
+    bbSetNumber,
+    setBbSetNumber,
+    bbPieceCount,
+    setBbPieceCount,
+    bbRetailCad,
+    setBbRetailCad,
+    bbRetailUsd,
+    setBbRetailUsd,
+    bbThemeOptions,
+    bbSubthemeOptions,
+
+    cardManufacturerId,
+    setCardManufacturerId,
+    cardSetId,
+    setCardSetId,
+    cardTypeId,
+    setCardTypeId,
+    cardNumber,
+    setCardNumber,
+    cardYear,
+    setCardYear,
+    cardRarityDropdown,
+    setCardRarityDropdown,
+    cardRarityCustom,
+    setCardRarityCustom,
+    cardSetOptions,
+
+    musicArtistId,
+    setMusicArtistId,
+
+    toyManufacturerId,
+    setToyManufacturerId,
+    toyBrandId,
+    setToyBrandId,
+    toyLineId,
+    setToyLineId,
+    toyModelNumber,
+    setToyModelNumber,
+    toyBrandOptions,
+    toyLineOptions,
+
+    gamePlatformId,
+    setGamePlatformId,
+    gamePublisherId,
+    setGamePublisherId,
+
+    comicPublisherId,
+    setComicPublisherId,
+    comicSeries,
+    setComicSeries,
+    comicIssueNumber,
+    setComicIssueNumber,
+    comicVariant,
+    setComicVariant,
+
+    reset,
+  };
+}
