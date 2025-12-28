@@ -104,9 +104,10 @@ export function useAddItemForm(meta: AddItemMeta) {
 
   // ---------- derived ----------
   const itemKind: ItemKind = useMemo(() => {
-    const catName = meta?.categories?.find((c) => c.id === categoryId)?.name ?? null;
-    return detectKindFromCategoryName(catName);
-  }, [meta, categoryId]);
+  const catName = meta?.categories?.find((c) => c.id === categoryId)?.name ?? "";
+  return detectKindFromCategoryName(String(catName));
+}, [meta, categoryId]);
+
 
   // options used by sections (basic passthrough)
   const bbThemeOptions = useMemo(() => (meta?.bbThemes ?? []) as any[], [meta]);
@@ -284,3 +285,4 @@ export function useAddItemForm(meta: AddItemMeta) {
     reset,
   };
 }
+
