@@ -1,270 +1,425 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabaseClient";
+import { getConditionLabel, getDealBadge, getFairValue, type DealBadge } from "@/lib/pricingEngine";
 
-import AddItemModalShell from "./AddItemModal.shell";
-
-import { useCatalogMeta } from "./add-item/hooks/useCatalogMeta";
-import { useAddItemForm } from "./add-item/hooks/useAddItemForm";
-import { useVariantLinks } from "./add-item/hooks/useVariantLinks";
-import { useMinifigs } from "./add-item/hooks/useMinifigs";
-import { usePeoplePicker } from "./add-item/hooks/usePeoplePicker";
-
-import { safeInsertLookup } from "@/lib/catalog/lookups";
-import { createCatalogItem } from "@/lib/catalog/createCatalogItem";
-
-import { ensureBuildingBlocksRow, upsertSetMinifigLinks } from "@/lib/db/catalog";
-import { upsertItemDescription, replaceVariantLinks } from "@/lib/db/catalog_write";
-
-import ClassificationSection from "./add-item/sections/ClassificationSection";
-import PhotoSection from "./add-item/sections/PhotoSection";
-import GlobalDetailsSection from "./add-item/sections/GlobalDetailsSection";
-import WikiSection from "./add-item/sections/WikiSection";
-import VariantsSection from "./add-item/sections/VariantsSection";
-
-import BuildingBlocksSection from "./add-item/sections/kinds/BuildingBlocksSection";
-import CardsSection from "./add-item/sections/kinds/CardsSection";
-import MusicSection from "./add-item/sections/kinds/MusicSection";
-import ToysSection from "./add-item/sections/kinds/ToysSection";
-import MoviesSection from "./add-item/sections/kinds/MoviesSection";
-import GamingSection from "./add-item/sections/kinds/GamingSection";
-import ComicsSection from "./add-item/sections/kinds/ComicsSection";
-
-import CreateMinifigModal from "./add-item/modals/CreateMinifigModal";
-
-/* ---------------- types ---------------- */
-
-type NamedRow = { id: string; name: string };
-
-type CatalogMeta = {
-  categories: any[];
-  subcategories: any[];
-  franchises: NamedRow[];
-
-  bbThemes: any[];
-  bbSubthemes: any[];
-
-  cardManufacturers: any[];
-  cardSets: any[];
-  cardTypes: any[];
-
-  musicArtists: any[];
-
-  toyManufacturers: any[];
-  toyBrands: any[];
-  toyLines: any[];
-
-  people: NamedRow[];
-
-  gamePlatforms: any[];
-  gamePublishers: any[];
-
-  comicPublishers: any[];
-
-  [key: string]: any;
+type MarketplaceListing = {
+  id: string;
+  created_at: string;
+  seller_user_id: string | null;
+  catalog_item_id: string;
+  user_collection_item_id: string | null;
+  title: string | null;
+  description: string | null;
+  price_cad: number | null;
+  photo_url: string | null;
+  condition_json: Record<string, any> | null;
+  status: string | null;
 };
 
-/* ---------------- component ---------------- */
+type CartItem = {
+  listing_id: string;
+  catalog_item_id: string;
+  title: string;
+  price_cad: number | null;
+  photo_url: string | null;
+  qty: number;
+  added_at: string;
+};
 
-export default function AddItemModal({
-  open,
-  onClose,
-  onCreated,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onCreated?: (catalogItemId: string) => void;
-}) {
-  const { meta, setMeta, metaLoading, metaError } = useCatalogMeta(open) as {
-    meta: CatalogMeta;
-    setMeta: React.Dispatch<React.SetStateAction<CatalogMeta>>;
-    metaLoading: boolean;
-    metaError: string | null;
+const CART_KEY = "collectorshub_cart_v1";
+const readCart = (): CartItem[] => {
+  try {
+    const raw = localStorage.getItem(CART_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+};
+const writeCart = (items: CartItem[]) => localStorage.setItem(CART_KEY, JSON.stringify(items));
+
+function safeText(v: any) {
+  if (v === null || v === undefined) return "—";
+  const s = String(v).trim();
+  return s.length ? s : "—";
+}
+
+function money(value: number | string | null | undefined, currency: string = "CAD") {
+  if (value === null || value === undefined || value === "") return "—";
+  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  if (!Number.isFinite(n)) return "—";
+  return new Intl.NumberFormat("en-CA", { style: "currency", currency, maximumFractionDigits: 2 }).format(n);
+}
+
+function clampScore(n: any, fallback = 8) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return fallback;
+  return Math.max(1, Math.min(10, x));
+}
+
+function normalizeFairValueResult(raw: any): { value: number | null; confidence: "estimated" | "exact" | "unknown"; reason: string | null } {
+  if (typeof raw === "number" && Number.isFinite(raw)) return { value: raw, confidence: "exact", reason: null };
+  if (raw && typeof raw === "object") {
+    const v =
+      typeof raw.value === "number" ? raw.value : typeof raw.fairValue === "number" ? raw.fairValue : typeof raw.price === "number" ? raw.price : null;
+    const conf = raw.confidence === "estimated" || raw.confidence === "exact" ? raw.confidence : "unknown";
+    const reason = typeof raw.reason === "string" && raw.reason.trim().length ? raw.reason : null;
+    return { value: v !== null && Number.isFinite(v) ? v : null, confidence: conf, reason };
+  }
+  return { value: null, confidence: "unknown", reason: null };
+}
+
+function prettyConditionFromJson(condition_json: Record<string, any> | null | undefined) {
+  if (!condition_json) return null;
+  const keys = Object.keys(condition_json).filter((k) => !!condition_json[k]);
+  if (!keys.length) return null;
+
+  const map: Record<string, string> = {
+    for_parts: "For Parts",
+    sealed: "Sealed",
+    box: "Box",
+    manual: "Manual",
+    complete: "Complete",
+    minifigs_included: "Minifigs Included",
+    tested_working: "Tested Working",
+    graded: "Graded",
+    bag_board: "Bag & Board",
+    accessories_complete: "Accessories Complete",
+    joints_loose: "Loose Joints",
+    paint_wear: "Paint Wear",
+    conditionScore: "Condition",
   };
 
-  const form = useAddItemForm(meta);
-  const variants = useVariantLinks();
-  const people = usePeoplePicker(meta.people);
-  const minifigs = useMinifigs(() => form.subcategoryId, () => form.franchiseId);
+  const labels = keys
+    .filter((k) => k !== "notes")
+    .slice(0, 4)
+    .map((k) => map[k] ?? k.replaceAll("_", " "))
+    .map((s) => s[0].toUpperCase() + s.slice(1));
 
-  const [saving, setSaving] = useState(false);
-  const [banner, setBanner] = useState<{ type: "error" | "success"; msg: string } | null>(null);
+  const extra = keys.length > 4 ? ` +${keys.length - 4}` : "";
+  return labels.join(" • ") + extra;
+}
 
-  const title = useMemo(() => {
-    const kind = (form.itemKind || "building_blocks").replace(/_/g, " ");
-    return `Create Catalog Item • ${kind}`;
-  }, [form.itemKind]);
+function DealBadgePill({ badge }: { badge: DealBadge }) {
+  const tooltip = "Compared to recent condition-adjusted market value.";
 
-  const safeClose = () => {
-    if (!saving) {
-      setBanner(null);
-      onClose();
-    }
+  const stylesByColor: Record<DealBadge["color"], string> = {
+    green: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    blue: "border-blue-200 bg-blue-50 text-blue-700",
+    red: "border-red-200 bg-red-50 text-red-700",
   };
-
-  const resetAll = () => {
-    form.reset();
-    variants.resetVariants();
-    minifigs.resetMinifigs();
-    people.resetPeople();
-    setBanner(null);
-  };
-
-  const promptName = (label: string) => (window.prompt(`New ${label} name:`) || "").trim();
-
-  /* ---------------- lookup creators ---------------- */
-
-  const createFranchise = async () => {
-    const name = promptName("franchise");
-    if (!name) return;
-    const row = await safeInsertLookup("franchises", name);
-    if (!row) return;
-
-    setMeta((m) => ({
-      ...m,
-      franchises: [...m.franchises, row].sort((a, b) => a.name.localeCompare(b.name)),
-    }));
-
-    form.setFranchiseId(row.id);
-  };
-
-  /* ---------------- submit ---------------- */
-
-  const submit = async () => {
-    if (saving) return;
-    setSaving(true);
-    setBanner(null);
-
-    const minifigsSnapshot = [...(minifigs.selectedMinifigs ?? [])];
-
-    try {
-      const id = await createCatalogItem(form.itemKind, {
-        categoryId: form.categoryId,
-        subcategoryId: form.subcategoryId,
-        franchiseId: form.franchiseId || null,
-        itemImageFile: form.itemImageFile,
-        catalogName: form.catalogName,
-        catalogReleaseYear: form.catalogReleaseYear,
-        catalogUPC: form.catalogUPC,
-        catalogVersion: form.catalogVersion,
-        wikiSummary: form.wikiSummary,
-        wikiDescription: form.wikiDescription,
-        wikiFacts: form.wikiFacts,
-        wikiChecklist: form.wikiChecklist,
-        wikiSources: form.wikiSources,
-        linkedVariants: variants.linkedVariants,
-        bbThemeId: form.bbThemeId,
-        bbSubthemeId: form.bbSubthemeId,
-        bbSetNumber: form.bbSetNumber,
-        bbPieceCount: form.bbPieceCount,
-        bbRetailCad: form.bbRetailCad,
-        bbRetailUsd: form.bbRetailUsd,
-        selectedMinifigs: minifigsSnapshot,
-        cardManufacturerId: form.cardManufacturerId,
-        cardSetId: form.cardSetId,
-        cardTypeId: form.cardTypeId,
-        cardNumber: form.cardNumber,
-        cardYear: form.cardYear,
-        cardRarityDropdown: form.cardRarityDropdown,
-        cardRarityCustom: form.cardRarityCustom,
-        musicArtistId: form.musicArtistId,
-        toyManufacturerId: form.toyManufacturerId,
-        toyBrandId: form.toyBrandId,
-        toyLineId: form.toyLineId,
-        toyModelNumber: form.toyModelNumber,
-        movieDirectorIds: people.movieDirectorIds,
-        movieActorIds: people.movieActorIds,
-        gamePlatformId: form.gamePlatformId,
-        gamePublisherId: form.gamePublisherId,
-        comicPublisherId: form.comicPublisherId,
-        comicSeries: form.comicSeries,
-        comicIssueNumber: form.comicIssueNumber,
-        comicVariant: form.comicVariant,
-      });
-
-      await upsertItemDescription(id, form.wikiDescription);
-
-      await replaceVariantLinks({
-        catalogItemId: id,
-        linkedVariants: variants.linkedVariants,
-        defaultType: variants.variantDefaultType,
-        defaultLabel: variants.variantDefaultLabel,
-      });
-
-      if (form.itemKind === "building_blocks") {
-        await ensureBuildingBlocksRow(id, {
-          themeId: form.bbThemeId!,
-          subthemeId: form.bbSubthemeId || null,
-          setNumber: form.bbSetNumber!,
-          pieceCount: form.bbPieceCount,
-          retailCad: form.bbRetailCad,
-          retailUsd: form.bbRetailUsd,
-        });
-
-        if (minifigsSnapshot.length) {
-          await upsertSetMinifigLinks(id, minifigsSnapshot);
-        }
-      }
-
-      setBanner({ type: "success", msg: "Item created successfully." });
-      onCreated?.(id);
-      resetAll();
-      onClose();
-    } catch (e: any) {
-      setBanner({ type: "error", msg: e?.message || "Failed to create item." });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  /* ---------------- render ---------------- */
 
   return (
-    <>
-      <AddItemModalShell open={open} title={title} saving={saving} banner={banner} onClose={safeClose} onSubmit={submit}>
-        <form onSubmit={(e) => (e.preventDefault(), submit())}>
-          <ClassificationSection
-            metaLoading={metaLoading}
-            metaError={metaError}
-            categories={meta.categories}
-            subcategories={meta.subcategories}
-            franchises={meta.franchises}
-            categoryId={form.categoryId}
-            setCategoryId={form.setCategoryId}
-            subcategoryId={form.subcategoryId}
-            setSubcategoryId={form.setSubcategoryId}
-            franchiseId={form.franchiseId}
-            setFranchiseId={form.setFranchiseId}
-            onCreateFranchise={createFranchise}
-          />
+    <span title={tooltip} className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${stylesByColor[badge.color]}`}>
+      {badge.label}
+    </span>
+  );
+}
 
-          <PhotoSection itemImagePreview={form.itemImagePreview} onPick={form.pickItemImage} />
+function MiniTab({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-full px-3 py-1.5 text-[11px] font-semibold border transition ${
+        active ? "bg-[#0F172A] text-white border-[#0F172A]" : "bg-white text-[#0F172A] border-[#E5E9F2] hover:bg-[#F8FAFC]"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
 
-          <GlobalDetailsSection {...form} />
+export default function ItemListingsTab({
+  catalogItemId,
+  categoryName,
+  itemName,
+  userId,
+  onRequireAuth,
+}: {
+  catalogItemId: string;
+  categoryName: string | null;
+  itemName: string;
+  userId: string | null;
+  onRequireAuth: () => void;
+}) {
+  const [listingsTab, setListingsTab] = useState<"ch" | "external" | "local">("ch");
 
-          <WikiSection {...form} />
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [listings, setListings] = useState<MarketplaceListing[]>([]);
+  const [sort, setSort] = useState<"newest" | "price_asc" | "price_desc">("newest");
 
-          {/* ✅ FIXED: LINK_TYPES PASSED */}
-          <VariantsSection
-            LINK_TYPES={variants.LINK_TYPES}
-            variantQuery={variants.variantQuery}
-            setVariantQuery={variants.setVariantQuery}
-            variantSearching={variants.variantSearching}
-            variantResults={variants.variantResults}
-            linkedVariants={variants.linkedVariants}
-            variantDefaultType={variants.variantDefaultType}
-            setVariantDefaultType={variants.setVariantDefaultType}
-            variantDefaultLabel={variants.variantDefaultLabel}
-            setVariantDefaultLabel={variants.setVariantDefaultLabel}
-            searchVariants={variants.searchVariants}
-            addVariant={variants.addVariant}
-            removeVariant={variants.removeVariant}
-            updateVariant={variants.updateVariant}
-          />
-        </form>
-      </AddItemModalShell>
+  // base price for fair comparisons (same logic as original)
+  const [marketCurrent, setMarketCurrent] = useState<number | null>(null);
+  const [market30DayAvg, setMarket30DayAvg] = useState<number | null>(null);
+  const [avgCH, setAvgCH] = useState<number | null>(null);
 
-      <CreateMinifigModal {...minifigs} />
-    </>
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadStats = async () => {
+      const since30 = new Date();
+      since30.setDate(since30.getDate() - 30);
+
+      const { data } = await supabase
+        .from("marketplace_sales")
+        .select("sale_price_cad, sale_at")
+        .eq("catalog_item_id", catalogItemId)
+        .not("sale_price_cad", "is", null)
+        .order("sale_at", { ascending: false });
+
+      if (cancelled) return;
+
+      if (!data || data.length === 0) {
+        setMarketCurrent(null);
+        setMarket30DayAvg(null);
+        setAvgCH(null);
+        return;
+      }
+
+      const rows = data
+        .map((r: any) => ({
+          price: typeof r.sale_price_cad === "number" ? r.sale_price_cad : Number(r.sale_price_cad),
+          at: r.sale_at ? new Date(r.sale_at) : null,
+        }))
+        .filter((r: any) => Number.isFinite(r.price) && r.at instanceof Date && !isNaN(r.at.getTime()));
+
+      if (!rows.length) {
+        setMarketCurrent(null);
+        setMarket30DayAvg(null);
+        setAvgCH(null);
+        return;
+      }
+
+      const prices = rows.map((r: any) => r.price);
+      setMarketCurrent(rows[0].price);
+
+      const last30 = rows.filter((r: any) => r.at >= since30).map((r: any) => r.price);
+      const avg30 = last30.length ? last30.reduce((a: number, b: number) => a + b, 0) / last30.length : null;
+      const avgAll = prices.reduce((a: number, b: number) => a + b, 0) / prices.length;
+
+      setMarket30DayAvg(avg30);
+      setAvgCH(avgAll);
+    };
+
+    if (catalogItemId) loadStats();
+    return () => {
+      cancelled = true;
+    };
+  }, [catalogItemId]);
+
+  const baseMarketPrice = useMemo(() => {
+    const v = market30DayAvg ?? avgCH ?? marketCurrent ?? null;
+    return typeof v === "number" && Number.isFinite(v) ? v : null;
+  }, [market30DayAvg, avgCH, marketCurrent]);
+
+  const load = async () => {
+    if (!catalogItemId) return;
+    setLoading(true);
+    setErr(null);
+
+    try {
+      let q = supabase
+        .from("marketplace_listings")
+        .select("id,created_at,seller_user_id,catalog_item_id,user_collection_item_id,title,description,price_cad,photo_url,condition_json,status")
+        .eq("catalog_item_id", catalogItemId)
+        .eq("status", "active");
+
+      if (sort === "newest") q = q.order("created_at", { ascending: false });
+      if (sort === "price_asc") q = q.order("price_cad", { ascending: true, nullsFirst: false });
+      if (sort === "price_desc") q = q.order("price_cad", { ascending: false, nullsLast: false });
+
+      const res = await q.limit(50);
+      if (res.error) throw res.error;
+      setListings((res.data ?? []) as MarketplaceListing[]);
+    } catch (e: any) {
+      console.error(e);
+      setListings([]);
+      setErr(e?.message || "Could not load marketplace listings.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (listingsTab !== "ch") return;
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catalogItemId, sort, listingsTab]);
+
+  const listingConditionText = (l: MarketplaceListing) => {
+    const cj = l.condition_json || null;
+    if (!cj) return "—";
+    if (!!cj.for_parts) return "Broken / For Parts";
+
+    const score = cj.conditionScore ?? cj.condition_score;
+    if (score !== undefined && score !== null && score !== "") {
+      const s = clampScore(score, 8);
+      return `${s}/10 • ${getConditionLabel(s)}`;
+    }
+
+    return prettyConditionFromJson(cj) ?? "—";
+  };
+
+  const listingPricingInputs = (l: MarketplaceListing) => {
+    const cj = l.condition_json || {};
+    const scoreRaw = cj.conditionScore ?? cj.condition_score;
+    const conditionScoreForListing = scoreRaw !== undefined && scoreRaw !== null && scoreRaw !== "" ? clampScore(scoreRaw, 8) : 8;
+
+    return {
+      conditionScore: conditionScoreForListing,
+      gradingCompany: typeof cj.gradingCompany === "string" ? cj.gradingCompany : null,
+      gradeValue: cj.gradeValue !== undefined && cj.gradeValue !== null && cj.gradeValue !== "" ? Number(cj.gradeValue) : null,
+      gradeLabel: typeof cj.gradeLabel === "string" ? cj.gradeLabel : null,
+    };
+  };
+
+  const handleBuyNow = (l: MarketplaceListing) => {
+    if (!userId) {
+      onRequireAuth();
+      return;
+    }
+    if (l.seller_user_id && l.seller_user_id === userId) {
+      alert("You cannot purchase your own listing.");
+      return;
+    }
+
+    const cart = readCart();
+    const idx = cart.findIndex((x) => x.listing_id === l.id);
+
+    if (idx >= 0) cart[idx].qty += 1;
+    else
+      cart.push({
+        listing_id: l.id,
+        catalog_item_id: l.catalog_item_id,
+        title: l.title ?? itemName ?? "Item",
+        price_cad: l.price_cad ?? null,
+        photo_url: l.photo_url ?? null,
+        qty: 1,
+        added_at: new Date().toISOString(),
+      });
+
+    writeCart(cart);
+    alert(`Added to cart: ${l.title ?? itemName}`);
+  };
+
+  return (
+    <div className="rounded-2xl border border-[#E5E9F2] bg-white shadow-sm overflow-hidden flex flex-col flex-1 min-h-[420px]">
+      <div className="flex items-center justify-between border-b border-[#EEF2F7] px-4 py-3">
+        <div className="text-sm font-semibold text-[#0F172A]">Available Listings</div>
+        <div className="flex items-center gap-2">
+          <MiniTab active={listingsTab === "ch"} onClick={() => setListingsTab("ch")}>
+            CollectorsHub
+          </MiniTab>
+          <MiniTab active={listingsTab === "external"} onClick={() => setListingsTab("external")}>
+            External
+          </MiniTab>
+          <MiniTab active={listingsTab === "local"} onClick={() => setListingsTab("local")}>
+            Local
+          </MiniTab>
+        </div>
+      </div>
+
+      <div className="p-4 flex-1 overflow-auto">
+        {listingsTab !== "ch" ? (
+          <div className="text-xs text-[#64748B]">Not wired yet.</div>
+        ) : (
+          <>
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <div className="text-[11px] text-[#64748B]">Showing active listings for this item.</div>
+
+              <div className="flex items-center gap-2">
+                <select className="rounded-lg border border-[#E5E9F2] bg-white px-2 py-1.5 text-[11px]" value={sort} onChange={(e) => setSort(e.target.value as any)}>
+                  <option value="newest">Newest</option>
+                  <option value="price_asc">Price: Low → High</option>
+                  <option value="price_desc">Price: High → Low</option>
+                </select>
+
+                <button type="button" onClick={load} className="rounded-lg border border-[#E5E9F2] bg-white px-3 py-1.5 text-[11px] font-semibold hover:bg-[#F8FAFC]">
+                  Refresh
+                </button>
+              </div>
+            </div>
+
+            {err ? <div className="mb-3 text-xs text-red-600">{err}</div> : null}
+
+            {loading ? (
+              <div className="text-xs text-[#64748B]">Loading…</div>
+            ) : listings.length === 0 ? (
+              <div className="text-xs text-[#64748B]">No active listings yet.</div>
+            ) : (
+              <div className="space-y-3">
+                {listings.map((l) => {
+                  const { conditionScore: lScore, gradingCompany, gradeValue, gradeLabel } = listingPricingInputs(l);
+
+                  const fairRaw = getFairValue({
+                    baseMarketPrice,
+                    category: categoryName ?? null,
+                    conditionScore: lScore,
+                    gradingCompany,
+                    gradeValue,
+                    gradeLabel,
+                  });
+
+                  const fair = normalizeFairValueResult(fairRaw);
+
+                  const badge = getDealBadge({
+                    listingPrice: typeof l.price_cad === "number" ? l.price_cad : l.price_cad === null ? null : Number(l.price_cad),
+                    fairValue: fair.value,
+                  });
+
+                  return (
+                    <div key={l.id} className="rounded-xl border border-[#E5E9F2] bg-white p-3">
+                      <div className="flex items-start gap-3">
+                        <div className="h-14 w-14 rounded-lg border border-[#E5E9F2] bg-[#F8FAFC] overflow-hidden flex items-center justify-center shrink-0">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          {l.photo_url ? <img src={l.photo_url} alt={safeText(l.title ?? itemName)} className="h-full w-full object-cover" /> : <div className="text-[10px] text-[#94A3B8]">No photo</div>}
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="text-sm font-semibold text-[#0F172A] truncate">{safeText(l.title ?? itemName)}</div>
+
+                              <div className="mt-1 flex items-center gap-2">
+                                <div className="text-[11px] text-[#64748B]">Condition • {listingConditionText(l)}</div>
+                                {badge ? <DealBadgePill badge={badge} /> : null}
+                              </div>
+                            </div>
+
+                            <div className="text-sm font-bold text-[#0F172A] shrink-0">{money(l.price_cad)}</div>
+                          </div>
+
+                          <div className="mt-0.5 text-[11px] text-[#94A3B8]">{l.created_at ? `listed • ${new Date(l.created_at).toLocaleDateString()}` : ""}</div>
+
+                          <div className="mt-2 flex items-center gap-2">
+                            <button
+                              type="button"
+                              className="rounded-lg bg-[#0F172A] text-white px-3 py-1.5 text-[11px] font-semibold hover:bg-black"
+                              onClick={() => handleBuyNow(l)}
+                            >
+                              Buy Now
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded-lg border border-[#E5E9F2] bg-white px-3 py-1.5 text-[11px] font-semibold hover:bg-[#F8FAFC]"
+                              onClick={() => alert("Messaging is not wired yet.")}
+                            >
+                              Message Seller
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
   );
 }
