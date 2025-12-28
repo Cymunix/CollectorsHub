@@ -354,14 +354,14 @@ export default function ItemListingsTab({
                 {listings.map((l) => {
                   const { conditionScore: lScore, gradingCompany, gradeValue, gradeLabel } = listingPricingInputs(l);
 
-                  const fairRaw = getFairValue({
-                    baseMarketPrice,
-                    category: categoryName ?? null,
-                    conditionScore: lScore,
-                    gradingCompany,
-                    gradeValue,
-                    gradeLabel,
-                  });
+                const fairRaw = getFairValue({
+  baseMarketPrice: baseMarketPrice ?? 0,
+  category: categoryName ?? "unknown",
+  conditionScore: lScore,
+  gradingCompany,
+  gradeValue,
+});
+
 
                   const fair = normalizeFairValueResult(fairRaw);
 
@@ -423,4 +423,5 @@ export default function ItemListingsTab({
     </div>
   );
 }
+
 
