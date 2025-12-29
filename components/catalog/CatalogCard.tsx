@@ -116,7 +116,7 @@ export default function CatalogCard({
         onClick={onOpen}
         className="w-full text-left rounded-2xl border bg-white hover:shadow-md transition overflow-hidden"
       >
-        <div className="grid grid-cols-[96px_1fr_220px] gap-4 p-4">
+        <div className="grid grid-cols-[128px_1fr_220px] gap-6 p-4">
           {/* Image */}
           <div className="h-28 w-28 rounded-xl bg-[#F8FAFC] border flex items-center justify-center overflow-hidden">
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -276,3 +276,4 @@ export default function CatalogCard({
     </button>
   );
 }
+
