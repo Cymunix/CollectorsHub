@@ -148,7 +148,7 @@ export default function CatalogCardTile({
         onClick={onOpen}
         className="w-full text-left rounded-2xl border bg-white hover:shadow-md transition overflow-hidden"
       >
-        <div className="flex items-stretch gap-4 p-4">
+        <div className="grid grid-cols-[96px_1fr_220px] items-start gap-4 p-3">
           {/* Left: image */}
           <div className="relative h-28 w-28 rounded-xl bg-gray-100 overflow-hidden shrink-0 border">
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -162,7 +162,7 @@ export default function CatalogCardTile({
           {/* Middle: details */}
           <div className="min-w-0 flex-1">
             <div className="flex items-start justify-between gap-4">
-             <div className="min-w-0">
+             <div className="min-w-0">
                 <div className="text-base font-semibold text-[#0F172A] truncate">{item.name}</div>
 
                 <div className="mt-2 space-y-1 text-[12px] text-gray-600">
@@ -396,3 +396,4 @@ export default function CatalogCardTile({
     </button>
   );
 }
+
