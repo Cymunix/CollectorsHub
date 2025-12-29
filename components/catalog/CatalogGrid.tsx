@@ -66,12 +66,13 @@ export default function CatalogGrid(p: Props) {
     } catch {}
   }, []);
 
-  const setAndPersist = (v: ViewMode) => {
-    setView(v);
-    try {
-      localStorage.setItem(VIEW_KEY: string, v);
-    } catch {}
-  };
+ const setAndPersist = (v: ViewMode) => {
+  setView(v);
+  try {
+    localStorage.setItem(VIEW_KEY, v);
+  } catch {}
+};
+
 
   const layout = view === "list" ? "list" : "grid";
 
@@ -155,3 +156,4 @@ export default function CatalogGrid(p: Props) {
     </div>
   );
 }
+
