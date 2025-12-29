@@ -56,7 +56,7 @@ export default function CatalogGrid(p: Props) {
 
   const header = useMemo(() => {
     return (
-      <div className="flex items-center justify-between mb-3 gap-3">
+      <div className="mb-3 flex items-center justify-between gap-3">
         <p className="text-xs text-gray-500">
           {p.visibleCardsCount === 0 ? (
             <>
@@ -84,7 +84,9 @@ export default function CatalogGrid(p: Props) {
             type="button"
             onClick={() => setAndPersist("card")}
             className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
-              view === "card" ? "bg-[#0F172A] text-white border-[#0F172A]" : "bg-white text-[#0F172A] border-[#E5E9F2] hover:bg-[#F8FAFC]"
+              view === "card"
+                ? "border-[#0F172A] bg-[#0F172A] text-white"
+                : "border-[#E5E9F2] bg-white text-[#0F172A] hover:bg-[#F8FAFC]"
             }`}
             title="Card view"
           >
@@ -94,7 +96,9 @@ export default function CatalogGrid(p: Props) {
             type="button"
             onClick={() => setAndPersist("list")}
             className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
-              view === "list" ? "bg-[#0F172A] text-white border-[#0F172A]" : "bg-white text-[#0F172A] border-[#E5E9F2] hover:bg-[#F8FAFC]"
+              view === "list"
+                ? "border-[#0F172A] bg-[#0F172A] text-white"
+                : "border-[#E5E9F2] bg-white text-[#0F172A] hover:bg-[#F8FAFC]"
             }`}
             title="List view"
           >
@@ -121,7 +125,7 @@ export default function CatalogGrid(p: Props) {
             </div>
           ) : view === "card" ? (
             <>
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
                 {p.pagedCards.map((it) => (
                   <CatalogCardTile
                     key={`${it.kind}:${it.id}`}
@@ -131,7 +135,7 @@ export default function CatalogGrid(p: Props) {
                     onAddWishlist={p.onAddWishlist}
                     onAddCollection={p.onAddCollection}
                     onQuickAdd={p.onQuickAdd}
-                    layout="card"   // ✅ NOT "grid"
+                    layout="card"
                   />
                 ))}
               </div>
