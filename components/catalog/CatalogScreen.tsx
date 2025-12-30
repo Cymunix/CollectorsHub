@@ -88,6 +88,16 @@ export default function CatalogScreen() {
     [meta.categories, categoryId]
   );
 
+  const selectedSubcategory = useMemo(
+    () => meta.subcategories.find((s) => s.id === subcategoryId) ?? null,
+    [meta.subcategories, subcategoryId]
+  );
+
+  const selectedFranchise = useMemo(
+    () => meta.franchises.find((f) => f.id === franchiseId) ?? null,
+    [meta.franchises, franchiseId]
+  );
+
   const selectedKind = useMemo<Exclude<ItemKind, "minifig"> | null>(() => {
     if (!selectedCategory) return null;
     return detectKindFromCategoryName(selectedCategory.name);
@@ -149,6 +159,14 @@ export default function CatalogScreen() {
     setGamePlatformId("");
 
     setComicPublisherId("");
+  };
+
+  const clearSearch = () => {
+    const next = new URLSearchParams(sp.toString());
+    next.delete("search");
+    // keep other params if any
+    const qs = next.toString();
+    router.push(qs ? `/catalog?${qs}` : "/catalog");
   };
 
   // Reset dynamic filters on category change
@@ -400,14 +418,13 @@ export default function CatalogScreen() {
     <div className="px-6 py-6">
       <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
 
-      <div className="flex items-center justify-between mb-4">
+      <div className="mb-4 flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold">Catalog</h1>
           <p className="text-xs text-gray-500">Browse items across all categories. Use the left filters to narrow results.</p>
         </div>
 
         <div className="flex items-center gap-2">
-          {/* NEW: Suggestion buttons */}
           <button
             type="button"
             onClick={() => router.push("/catalog/suggest")}
@@ -436,7 +453,6 @@ export default function CatalogScreen() {
             </button>
           ) : null}
 
-          {/* Store/Pawn placeholder button (different color) */}
           {isStoreOrPawn ? (
             <button
               type="button"
@@ -483,7 +499,9 @@ export default function CatalogScreen() {
         </div>
       ) : null}
 
+      {/* 3-column layout: left filters | main grid | right info */}
       <div className="grid grid-cols-12 gap-6">
+        {/* LEFT FILTERS */}
         <aside className="col-span-12 md:col-span-3 md:sticky md:top-28 self-start">
           <CatalogFilters
             metaLoading={meta.loading}
@@ -553,7 +571,8 @@ export default function CatalogScreen() {
           />
         </aside>
 
-        <section className="col-span-12 md:col-span-9">
+        {/* MAIN */}
+        <section className="col-span-12 md:col-span-6">
           <CatalogGrid
             loading={cardsState.loading}
             loadError={cardsState.error}
@@ -574,6 +593,105 @@ export default function CatalogScreen() {
             onQuickAdd={quickAdd}
           />
         </section>
+
+        {/* RIGHT INFO SIDEBAR */}
+        <aside className="col-span-12 md:col-span-3 md:sticky md:top-28 self-start">
+          <div className="rounded-2xl border bg-white p-4 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-[#0F172A]">Search &amp; Context</h3>
+                <p className="mt-0.5 text-xs text-gray-500">Quick info about what you’re viewing.</p>
+              </div>
+
+              {(urlSearch || categoryId || subcategoryId || franchiseId) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearFilters();
+                    clearSearch();
+                  }}
+                  className="rounded-full border bg-white px-3 py-1.5 text-[11px] font-semibold text-gray-700 hover:bg-gray-50"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+
+            <div className="mt-4 space-y-3 text-sm">
+              <div className="rounded-xl border bg-gray-50 p-3">
+                <div className="text-[11px] font-semibold text-gray-600">Search</div>
+                <div className="mt-1 text-sm font-semibold text-[#0F172A]">
+                  {urlSearch ? `“${urlSearch}”` : <span className="text-gray-400">None</span>}
+                </div>
+                {urlSearch ? (
+                  <button
+                    type="button"
+                    onClick={clearSearch}
+                    className="mt-2 text-[11px] font-semibold text-indigo-600 hover:underline"
+                  >
+                    Clear search
+                  </button>
+                ) : null}
+              </div>
+
+              <div className="rounded-xl border bg-white p-3">
+                <div className="text-[11px] font-semibold text-gray-600">Selected</div>
+                <ul className="mt-2 space-y-1 text-xs text-gray-700">
+                  <li>
+                    <span className="font-semibold">Category:</span>{" "}
+                    {selectedCategory?.name ?? <span className="text-gray-400">Any</span>}
+                  </li>
+                  <li>
+                    <span className="font-semibold">Subcategory:</span>{" "}
+                    {selectedSubcategory?.name ?? <span className="text-gray-400">Any</span>}
+                  </li>
+                  <li>
+                    <span className="font-semibold">Franchise:</span>{" "}
+                    {selectedFranchise?.name ?? <span className="text-gray-400">Any</span>}
+                  </li>
+                  {selectedKind === "building_blocks" ? (
+                    <li>
+                      <span className="font-semibold">Minifigs:</span> {showMinifigs ? "Shown" : "Hidden"}
+                    </li>
+                  ) : null}
+                </ul>
+
+                {(categoryId || subcategoryId || franchiseId) && (
+                  <button
+                    type="button"
+                    onClick={clearFilters}
+                    className="mt-2 text-[11px] font-semibold text-indigo-600 hover:underline"
+                  >
+                    Clear filters
+                  </button>
+                )}
+              </div>
+
+              <div className="rounded-xl border bg-white p-3">
+                <div className="text-[11px] font-semibold text-gray-600">Results</div>
+                <div className="mt-1 text-sm font-semibold text-[#0F172A]">{visibleCards.length}</div>
+                <div className="mt-1 text-xs text-gray-500">
+                  {visibleCards.length === 0 ? "No matches." : `Showing ${rangeStart}-${rangeEnd}`}
+                </div>
+              </div>
+
+              <div className="rounded-xl border bg-white p-3">
+                <div className="text-[11px] font-semibold text-gray-600">Data</div>
+                <div className="mt-1 text-xs text-gray-500">
+                  Loaded: <span className="font-semibold text-gray-700">{cardsState.cards?.length ?? 0}</span> items
+                </div>
+                <button
+                  type="button"
+                  onClick={() => cardsState.reload()}
+                  className="mt-2 rounded-full border bg-white px-3 py-1.5 text-[11px] font-semibold text-gray-700 hover:bg-gray-50"
+                  disabled={cardsState.loading}
+                >
+                  Refresh data
+                </button>
+              </div>
+            </div>
+          </div>
+        </aside>
       </div>
 
       <AddItemModal
