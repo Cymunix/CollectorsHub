@@ -1,51 +1,52 @@
 import { supabase } from "@/lib/supabaseClient";
 
-type LinkedVariant = {
-  catalogItemId: string; // <-- IMPORTANT: must match what your VariantsSection produces
-  // anything else is ignored here
+type VariantDraft = {
+  target_id: string;
 };
 
 export async function applyVariantGroupLinks(params: {
   catalogItemId: string;
-  linkedVariants: LinkedVariant[];
-  variantName?: string | null; // optional label to save to catalog_items.variant_name
+  linkedVariants: VariantDraft[];
+  variantName?: string | null;
 }) {
   const { catalogItemId, linkedVariants, variantName } = params;
 
-  // Optional: store the variant name/label on the created item
+  // Save label onto the created item (optional)
   if (variantName && variantName.trim()) {
-    const { error: nameErr } = await supabase
+    const { error } = await supabase
       .from("catalog_items")
       .update({ variant_name: variantName.trim() })
       .eq("id", catalogItemId);
 
-    if (nameErr) throw new Error(nameErr.message);
+    if (error) throw new Error(`Saving variant_name failed: ${error.message}`);
   }
 
-  if (!linkedVariants?.length) return;
+  const ids = (linkedVariants ?? [])
+    .map((v: any) => String(v?.target_id ?? "").trim())
+    .filter(Boolean);
 
-  // 1) Link the new item into the target group (first selection becomes the anchor)
-  const targetId = linkedVariants[0]?.catalogItemId;
-  if (!targetId) return;
+  if (!ids.length) return;
 
-  const { error: linkErr } = await supabase.rpc("link_catalog_variant", {
-    p_source_item_id: catalogItemId,
-    p_target_item_id: targetId,
-  });
+  const anchorId = ids[0];
 
-  if (linkErr) throw new Error(linkErr.message);
-
-  // 2) Merge any other selected variants into the same group (important!)
-  // This guarantees that if user selected items from different groups, they end up unified.
-  for (let i = 1; i < linkedVariants.length; i++) {
-    const otherId = linkedVariants[i]?.catalogItemId;
-    if (!otherId || otherId === targetId) continue;
-
-    const { error: mergeErr } = await supabase.rpc("link_catalog_variant", {
-      p_source_item_id: otherId,
-      p_target_item_id: targetId,
+  // Link new item into anchor group (creates group if missing)
+  {
+    const { error } = await supabase.rpc("link_catalog_variant", {
+      p_source_item_id: catalogItemId,
+      p_target_item_id: anchorId,
     });
+    if (error) throw new Error(`link_catalog_variant(new->anchor) failed: ${error.message}`);
+  }
 
-    if (mergeErr) throw new Error(mergeErr.message);
+  // Merge any other selected variants into anchor group
+  for (let i = 1; i < ids.length; i++) {
+    const otherId = ids[i];
+    if (!otherId || otherId === anchorId) continue;
+
+    const { error } = await supabase.rpc("link_catalog_variant", {
+      p_source_item_id: otherId,
+      p_target_item_id: anchorId,
+    });
+    if (error) throw new Error(`link_catalog_variant(merge) failed: ${error.message}`);
   }
 }
