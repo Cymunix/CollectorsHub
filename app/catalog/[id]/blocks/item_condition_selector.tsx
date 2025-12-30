@@ -3,26 +3,59 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { getConditionLabel } from "@/lib/pricingEngine";
+import ItemConditionBuildingBlocks from "@/components/catalog/ItemConditionBuildingBlocks";
 
 type Minifig = { id: string; minifig_number: string; name: string | null; image_url: string | null };
 
-type ConditionField =
-  | { key: string; label: string; type: "checkbox" }
-  | { key: string; label: string; type: "select"; options: string[] }
-  | { key: string; label: string; type: "number"; min?: number; max?: number; step?: number };
-
-type ConditionSection = { title: string; fields: ConditionField[] };
-
-function clampScore(n: any, fallback = 8) {
+function clampTier10(n: any, fallback = 8) {
   const x = Number(n);
   if (!Number.isFinite(x)) return fallback;
   return Math.max(1, Math.min(10, x));
 }
 
-function gradeToConditionScore(gradeValue: any, fallback = 8) {
+function tierToScore100(tier10: number) {
+  return Math.max(0, Math.min(100, Math.round(tier10 * 10)));
+}
+
+function score100ToTier10(score100: number) {
+  return clampTier10(Math.round(Number(score100 || 0) / 10), 8);
+}
+
+function normalizeCert(input: any): string {
+  const s = String(input ?? "").trim().replace(/\s+/g, " ");
+  return s.slice(0, 64);
+}
+
+/**
+ * Grade -> 0–100 mapping (stable)
+ * You can tune later, but do NOT constantly change it.
+ */
+function gradeToScore100(company: string, gradeValue: any, isBlackLabel: boolean) {
+  const c = String(company || "").toUpperCase();
   const g = Number(gradeValue);
-  if (!Number.isFinite(g)) return fallback;
-  return Math.max(1, Math.min(10, g));
+
+  if (c === "BGS" && isBlackLabel) return 100;
+
+  // Support halves (9.5 etc)
+  const map: Record<string, number> = {
+    "10": 100,
+    "9.5": 97,
+    "9": 94,
+    "8.5": 90,
+    "8": 86,
+    "7.5": 82,
+    "7": 78,
+    "6.5": 74,
+    "6": 70,
+    "5": 60,
+    "4": 50,
+    "3": 40,
+    "2": 30,
+    "1": 20,
+  };
+
+  const key = Number.isFinite(g) ? String(g) : "";
+  return map[key] ?? 80;
 }
 
 function deriveGradeLabel(gradingCompany: string, gradeValue: any, isBlackLabel: boolean) {
@@ -31,51 +64,6 @@ function deriveGradeLabel(gradingCompany: string, gradeValue: any, isBlackLabel:
   if ((gradingCompany || "").toUpperCase() === "BGS" && isBlackLabel) return "BGS Black Label";
   if (gradingCompany) return `${gradingCompany} ${gvText}`;
   return `Graded ${gvText}`;
-}
-
-function normalizeCert(input: any): string {
-  const s = String(input ?? "").trim().replace(/\s+/g, " ");
-  return s.slice(0, 64);
-}
-
-function getConditionSections(categoryName: string | null): ConditionSection[] {
-  const c = (categoryName ?? "").toLowerCase();
-
-  if (c.includes("building") || c.includes("block") || c.includes("lego")) {
-    return [
-      {
-        title: "What's Included",
-        fields: [
-          { key: "for_parts", label: "Broken / For Parts", type: "checkbox" },
-          { key: "sealed", label: "Sealed (New in Box)", type: "checkbox" },
-          { key: "box", label: "Original Box", type: "checkbox" },
-          { key: "manual", label: "Instructions / Manual", type: "checkbox" },
-          { key: "complete", label: "All Pieces Complete", type: "checkbox" },
-          { key: "minifigs_included", label: "All included minifigs are present", type: "checkbox" },
-        ],
-      },
-      {
-        title: "Optional Details",
-        fields: [
-          { key: "stickers_applied", label: "Stickers Applied", type: "checkbox" },
-          { key: "smoke_free", label: "Smoke-Free Home", type: "checkbox" },
-          { key: "sun_fade", label: "Sunlight Discoloration / Yellowing", type: "checkbox" },
-        ],
-      },
-    ];
-  }
-
-  return [
-    {
-      title: "Condition",
-      fields: [
-        { key: "for_parts", label: "Broken / For Parts", type: "checkbox" },
-        { key: "like_new", label: "Like New", type: "checkbox" },
-        { key: "good", label: "Good", type: "checkbox" },
-        { key: "fair", label: "Fair", type: "checkbox" },
-      ],
-    },
-  ];
 }
 
 function SectionCard({ title, children, right }: { title: string; children: React.ReactNode; right?: React.ReactNode }) {
@@ -119,7 +107,17 @@ function CheckboxRow({
   );
 }
 
-function SelectRow({ label, value, onChange, options }: { label: string; value: string; onChange: (v: string) => void; options: string[] }) {
+function SelectRow({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: string[];
+}) {
   return (
     <div className="rounded-xl border border-[#E5E9F2] bg-white px-3 py-2">
       <div className="text-sm text-[#0F172A] font-medium">{label}</div>
@@ -205,17 +203,17 @@ function TextRow({
   );
 }
 
-/** Big, intentional 1–10 buttons (non-LEGO only) */
+/** 1–10 pill UI */
 function ScorePills({
-  value,
+  valueTier10,
   disabled,
   onPick,
 }: {
-  value: number;
+  valueTier10: number;
   disabled?: boolean;
-  onPick: (next: number) => void;
+  onPick: (nextTier10: number) => void;
 }) {
-  const v = clampScore(value, 8);
+  const v = clampTier10(valueTier10, 8);
 
   return (
     <div className={`${disabled ? "opacity-70 pointer-events-none" : ""}`}>
@@ -254,12 +252,19 @@ export default function ItemConditionSelector({
   categoryName: string | null;
   isBuildingBlocks: boolean;
   isGradableCategory: boolean;
+
+  // NOW: this is condition_json
   conditionValues: Record<string, any>;
+
+  // NOW: this is score 0–100
   conditionScore: number;
+
+  // NOW: nextScore is 0–100
   onChange: (nextValues: Record<string, any>, nextScore: number) => void;
 }) {
   const [linkedMinifigs, setLinkedMinifigs] = useState<Minifig[]>([]);
 
+  // If LEGO, we load minifigs for the checklist editor.
   useEffect(() => {
     let cancelled = false;
 
@@ -297,308 +302,334 @@ export default function ItemConditionSelector({
     };
   }, [catalogItemId, isBuildingBlocks]);
 
-  const sections = useMemo(() => getConditionSections(categoryName), [categoryName]);
+  // ✅ LEGO path: only render the building blocks editor.
+  if (isBuildingBlocks) {
+    // Convert linkedMinifigs into expected list (no duplicates here — your other component handles duplicates with instance_key)
+    const expected = linkedMinifigs.map((m) => ({
+      id: m.id,
+      minifig_number: m.minifig_number,
+      name: m.name,
+      image_url: m.image_url,
+    })) as any;
 
-  const isGraded = !!conditionValues?.isGraded;
+    return (
+      <ItemConditionBuildingBlocks
+        mode="set"
+        catalogItemId={catalogItemId}
+        expectedMinifigs={expected}
+        conditionValues={conditionValues}
+        conditionScore={conditionScore}
+        onChange={onChange}
+      />
+    );
+  }
 
-  // keep derived grade->score in sync
+  // --- NON-LEGO PATH (simple v1) ---
+  // We store a generic condition JSON with a tier10 input.
+  const tier10 = useMemo(() => score100ToTier10(conditionScore), [conditionScore]);
+
+  // Graded card detection: stored inside JSON
+  const isGraded = !!conditionValues?.data?.is_graded;
+
+  // Derived display
+  const summaryRight = useMemo(() => {
+    // For parts override
+    if (!!conditionValues?.data?.for_parts) return { scoreText: "For Parts", labelText: "" };
+
+    const t = clampTier10(tier10, 8);
+    return { scoreText: String(t), labelText: getConditionLabel(t) };
+  }, [conditionValues, tier10]);
+
+  // Keep derived grade score in sync (0–100)
   useEffect(() => {
     if (!isGradableCategory) return;
     if (!isGraded) return;
 
-    const company = String(conditionValues?.gradingCompany || "").toUpperCase();
-    const black = !!conditionValues?.isBlackLabel;
+    const data = conditionValues?.data ?? {};
+    const company = String(data?.grading_company || "").toUpperCase();
+    const black = !!data?.is_black_label;
 
-    if (company === "BGS" && black) {
-      const nextValues = {
-        ...conditionValues,
-        gradeValue: 10,
-        conditionScore: 10,
-        gradeLabel: deriveGradeLabel(String(conditionValues?.gradingCompany || ""), 10, true),
-      };
-      onChange(nextValues, 10);
-      return;
-    }
+    const score100 = gradeToScore100(company, data?.grade_value, black);
 
-    const nextScore = gradeToConditionScore(conditionValues?.gradeValue, conditionScore);
-    const nextValues = {
-      ...conditionValues,
-      conditionScore: nextScore,
-      gradeLabel: deriveGradeLabel(String(conditionValues?.gradingCompany || ""), conditionValues?.gradeValue, !!conditionValues?.isBlackLabel),
+    const nextJson = {
+      v: 1,
+      item_type: "card",
+      mode: "graded",
+      data: {
+        ...data,
+        grade_label: deriveGradeLabel(String(data?.grading_company || ""), data?.grade_value, black),
+      },
     };
-    onChange(nextValues, nextScore);
+
+    onChange(nextJson, score100);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isGradableCategory, isGraded, conditionValues?.gradeValue, conditionValues?.gradingCompany, conditionValues?.isBlackLabel]);
-
-  const summaryRight = useMemo(() => {
-    if (!!conditionValues["for_parts"]) return { scoreText: "For Parts", labelText: "" };
-
-    if (!isBuildingBlocks) {
-      const s = clampScore(conditionScore, 8);
-      return { scoreText: String(s), labelText: getConditionLabel(s) };
-    }
-
-    const all = sections.flatMap((s) => s.fields);
-    const checked = all.filter((f) => f.type === "checkbox" && !!conditionValues[f.key]).length;
-    if (checked === 0) return { scoreText: "", labelText: "Select what's included" };
-    return { scoreText: "", labelText: `${checked} selected` };
-  }, [conditionValues, isBuildingBlocks, conditionScore, sections]);
+  }, [isGradableCategory, isGraded, conditionValues?.data?.grade_value, conditionValues?.data?.grading_company, conditionValues?.data?.is_black_label]);
 
   return (
     <SectionCard
       title="Condition"
       right={
-        !isBuildingBlocks ? (
-          <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-extrabold text-[#0F172A]">{summaryRight.scoreText}</span>
-            <span className="text-base font-bold text-[#0F172A]">{summaryRight.labelText ? `— ${summaryRight.labelText}` : ""}</span>
-            {isGradableCategory && isGraded && conditionValues?.gradeLabel ? (
-              <span className="text-sm font-semibold text-[#64748B]">• {String(conditionValues.gradeLabel)}</span>
-            ) : null}
-          </div>
-        ) : (
-          <span className="text-[11px] text-[#64748B]">{summaryRight.labelText}</span>
-        )
+        <div className="flex items-baseline gap-2">
+          <span className="text-2xl font-extrabold text-[#0F172A]">{summaryRight.scoreText}</span>
+          <span className="text-base font-bold text-[#0F172A]">{summaryRight.labelText ? `— ${summaryRight.labelText}` : ""}</span>
+          {isGradableCategory && isGraded && conditionValues?.data?.grade_label ? (
+            <span className="text-sm font-semibold text-[#64748B]">• {String(conditionValues.data.grade_label)}</span>
+          ) : null}
+        </div>
       }
     >
-      {!isBuildingBlocks ? (
-        <div className="space-y-3">
-          <ScorePills
-            value={conditionScore}
-            disabled={isGradableCategory && isGraded}
-            onPick={(next) => {
-              const nextScore = clampScore(next, 8);
-              const nextValues = { ...conditionValues, conditionScore: nextScore };
-              onChange(nextValues, nextScore);
+      <div className="space-y-3">
+        <ScorePills
+          valueTier10={tier10}
+          disabled={isGradableCategory && isGraded}
+          onPick={(nextTier10) => {
+            const t = clampTier10(nextTier10, 8);
+            const score100 = tierToScore100(t);
+
+            const nextJson = {
+              v: 1,
+              item_type: "generic",
+              mode: "tier10",
+              data: {
+                ...(conditionValues?.data ?? {}),
+                tier10: t,
+                for_parts: !!(conditionValues?.data ?? {})?.for_parts,
+              },
+            };
+
+            onChange(nextJson, score100);
+          }}
+        />
+
+        <CheckboxRow
+          label="Broken / For Parts"
+          checked={!!conditionValues?.data?.for_parts}
+          onChange={(v) => {
+            const currData = conditionValues?.data ?? {};
+            const nextJson = {
+              v: 1,
+              item_type: conditionValues?.item_type ?? "generic",
+              mode: conditionValues?.mode ?? "tier10",
+              data: {
+                ...currData,
+                for_parts: v,
+              },
+            };
+
+            // If for parts: hard score = 20 (tier shows 2/10)
+            if (v) {
+              onChange(nextJson, 20);
+              return;
+            }
+
+            // Otherwise keep current tier score
+            const t = clampTier10(currData?.tier10 ?? tier10, 8);
+            onChange(nextJson, tierToScore100(t));
+          }}
+          emphasize
+          subtext={<span className="text-[#B45309]">Use this if it’s damaged, incomplete, or only good for parts.</span>}
+        />
+
+        {isGradableCategory ? (
+          <CheckboxRow
+            label="Is graded?"
+            checked={!!conditionValues?.data?.is_graded}
+            onChange={(v) => {
+              const currData = conditionValues?.data ?? {};
+
+              if (!v) {
+                const nextJson = {
+                  v: 1,
+                  item_type: "card",
+                  mode: "raw",
+                  data: {
+                    is_graded: false,
+                    tier10: clampTier10(currData?.tier10 ?? tier10, 8),
+                    for_parts: !!currData?.for_parts,
+                  },
+                };
+                onChange(nextJson, tierToScore100(nextJson.data.tier10));
+                return;
+              }
+
+              const nextData: any = {
+                ...currData,
+                is_graded: true,
+                grading_company: currData?.grading_company || "PSA",
+                grade_value: currData?.grade_value ?? 8,
+                is_black_label: !!currData?.is_black_label,
+                certification_number: String(currData?.certification_number ?? ""),
+              };
+
+              const nextJson = {
+                v: 1,
+                item_type: "card",
+                mode: "graded",
+                data: {
+                  ...nextData,
+                  grade_label: deriveGradeLabel(String(nextData.grading_company || ""), nextData.grade_value, !!nextData.is_black_label),
+                },
+              };
+
+              const score100 = gradeToScore100(String(nextData.grading_company || ""), nextData.grade_value, !!nextData.is_black_label);
+              onChange(nextJson, score100);
             }}
+            subtext={<span className="text-[#64748B]">Enable only if it has a professional grade.</span>}
           />
+        ) : null}
 
-          {isGradableCategory ? (
-            <CheckboxRow
-              label="Is graded?"
-              checked={!!conditionValues?.isGraded}
+        {isGradableCategory && isGraded ? (
+          <div className="space-y-2">
+            <SelectRow
+              label="Grading Company"
+              value={typeof conditionValues?.data?.grading_company === "string" ? conditionValues.data.grading_company : ""}
+              options={["PSA", "BGS", "CGC", "SGC", "CBCS", "PGX", "Other"]}
               onChange={(v) => {
-                const next: any = { ...conditionValues, isGraded: v };
+                const currData = conditionValues?.data ?? {};
+                const isBgs = String(v || "").toUpperCase() === "BGS";
+                const nextData: any = { ...currData, grading_company: v };
+                if (!isBgs) nextData.is_black_label = false;
 
-                if (!v) {
-                  next.gradingCompany = null;
-                  next.gradeValue = null;
-                  next.gradeLabel = null;
-                  next.isBlackLabel = null;
-                  next.certificationNumber = null;
-                  onChange(next, clampScore(conditionScore, 8));
+                // If BGS black label => force 10
+                if (isBgs && !!nextData.is_black_label) nextData.grade_value = 10;
+
+                const nextJson = {
+                  v: 1,
+                  item_type: "card",
+                  mode: "graded",
+                  data: {
+                    ...nextData,
+                    grade_label: deriveGradeLabel(String(v || ""), nextData.grade_value, !!nextData.is_black_label),
+                  },
+                };
+
+                const score100 = gradeToScore100(String(nextData.grading_company || ""), nextData.grade_value, !!nextData.is_black_label);
+                onChange(nextJson, score100);
+              }}
+            />
+
+            <NumberRow
+              label="Grade Value"
+              value={
+                String(conditionValues?.data?.grading_company || "").toUpperCase() === "BGS" && !!conditionValues?.data?.is_black_label
+                  ? "10"
+                  : conditionValues?.data?.grade_value === null || conditionValues?.data?.grade_value === undefined
+                    ? ""
+                    : String(conditionValues.data.grade_value)
+              }
+              min={0}
+              max={10}
+              step={0.5}
+              disabled={String(conditionValues?.data?.grading_company || "").toUpperCase() === "BGS" && !!conditionValues?.data?.is_black_label}
+              onChange={(v) => {
+                const currData = conditionValues?.data ?? {};
+                const company = String(currData?.grading_company || "").toUpperCase();
+                const black = !!currData?.is_black_label;
+
+                if (company === "BGS" && black) {
+                  const nextJson = {
+                    v: 1,
+                    item_type: "card",
+                    mode: "graded",
+                    data: {
+                      ...currData,
+                      grade_value: 10,
+                      grade_label: deriveGradeLabel(String(currData?.grading_company || ""), 10, true),
+                    },
+                  };
+                  onChange(nextJson, 100);
                   return;
                 }
 
-                if (!next.gradingCompany) next.gradingCompany = "PSA";
-                if (next.gradeValue === null || next.gradeValue === undefined || next.gradeValue === "") next.gradeValue = 8;
-                if (next.certificationNumber === undefined) next.certificationNumber = "";
+                const gv = v === "" ? null : Number(v);
+                const nextData: any = { ...currData, grade_value: gv };
+                const nextJson = {
+                  v: 1,
+                  item_type: "card",
+                  mode: "graded",
+                  data: {
+                    ...nextData,
+                    grade_label: deriveGradeLabel(String(nextData?.grading_company || ""), gv, !!nextData?.is_black_label),
+                  },
+                };
 
-                const derived = gradeToConditionScore(next.gradeValue, 8);
-                next.conditionScore = derived;
-                next.gradeLabel = deriveGradeLabel(String(next.gradingCompany || ""), next.gradeValue, !!next.isBlackLabel);
-
-                onChange(next, derived);
+                const score100 = gradeToScore100(String(nextData.grading_company || ""), gv, !!nextData.is_black_label);
+                onChange(nextJson, score100);
               }}
-              subtext={<span className="text-[#64748B]">Enable only if it has a professional grade.</span>}
             />
-          ) : null}
 
-          {isGradableCategory && isGraded ? (
-            <div className="space-y-2">
-              <SelectRow
-                label="Grading Company"
-                value={typeof conditionValues?.gradingCompany === "string" ? conditionValues.gradingCompany : ""}
-                options={["PSA", "BGS", "CGC", "SGC", "CBCS", "PGX", "Other"]}
+            {String(conditionValues?.data?.grading_company || "").toUpperCase() === "BGS" ? (
+              <CheckboxRow
+                label="Black Label"
+                checked={!!conditionValues?.data?.is_black_label}
                 onChange={(v) => {
-                  const next: any = { ...conditionValues, gradingCompany: v };
-                  const isBgs = String(v || "").toUpperCase() === "BGS";
-                  if (!isBgs) next.isBlackLabel = false;
+                  const currData = conditionValues?.data ?? {};
+                  const company = String(currData?.grading_company || "").toUpperCase();
 
-                  if (isBgs && !!next.isBlackLabel) {
-                    next.gradeValue = 10;
-                    next.conditionScore = 10;
-                  }
-
-                  next.gradeLabel = deriveGradeLabel(String(v || ""), next.gradeValue, !!next.isBlackLabel);
-
-                  // ✅ don't read next.conditionScore (not guaranteed / TS-safe)
-                  onChange(next, clampScore(conditionScore, 8));
-                }}
-              />
-
-              <NumberRow
-                label="Grade Value"
-                value={
-                  String(conditionValues?.gradingCompany || "").toUpperCase() === "BGS" && !!conditionValues?.isBlackLabel
-                    ? "10"
-                    : conditionValues?.gradeValue === null || conditionValues?.gradeValue === undefined
-                      ? ""
-                      : String(conditionValues.gradeValue)
-                }
-                min={0}
-                max={10}
-                step={0.5}
-                disabled={String(conditionValues?.gradingCompany || "").toUpperCase() === "BGS" && !!conditionValues?.isBlackLabel}
-                onChange={(v) => {
-                  const company = String(conditionValues?.gradingCompany || "").toUpperCase();
-                  const black = !!conditionValues?.isBlackLabel;
-
-                  if (company === "BGS" && black) {
-                    const next = {
-                      ...conditionValues,
-                      gradeValue: 10,
-                      conditionScore: 10,
-                      gradeLabel: deriveGradeLabel(String(conditionValues?.gradingCompany || ""), 10, true),
+                  if (company === "BGS" && v) {
+                    const nextJson = {
+                      v: 1,
+                      item_type: "card",
+                      mode: "graded",
+                      data: {
+                        ...currData,
+                        is_black_label: true,
+                        grade_value: 10,
+                        grade_label: deriveGradeLabel(String(currData?.grading_company || ""), 10, true),
+                      },
                     };
-                    onChange(next, 10);
+                    onChange(nextJson, 100);
                     return;
                   }
 
-                  const next: any = { ...conditionValues, gradeValue: v === "" ? null : Number(v) };
-                  const derived = gradeToConditionScore(next.gradeValue, 8);
-                  next.conditionScore = derived;
-                  next.gradeLabel = deriveGradeLabel(String(next.gradingCompany || ""), next.gradeValue, !!next.isBlackLabel);
-                  onChange(next, derived);
+                  const nextData: any = { ...currData, is_black_label: v };
+                  const nextJson = {
+                    v: 1,
+                    item_type: "card",
+                    mode: "graded",
+                    data: {
+                      ...nextData,
+                      grade_label: deriveGradeLabel(String(nextData?.grading_company || ""), nextData?.grade_value, !!v),
+                    },
+                  };
+
+                  const score100 = gradeToScore100(String(nextData.grading_company || ""), nextData.grade_value, !!nextData.is_black_label);
+                  onChange(nextJson, score100);
                 }}
+                subtext={<span className="text-[#64748B]">If checked, grade is locked to 10.</span>}
               />
+            ) : null}
 
-              {String(conditionValues?.gradingCompany || "").toUpperCase() === "BGS" ? (
-                <CheckboxRow
-                  label="Black Label"
-                  checked={!!conditionValues?.isBlackLabel}
-                  onChange={(v) => {
-                    const company = String(conditionValues?.gradingCompany || "").toUpperCase();
+            <TextRow
+              label="Certification Number"
+              value={typeof conditionValues?.data?.certification_number === "string" ? conditionValues.data.certification_number : ""}
+              placeholder="e.g. PSA 12345678"
+              onChange={(v) => {
+                const currData = conditionValues?.data ?? {};
+                const nextJson = {
+                  v: 1,
+                  item_type: "card",
+                  mode: "graded",
+                  data: {
+                    ...currData,
+                    certification_number: normalizeCert(v),
+                  },
+                };
 
-                    // ✅ If BGS + checked => lock to 10
-                    if (company === "BGS" && v) {
-                      const next = {
-                        ...conditionValues,
-                        isBlackLabel: true,
-                        gradeValue: 10,
-                        conditionScore: 10,
-                        gradeLabel: deriveGradeLabel(String(conditionValues?.gradingCompany || ""), 10, true),
-                      };
-                      onChange(next, 10);
-                      return;
-                    }
+                // score unchanged
+                onChange(nextJson, conditionScore);
+              }}
+              help={<span>Optional, but recommended for graded items.</span>}
+            />
 
-                    // ✅ Unchecked => keep current derived score (effect will keep it in sync)
-                    const next = {
-                      ...conditionValues,
-                      isBlackLabel: v,
-                      gradeLabel: deriveGradeLabel(String(conditionValues?.gradingCompany || ""), conditionValues?.gradeValue, !!v),
-                    };
-
-                    // ✅ don't read next.conditionScore
-                    onChange(next, clampScore(conditionScore, 8));
-                  }}
-                  subtext={<span className="text-[#64748B]">If checked, grade is locked to 10.</span>}
-                />
-              ) : null}
-
-              <TextRow
-                label="Certification Number"
-                value={typeof conditionValues?.certificationNumber === "string" ? conditionValues.certificationNumber : ""}
-                placeholder="e.g. PSA 12345678 (exactly as shown on the slab)"
-                onChange={(v) => {
-                  const next = { ...conditionValues, certificationNumber: normalizeCert(v) };
-                  // ✅ don't read next.conditionScore
-                  onChange(next, clampScore(conditionScore, 8));
-                }}
-                help={<span>Optional, but recommended for graded items (use the slab’s cert/serial).</span>}
-              />
-
-              <div className="rounded-xl border border-[#E5E9F2] bg-[#F8FAFC] px-3 py-2 text-xs text-[#334155]">
-                Derived condition: <span className="font-semibold">{`${clampScore(conditionScore, 8)}/10`}</span> •{" "}
-                {getConditionLabel(clampScore(conditionScore, 8))}
-                {conditionValues?.gradeLabel ? <span className="text-[#64748B]"> • {String(conditionValues.gradeLabel)}</span> : null}
-              </div>
+            <div className="rounded-xl border border-[#E5E9F2] bg-[#F8FAFC] px-3 py-2 text-xs text-[#334155]">
+              Derived condition:{" "}
+              <span className="font-semibold">{`${score100ToTier10(conditionScore)}/10`}</span> • {getConditionLabel(score100ToTier10(conditionScore))}
+              {conditionValues?.data?.grade_label ? <span className="text-[#64748B]"> • {String(conditionValues.data.grade_label)}</span> : null}
             </div>
-          ) : null}
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {sections.map((sec) => (
-            <div key={sec.title}>
-              <div className="text-xs font-semibold text-[#0F172A] mb-2">{sec.title}</div>
-              <div className="space-y-2">
-                {sec.fields.map((f) => {
-                  const val = conditionValues[f.key];
-                  const isForParts = f.key === "for_parts";
-
-                  if (f.type === "checkbox" && f.key === "minifigs_included") {
-                    if (!linkedMinifigs.length) return null;
-
-                    return (
-                      <CheckboxRow
-                        key={f.key}
-                        label={`${f.label} (${linkedMinifigs.length})`}
-                        checked={!!val}
-                        onChange={(v) => onChange({ ...conditionValues, [f.key]: v }, conditionScore)}
-                        subtext={
-                          <div className="space-y-1">
-                            <div>Includes:</div>
-                            <ul className="list-disc pl-5">
-                              {linkedMinifigs.map((m) => (
-                                <li key={m.id}>
-                                  <span className="font-semibold">{m.minifig_number}</span>
-                                  {m.name ? ` — ${m.name}` : ""}
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        }
-                      />
-                    );
-                  }
-
-                  if (f.type === "checkbox") {
-                    return (
-                      <CheckboxRow
-                        key={f.key}
-                        label={f.label}
-                        checked={!!val}
-                        onChange={(v) => onChange({ ...conditionValues, [f.key]: v }, conditionScore)}
-                        emphasize={isForParts}
-                        subtext={
-                          isForParts ? (
-                            <span className="text-[#B45309]">Mark this if the item is damaged, incomplete, or only good for spare parts.</span>
-                          ) : undefined
-                        }
-                      />
-                    );
-                  }
-
-                  if (f.type === "select") {
-                    return (
-                      <SelectRow
-                        key={f.key}
-                        label={f.label}
-                        value={typeof val === "string" ? val : ""}
-                        options={f.options}
-                        onChange={(v) => onChange({ ...conditionValues, [f.key]: v }, conditionScore)}
-                      />
-                    );
-                  }
-
-                  return (
-                    <NumberRow
-                      key={f.key}
-                      label={f.label}
-                      value={val === null || val === undefined ? "" : String(val)}
-                      min={f.min}
-                      max={f.max}
-                      step={f.step}
-                      onChange={(v) => onChange({ ...conditionValues, [f.key]: v }, conditionScore)}
-                    />
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+          </div>
+        ) : null}
+      </div>
     </SectionCard>
   );
 }
