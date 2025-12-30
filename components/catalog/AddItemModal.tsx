@@ -22,6 +22,14 @@ import GlobalDetailsSection from "./add-item/sections/GlobalDetailsSection";
 import WikiSection from "./add-item/sections/WikiSection";
 import VariantsSection from "./add-item/sections/VariantsSection";
 
+import BuildingBlocksSection from "./add-item/sections/kinds/BuildingBlocksSection";
+import CardsSection from "./add-item/sections/kinds/CardsSection";
+import MusicSection from "./add-item/sections/kinds/MusicSection";
+import ToysSection from "./add-item/sections/kinds/ToysSection";
+import MoviesSection from "./add-item/sections/kinds/MoviesSection";
+import GamingSection from "./add-item/sections/kinds/GamingSection";
+import ComicsSection from "./add-item/sections/kinds/ComicsSection";
+
 import CreateMinifigModal from "./add-item/modals/CreateMinifigModal";
 
 /* ---------------- types ---------------- */
@@ -48,10 +56,10 @@ type CatalogMeta = {
 
   people: NamedRow[];
 
-  gamePlatforms: any[];
-  gamePublishers: any[];
+  gamePlatforms: NamedRow[];
+  gamePublishers: NamedRow[];
 
-  comicPublishers: any[];
+  comicPublishers: NamedRow[];
 
   [key: string]: any;
 };
@@ -109,28 +117,52 @@ export default function AddItemModal({
   const createFranchise = async () => {
     const name = promptName("franchise");
     if (!name) return;
+
     const row = await safeInsertLookup("franchises", name);
     if (!row) return;
 
     setMeta((m) => ({
       ...m,
-      franchises: [...m.franchises, row].sort((a, b) => a.name.localeCompare(b.name)),
+      franchises: [...(m.franchises ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
     }));
 
     form.setFranchiseId(row.id);
+  };
+
+  const createGamePlatform = async () => {
+    const name = promptName("platform");
+    if (!name) return;
+
+    const row = await safeInsertLookup("game_platforms", name);
+    if (!row) return;
+
+    setMeta((m) => ({
+      ...m,
+      gamePlatforms: [...(m.gamePlatforms ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
+    }));
+
+    form.setGamePlatformId(row.id);
+  };
+
+  const createGamePublisher = async () => {
+    const name = promptName("publisher");
+    if (!name) return;
+
+    const row = await safeInsertLookup("game_publishers", name);
+    if (!row) return;
+
+    setMeta((m) => ({
+      ...m,
+      gamePublishers: [...(m.gamePublishers ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
+    }));
+
+    form.setGamePublisherId(row.id);
   };
 
   /* ---------------- submit ---------------- */
 
   const submit = async () => {
     if (saving) return;
-
-    // ✅ HARD VALIDATION: gaming must have a platform
-    if (form.itemKind === "gaming" && !form.gamePlatformId) {
-      setBanner({ type: "error", msg: "Please select a platform for this game." });
-      return;
-    }
-
     setSaving(true);
     setBanner(null);
 
@@ -179,7 +211,6 @@ export default function AddItemModal({
         movieDirectorIds: people.movieDirectorIds,
         movieActorIds: people.movieActorIds,
 
-        // ✅ gaming
         gamePlatformId: form.gamePlatformId,
         gamePublisherId: form.gamePublisherId,
 
@@ -249,53 +280,25 @@ export default function AddItemModal({
 
           <GlobalDetailsSection {...form} />
 
-          {/* ✅ ADD THIS: Gaming platform selector UI */}
+          {/* Kind-specific sections */}
+          {form.itemKind === "building_blocks" ? <BuildingBlocksSection {...form} meta={meta} minifigs={minifigs} /> : null}
+          {form.itemKind === "trading_card" || form.itemKind === "sports_card" ? <CardsSection {...form} meta={meta} /> : null}
+          {form.itemKind === "music" ? <MusicSection {...form} meta={meta} /> : null}
+          {form.itemKind === "toy" ? <ToysSection {...form} meta={meta} /> : null}
+          {form.itemKind === "movie" ? <MoviesSection {...form} meta={meta} people={people} /> : null}
           {form.itemKind === "gaming" ? (
-            <div className="mt-4 rounded-2xl border bg-white p-4">
-              <div className="text-sm font-semibold text-[#0F172A]">Gaming Details</div>
-              <div className="mt-0.5 text-xs text-gray-500">Platform is required for video games.</div>
-
-              <div className="mt-3 grid grid-cols-1 gap-3">
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-gray-700">Platform</label>
-                  <select
-                    value={form.gamePlatformId || ""}
-                    onChange={(e) => form.setGamePlatformId(e.target.value)}
-                    className="w-full rounded-xl border bg-white px-3 py-2 text-sm"
-                  >
-                    <option value="">Select platform…</option>
-                    {(meta.gamePlatforms ?? []).map((p: any) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-
-                  {(meta.gamePlatforms ?? []).length === 0 ? (
-                    <div className="mt-1 text-[11px] text-gray-500">
-                      No platforms loaded. Check your <span className="font-semibold">useCatalogMeta</span> hook query.
-                    </div>
-                  ) : null}
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-gray-700">Publisher</label>
-                  <select
-                    value={form.gamePublisherId || ""}
-                    onChange={(e) => form.setGamePublisherId(e.target.value)}
-                    className="w-full rounded-xl border bg-white px-3 py-2 text-sm"
-                  >
-                    <option value="">(optional) Select publisher…</option>
-                    {(meta.gamePublishers ?? []).map((p: any) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            </div>
+            <GamingSection
+              gamePlatforms={meta.gamePlatforms ?? []}
+              gamePublishers={meta.gamePublishers ?? []}
+              gamePlatformId={form.gamePlatformId}
+              setGamePlatformId={form.setGamePlatformId}
+              gamePublisherId={form.gamePublisherId}
+              setGamePublisherId={form.setGamePublisherId}
+              onCreatePlatform={createGamePlatform}
+              onCreatePublisher={createGamePublisher}
+            />
           ) : null}
+          {form.itemKind === "comic" ? <ComicsSection {...form} meta={meta} /> : null}
 
           <WikiSection {...form} />
 
