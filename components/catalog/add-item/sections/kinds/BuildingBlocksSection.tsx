@@ -1,342 +1,270 @@
-// components/catalog/AddItemModal.tsx
+// components/catalog/add-item/sections/kinds/BuildingBlocksSection.tsx
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React from "react";
+import FieldLabel from "../../blocks/FieldLabel";
+import TextInput from "../../blocks/TextInput";
+import Select from "../../blocks/Select";
+import InlineCreateButton from "../../blocks/InlineCreateButton";
+import ChipList from "../../blocks/ChipList";
+import type { BbTheme, BbSubtheme, CatalogMinifig, SelectedMinifig } from "@/lib/catalog/types";
 
-import AddItemModalShell from "./AddItemModal.shell";
+export default function BuildingBlocksSection({
+  subcategoryId,
 
-import { useCatalogMeta } from "./add-item/hooks/useCatalogMeta";
-import { useAddItemForm } from "./add-item/hooks/useAddItemForm";
-import { useVariantLinks } from "./add-item/hooks/useVariantLinks";
-import { useMinifigs } from "./add-item/hooks/useMinifigs";
-import { usePeoplePicker } from "./add-item/hooks/usePeoplePicker";
+  bbThemeId,
+  setBbThemeId,
+  bbSubthemeId,
+  setBbSubthemeId,
+  bbSetNumber,
+  setBbSetNumber,
+  bbPieceCount,
+  setBbPieceCount,
+  bbRetailCad,
+  setBbRetailCad,
+  bbRetailUsd,
+  setBbRetailUsd,
 
-import { safeInsertLookup } from "@/lib/catalog/lookups";
-import { createCatalogItem } from "@/lib/catalog/createCatalogItem";
+  bbThemeOptions,
+  bbSubthemeOptions,
 
-import { ensureBuildingBlocksRow, upsertSetMinifigLinks } from "@/lib/db/catalog";
-import { upsertItemDescription, replaceVariantLinks } from "@/lib/db/catalog_write";
+  onCreateBbTheme,
+  onCreateBbSubtheme,
 
-import ClassificationSection from "./add-item/sections/ClassificationSection";
-import PhotoSection from "./add-item/sections/PhotoSection";
-import GlobalDetailsSection from "./add-item/sections/GlobalDetailsSection";
-import WikiSection from "./add-item/sections/WikiSection";
-import VariantsSection from "./add-item/sections/VariantsSection";
-
-import BuildingBlocksSection from "./add-item/sections/kinds/BuildingBlocksSection";
-import CardsSection from "./add-item/sections/kinds/CardsSection";
-import MusicSection from "./add-item/sections/kinds/MusicSection";
-import ToysSection from "./add-item/sections/kinds/ToysSection";
-import MoviesSection from "./add-item/sections/kinds/MoviesSection";
-import GamingSection from "./add-item/sections/kinds/GamingSection";
-import ComicsSection from "./add-item/sections/kinds/ComicsSection";
-
-import CreateMinifigModal from "./add-item/modals/CreateMinifigModal";
-
-/* ---------------- types ---------------- */
-
-type NamedRow = { id: string; name: string };
-
-type CatalogMeta = {
-  categories: any[];
-  subcategories: any[];
-  franchises: NamedRow[];
-
-  bbThemes: any[];
-  bbSubthemes: any[];
-
-  cardManufacturers: any[];
-  cardSets: any[];
-  cardTypes: any[];
-
-  musicArtists: any[];
-
-  toyManufacturers: any[];
-  toyBrands: any[];
-  toyLines: any[];
-
-  people: NamedRow[];
-
-  gamePlatforms: NamedRow[];
-  gamePublishers: NamedRow[];
-
-  comicPublishers: NamedRow[];
-
-  [key: string]: any;
-};
-
-/* ---------------- component ---------------- */
-
-export default function AddItemModal({
-  open,
-  onClose,
-  onCreated,
+  // minifigs
+  minifigQuery,
+  setMinifigQuery,
+  minifigSearching,
+  minifigResults,
+  selectedMinifigs,
+  onSearchMinifigs,
+  onAddMinifig,
+  onRemoveMinifig,
+  onSetMinifigQty,
+  onBumpMinifigQty,
+  onOpenCreateMinifig,
 }: {
-  open: boolean;
-  onClose: () => void;
-  onCreated?: (catalogItemId: string) => void;
+  subcategoryId: string;
+
+  bbThemeId: string;
+  setBbThemeId: (v: string) => void;
+  bbSubthemeId: string;
+  setBbSubthemeId: (v: string) => void;
+  bbSetNumber: string;
+  setBbSetNumber: (v: string) => void;
+  bbPieceCount: string;
+  setBbPieceCount: (v: string) => void;
+  bbRetailCad: string;
+  setBbRetailCad: (v: string) => void;
+  bbRetailUsd: string;
+  setBbRetailUsd: (v: string) => void;
+
+  bbThemeOptions: BbTheme[];
+  bbSubthemeOptions: BbSubtheme[];
+
+  onCreateBbTheme: () => void;
+  onCreateBbSubtheme: () => void;
+
+  minifigQuery: string;
+  setMinifigQuery: (v: string) => void;
+  minifigSearching: boolean;
+  minifigResults: CatalogMinifig[];
+  selectedMinifigs: SelectedMinifig[];
+  onSearchMinifigs: () => void;
+  onAddMinifig: (mf: CatalogMinifig) => void;
+  onRemoveMinifig: (id: string) => void;
+  onSetMinifigQty: (id: string, qty: number) => void;
+  onBumpMinifigQty: (id: string, delta: number) => void;
+  onOpenCreateMinifig: () => void;
 }) {
-  const { meta, setMeta, metaLoading, metaError } = useCatalogMeta(open) as {
-    meta: CatalogMeta;
-    setMeta: React.Dispatch<React.SetStateAction<CatalogMeta>>;
-    metaLoading: boolean;
-    metaError: string | null;
-  };
-
-  const form = useAddItemForm(meta);
-  const variants = useVariantLinks();
-  const people = usePeoplePicker(meta.people);
-  const minifigs = useMinifigs(() => form.subcategoryId, () => form.franchiseId);
-
-  const [saving, setSaving] = useState(false);
-  const [banner, setBanner] = useState<{ type: "error" | "success"; msg: string } | null>(null);
-
-  const title = useMemo(() => {
-    const kind = (form.itemKind || "building_blocks").replace(/_/g, " ");
-    return `Create Catalog Item • ${kind}`;
-  }, [form.itemKind]);
-
-  const safeClose = () => {
-    if (!saving) {
-      setBanner(null);
-      onClose();
-    }
-  };
-
-  const resetAll = () => {
-    form.reset();
-    variants.resetVariants();
-    minifigs.resetMinifigs();
-    people.resetPeople();
-    setBanner(null);
-  };
-
-  const promptName = (label: string) => (window.prompt(`New ${label} name:`) || "").trim();
-
-  /* ---------------- lookup creators ---------------- */
-
-  const createFranchise = async () => {
-    const name = promptName("franchise");
-    if (!name) return;
-
-    const row = await safeInsertLookup("franchises", name);
-    if (!row) return;
-
-    setMeta((m) => ({
-      ...m,
-      franchises: [...(m.franchises ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
-    }));
-
-    form.setFranchiseId(row.id);
-  };
-
-  const createGamePlatform = async () => {
-    const name = promptName("platform");
-    if (!name) return;
-
-    const row = await safeInsertLookup("game_platforms", name);
-    if (!row) return;
-
-    setMeta((m) => ({
-      ...m,
-      gamePlatforms: [...(m.gamePlatforms ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
-    }));
-
-    form.setGamePlatformId(row.id);
-  };
-
-  const createGamePublisher = async () => {
-    const name = promptName("publisher");
-    if (!name) return;
-
-    const row = await safeInsertLookup("game_publishers", name);
-    if (!row) return;
-
-    setMeta((m) => ({
-      ...m,
-      gamePublishers: [...(m.gamePublishers ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
-    }));
-
-    form.setGamePublisherId(row.id);
-  };
-
-  /* ---------------- submit ---------------- */
-
-  const submit = async () => {
-    if (saving) return;
-    setSaving(true);
-    setBanner(null);
-
-    const minifigsSnapshot = [...(minifigs.selectedMinifigs ?? [])];
-
-    try {
-      const id = await createCatalogItem(form.itemKind, {
-        categoryId: form.categoryId,
-        subcategoryId: form.subcategoryId,
-        franchiseId: form.franchiseId || null,
-        itemImageFile: form.itemImageFile,
-        catalogName: form.catalogName,
-        catalogReleaseYear: form.catalogReleaseYear,
-        catalogUPC: form.catalogUPC,
-        catalogVersion: form.catalogVersion,
-        wikiSummary: form.wikiSummary,
-        wikiDescription: form.wikiDescription,
-        wikiFacts: form.wikiFacts,
-        wikiChecklist: form.wikiChecklist,
-        wikiSources: form.wikiSources,
-        linkedVariants: variants.linkedVariants,
-
-        bbThemeId: form.bbThemeId,
-        bbSubthemeId: form.bbSubthemeId,
-        bbSetNumber: form.bbSetNumber,
-        bbPieceCount: form.bbPieceCount,
-        bbRetailCad: form.bbRetailCad,
-        bbRetailUsd: form.bbRetailUsd,
-        selectedMinifigs: minifigsSnapshot,
-
-        cardManufacturerId: form.cardManufacturerId,
-        cardSetId: form.cardSetId,
-        cardTypeId: form.cardTypeId,
-        cardNumber: form.cardNumber,
-        cardYear: form.cardYear,
-        cardRarityDropdown: form.cardRarityDropdown,
-        cardRarityCustom: form.cardRarityCustom,
-
-        musicArtistId: form.musicArtistId,
-
-        toyManufacturerId: form.toyManufacturerId,
-        toyBrandId: form.toyBrandId,
-        toyLineId: form.toyLineId,
-        toyModelNumber: form.toyModelNumber,
-
-        movieDirectorIds: people.movieDirectorIds,
-        movieActorIds: people.movieActorIds,
-
-        // ✅ gaming
-        gamePlatformId: form.gamePlatformId,
-        gamePublisherId: form.gamePublisherId,
-
-        comicPublisherId: form.comicPublisherId,
-        comicSeries: form.comicSeries,
-        comicIssueNumber: form.comicIssueNumber,
-        comicVariant: form.comicVariant,
-      });
-
-      await upsertItemDescription(id, form.wikiDescription);
-
-      await replaceVariantLinks({
-        catalogItemId: id,
-        linkedVariants: variants.linkedVariants,
-        defaultType: variants.variantDefaultType,
-        defaultLabel: variants.variantDefaultLabel,
-      });
-
-      if (form.itemKind === "building_blocks") {
-        await ensureBuildingBlocksRow(id, {
-          themeId: form.bbThemeId!,
-          subthemeId: form.bbSubthemeId || null,
-          setNumber: form.bbSetNumber!,
-          pieceCount: form.bbPieceCount,
-          retailCad: form.bbRetailCad,
-          retailUsd: form.bbRetailUsd,
-        });
-
-        if (minifigsSnapshot.length) {
-          await upsertSetMinifigLinks(id, minifigsSnapshot);
-        }
-      }
-
-      setBanner({ type: "success", msg: "Item created successfully." });
-      onCreated?.(id);
-      resetAll();
-      onClose();
-    } catch (e: any) {
-      setBanner({ type: "error", msg: e?.message || "Failed to create item." });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  /* ---------------- render ---------------- */
+  const totalMinifigs = selectedMinifigs.reduce((sum, mf) => sum + (mf.qty || 1), 0);
 
   return (
-    <>
-      <AddItemModalShell open={open} title={title} saving={saving} banner={banner} onClose={safeClose} onSubmit={submit}>
-        <form onSubmit={(e) => (e.preventDefault(), submit())}>
-          <ClassificationSection
-            metaLoading={metaLoading}
-            metaError={metaError}
-            categories={meta.categories}
-            subcategories={meta.subcategories}
-            franchises={meta.franchises}
-            categoryId={form.categoryId}
-            setCategoryId={form.setCategoryId}
-            subcategoryId={form.subcategoryId}
-            setSubcategoryId={form.setSubcategoryId}
-            franchiseId={form.franchiseId}
-            setFranchiseId={form.setFranchiseId}
-            onCreateFranchise={createFranchise}
+    <div className="rounded-2xl border p-4 mb-4">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-xs font-semibold">Building Blocks</h3>
+        <span className="text-[11px] text-gray-500">Subcategory = Brand</span>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <FieldLabel req>Theme</FieldLabel>
+            <InlineCreateButton onClick={onCreateBbTheme}>+ New</InlineCreateButton>
+          </div>
+          <Select
+            value={bbThemeId}
+            onChange={(e) => {
+              setBbThemeId(e.target.value);
+              setBbSubthemeId("");
+            }}
+            disabled={!subcategoryId}
+          >
+            <option value="">{subcategoryId ? "Select…" : "Select brand first"}</option>
+            {bbThemeOptions.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </Select>
+        </div>
+
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <FieldLabel req>Subtheme</FieldLabel>
+            <InlineCreateButton onClick={onCreateBbSubtheme} disabled={!bbThemeId}>
+              + New
+            </InlineCreateButton>
+          </div>
+          <Select value={bbSubthemeId} onChange={(e) => setBbSubthemeId(e.target.value)} disabled={!bbThemeId}>
+            <option value="">{bbThemeId ? "Select…" : "Select theme first"}</option>
+            {bbSubthemeOptions.map((st) => (
+              <option key={st.id} value={st.id}>
+                {st.name}
+              </option>
+            ))}
+          </Select>
+        </div>
+
+        <div className="space-y-1">
+          <FieldLabel req>Set Number</FieldLabel>
+          <TextInput value={bbSetNumber} onChange={(e) => setBbSetNumber(e.target.value)} />
+        </div>
+
+        <div className="space-y-1">
+          <FieldLabel req>Piece Count</FieldLabel>
+          <TextInput value={bbPieceCount} onChange={(e) => setBbPieceCount(e.target.value)} inputMode="numeric" />
+        </div>
+
+        <div className="space-y-1">
+          <FieldLabel>Retail Price (CAD)</FieldLabel>
+          <TextInput
+            value={bbRetailCad}
+            onChange={(e) => setBbRetailCad(e.target.value)}
+            inputMode="decimal"
+            placeholder="(optional)"
           />
+        </div>
 
-          <PhotoSection itemImagePreview={form.itemImagePreview} onPick={form.pickItemImage} />
-
-          <GlobalDetailsSection {...form} />
-
-          {/* ✅ Leave existing kind sections EXACTLY as your codebase expects. */}
-          {form.itemKind === "building_blocks" ? <BuildingBlocksSection {...form} /> : null}
-          {form.itemKind === "trading_card" || form.itemKind === "sports_card" ? <CardsSection {...form} /> : null}
-          {form.itemKind === "music" ? <MusicSection {...form} /> : null}
-          {form.itemKind === "toy" ? <ToysSection {...form} /> : null}
-          {form.itemKind === "movie" ? <MoviesSection {...form} /> : null}
-          {form.itemKind === "comic" ? <ComicsSection {...form} /> : null}
-
-          {/* ✅ Gaming gets platform/publisher creation */}
-          {form.itemKind === "gaming" ? (
-            <GamingSection
-              gamePlatforms={meta.gamePlatforms ?? []}
-              gamePublishers={meta.gamePublishers ?? []}
-              gamePlatformId={form.gamePlatformId}
-              setGamePlatformId={form.setGamePlatformId}
-              gamePublisherId={form.gamePublisherId}
-              setGamePublisherId={form.setGamePublisherId}
-              onCreatePlatform={createGamePlatform}
-              onCreatePublisher={createGamePublisher}
-            />
-          ) : null}
-
-          <WikiSection {...form} />
-
-          <VariantsSection
-            LINK_TYPES={variants.LINK_TYPES}
-            variantQuery={variants.variantQuery}
-            setVariantQuery={variants.setVariantQuery}
-            variantSearching={variants.variantSearching}
-            variantResults={variants.variantResults}
-            linkedVariants={variants.linkedVariants}
-            variantDefaultType={variants.variantDefaultType}
-            setVariantDefaultType={variants.setVariantDefaultType}
-            variantDefaultLabel={variants.variantDefaultLabel}
-            setVariantDefaultLabel={variants.setVariantDefaultLabel}
-            searchVariants={variants.searchVariants}
-            addVariant={variants.addVariant}
-            removeVariant={variants.removeVariant}
-            updateVariant={variants.updateVariant}
+        <div className="space-y-1">
+          <FieldLabel>Retail Price (USD)</FieldLabel>
+          <TextInput
+            value={bbRetailUsd}
+            onChange={(e) => setBbRetailUsd(e.target.value)}
+            inputMode="decimal"
+            placeholder="(optional)"
           />
-        </form>
-      </AddItemModalShell>
+        </div>
+      </div>
 
-      <CreateMinifigModal
-        open={minifigs.minifigCreateOpen}
-        creating={minifigs.creatingMinifig}
-        onClose={() => minifigs.setMinifigCreateOpen(false)}
-        newMinifigNumber={minifigs.newMinifigNumber}
-        setNewMinifigNumber={minifigs.setNewMinifigNumber}
-        newMinifigName={minifigs.newMinifigName}
-        setNewMinifigName={minifigs.setNewMinifigName}
-        newMinifigImagePreview={minifigs.newMinifigImagePreview}
-        onPickImage={minifigs.pickNewMinifigImage}
-        onCreate={minifigs.createMinifigWithImage}
-      />
-    </>
+      {/* MINIFIGS */}
+      <div className="mt-4 rounded-2xl border p-4">
+        <div className="flex items-center justify-between mb-2">
+          <h4 className="text-xs font-semibold">Minifigs (optional)</h4>
+          <button type="button" onClick={onOpenCreateMinifig} className="text-[11px] text-blue-600 hover:underline">
+            + New Minifig
+          </button>
+        </div>
+
+        <div className="flex gap-2">
+          <TextInput
+            value={minifigQuery}
+            onChange={(e) => setMinifigQuery(e.target.value)}
+            className="flex-1"
+            placeholder="Search by fig # or name…"
+          />
+          <button
+            type="button"
+            onClick={onSearchMinifigs}
+            className="rounded-xl border bg-white px-3 py-2 text-xs"
+            disabled={minifigSearching}
+          >
+            {minifigSearching ? "Searching…" : "Search"}
+          </button>
+        </div>
+
+        {minifigResults.length > 0 && (
+          <div className="mt-3 max-h-44 overflow-y-auto rounded-xl border">
+            {minifigResults.map((mf) => (
+              <button
+                key={mf.id}
+                type="button"
+                onClick={() => onAddMinifig(mf)} // ✅ now increments qty if already selected
+                className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 border-b last:border-b-0 flex items-center gap-3"
+              >
+                <div className="h-10 w-10 rounded-md bg-gray-100 overflow-hidden border shrink-0 flex items-center justify-center">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  {mf.image_url ? (
+                    <img src={mf.image_url} alt={mf.name || mf.minifig_number} className="h-full w-full object-cover" />
+                  ) : (
+                    <span className="text-[10px] text-gray-400">N/A</span>
+                  )}
+                </div>
+                <div>
+                  <div className="font-semibold">{mf.minifig_number}</div>
+                  <div className="text-gray-600">{mf.name}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className="mt-3">
+          <p className="text-[11px] text-gray-500 mb-2">
+            Selected minifigs:{" "}
+            <span className="font-semibold">
+              {selectedMinifigs.length} unique / {totalMinifigs} total
+            </span>
+          </p>
+
+          <ChipList
+            items={selectedMinifigs}
+            getKey={(x) => x.id}
+            render={(mf) => (
+              <div className="flex items-center gap-2 rounded-full border bg-white px-3 py-1 text-xs">
+                <span className="font-semibold">{mf.minifig_number}</span>
+                <span className="text-gray-600">{mf.name}</span>
+
+                <div className="flex items-center gap-1 ml-2">
+                  <button
+                    type="button"
+                    className="h-6 w-6 rounded-full border bg-white text-xs"
+                    onClick={() => onBumpMinifigQty(mf.id, -1)}
+                    title="Decrease"
+                  >
+                    −
+                  </button>
+
+                  <input
+                    value={String(mf.qty || 1)}
+                    onChange={(e) => onSetMinifigQty(mf.id, Number(e.target.value))}
+                    className="h-6 w-10 rounded-md border px-2 text-xs text-center"
+                    inputMode="numeric"
+                  />
+
+                  <button
+                    type="button"
+                    className="h-6 w-6 rounded-full border bg-white text-xs"
+                    onClick={() => onBumpMinifigQty(mf.id, +1)}
+                    title="Increase"
+                  >
+                    +
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => onRemoveMinifig(mf.id)}
+                  className="text-gray-400 hover:text-red-600 ml-1"
+                  aria-label="Remove"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+          />
+        </div>
+      </div>
+    </div>
   );
 }
