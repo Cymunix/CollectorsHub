@@ -200,13 +200,10 @@ export default function AddItemModal({
 
       // ✅ NEW: Variant group linking (THIS is what creates variant_groups + updates catalog_items.variant_group_id)
       await applyVariantGroupLinks({
-        catalogItemId: id,
-        // ✅ FIX: your hook uses target_id
-        linkedVariants: (variants.linkedVariants ?? [])
-          .map((v: any) => ({ catalogItemId: String(v?.target_id ?? "") }))
-          .filter((v: any) => v.catalogItemId),
-        variantName: form.catalogVersion || variants.variantDefaultLabel || null,
-      });
+  catalogItemId: id,
+  linkedVariants: variants.linkedVariants ?? [],
+  variantName: form.catalogVersion || variants.variantDefaultLabel || null,
+});
 
       if (form.itemKind === "building_blocks") {
         await ensureBuildingBlocksRow(id, {
@@ -320,3 +317,4 @@ export default function AddItemModal({
     </>
   );
 }
+
