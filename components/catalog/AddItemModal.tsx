@@ -1,4 +1,3 @@
-// components/catalog/AddItemModal.tsx
 "use client";
 
 import React, { useMemo, useState } from "react";
@@ -22,14 +21,6 @@ import PhotoSection from "./add-item/sections/PhotoSection";
 import GlobalDetailsSection from "./add-item/sections/GlobalDetailsSection";
 import WikiSection from "./add-item/sections/WikiSection";
 import VariantsSection from "./add-item/sections/VariantsSection";
-
-import BuildingBlocksSection from "./add-item/sections/kinds/BuildingBlocksSection";
-import CardsSection from "./add-item/sections/kinds/CardsSection";
-import MusicSection from "./add-item/sections/kinds/MusicSection";
-import ToysSection from "./add-item/sections/kinds/ToysSection";
-import MoviesSection from "./add-item/sections/kinds/MoviesSection";
-import GamingSection from "./add-item/sections/kinds/GamingSection";
-import ComicsSection from "./add-item/sections/kinds/ComicsSection";
 
 import CreateMinifigModal from "./add-item/modals/CreateMinifigModal";
 
@@ -130,6 +121,7 @@ export default function AddItemModal({
     form.setFranchiseId(row.id);
   };
 
+  // ✅ NEW: create platform + publisher lookups
   const createGamePlatform = async () => {
     const name = promptName("platform");
     if (!name) return;
@@ -142,7 +134,8 @@ export default function AddItemModal({
       gamePlatforms: [...(m.gamePlatforms ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
     }));
 
-    form.setGamePlatformId(row.id);
+    // if user is currently adding a game, select it immediately
+    form.setGamePlatformId?.(row.id);
   };
 
   const createGamePublisher = async () => {
@@ -157,7 +150,7 @@ export default function AddItemModal({
       gamePublishers: [...(m.gamePublishers ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
     }));
 
-    form.setGamePublisherId(row.id);
+    form.setGamePublisherId?.(row.id);
   };
 
   /* ---------------- submit ---------------- */
@@ -186,6 +179,7 @@ export default function AddItemModal({
         wikiSources: form.wikiSources,
         linkedVariants: variants.linkedVariants,
 
+        // building blocks
         bbThemeId: form.bbThemeId,
         bbSubthemeId: form.bbSubthemeId,
         bbSetNumber: form.bbSetNumber,
@@ -194,6 +188,7 @@ export default function AddItemModal({
         bbRetailUsd: form.bbRetailUsd,
         selectedMinifigs: minifigsSnapshot,
 
+        // cards
         cardManufacturerId: form.cardManufacturerId,
         cardSetId: form.cardSetId,
         cardTypeId: form.cardTypeId,
@@ -202,13 +197,16 @@ export default function AddItemModal({
         cardRarityDropdown: form.cardRarityDropdown,
         cardRarityCustom: form.cardRarityCustom,
 
+        // music
         musicArtistId: form.musicArtistId,
 
+        // toys
         toyManufacturerId: form.toyManufacturerId,
         toyBrandId: form.toyBrandId,
         toyLineId: form.toyLineId,
         toyModelNumber: form.toyModelNumber,
 
+        // movies
         movieDirectorIds: people.movieDirectorIds,
         movieActorIds: people.movieActorIds,
 
@@ -216,6 +214,7 @@ export default function AddItemModal({
         gamePlatformId: form.gamePlatformId,
         gamePublisherId: form.gamePublisherId,
 
+        // comics
         comicPublisherId: form.comicPublisherId,
         comicSeries: form.comicSeries,
         comicIssueNumber: form.comicIssueNumber,
@@ -276,33 +275,14 @@ export default function AddItemModal({
             franchiseId={form.franchiseId}
             setFranchiseId={form.setFranchiseId}
             onCreateFranchise={createFranchise}
+            // ✅ NEW (optional): if your ClassificationSection supports it, ignore if it doesn’t
+            onCreateGamePlatform={createGamePlatform as any}
+            onCreateGamePublisher={createGamePublisher as any}
           />
 
           <PhotoSection itemImagePreview={form.itemImagePreview} onPick={form.pickItemImage} />
 
           <GlobalDetailsSection {...form} />
-
-          {/* ✅ Leave existing kind sections EXACTLY as your codebase expects. */}
-          {form.itemKind === "building_blocks" ? <BuildingBlocksSection {...form} /> : null}
-          {form.itemKind === "trading_card" || form.itemKind === "sports_card" ? <CardsSection {...form} /> : null}
-          {form.itemKind === "music" ? <MusicSection {...form} /> : null}
-          {form.itemKind === "toy" ? <ToysSection {...form} /> : null}
-          {form.itemKind === "movie" ? <MoviesSection {...form} /> : null}
-          {form.itemKind === "comic" ? <ComicsSection {...form} /> : null}
-
-          {/* ✅ Gaming gets platform/publisher creation */}
-          {form.itemKind === "gaming" ? (
-            <GamingSection
-              gamePlatforms={meta.gamePlatforms ?? []}
-              gamePublishers={meta.gamePublishers ?? []}
-              gamePlatformId={form.gamePlatformId}
-              setGamePlatformId={form.setGamePlatformId}
-              gamePublisherId={form.gamePublisherId}
-              setGamePublisherId={form.setGamePublisherId}
-              onCreatePlatform={createGamePlatform}
-              onCreatePublisher={createGamePublisher}
-            />
-          ) : null}
 
           <WikiSection {...form} />
 
