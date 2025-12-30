@@ -20,15 +20,27 @@ type Props = {
   mode: "set" | "minifig";
   catalogItemId: string;
   expectedMinifigs?: Minifig[];
+
+  // IMPORTANT: this is now condition_json (not random booleans)
   conditionValues: Record<string, any>;
+
+  // IMPORTANT: this is now 0–100
   conditionScore: number;
+
+  // IMPORTANT: nextScore is 0–100
   onChange: (nextValues: Record<string, any>, nextScore: number) => void;
 };
 
-function clampScore(n: any, fallback = 8) {
+function clampTier10(n: any, fallback = 8) {
   const x = Number(n);
   if (!Number.isFinite(x)) return fallback;
   return Math.max(1, Math.min(10, x));
+}
+
+function clampScore100(n: any, fallback = 80) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return fallback;
+  return Math.max(0, Math.min(100, x));
 }
 
 function safeText(v: any) {
@@ -55,17 +67,15 @@ function mfKey(mf: Minifig): string {
 }
 
 function rowKey(r: any): string {
-  // rows stored inside conditionValues.building_blocks.minifigs
-  // will use minifig_id as the *instance key* going forward
-  return String(r?.minifig_id ?? r?.id ?? "");
+  return String(r?.instance_key ?? r?.minifig_id ?? r?.id ?? "");
 }
 
 function getIncludedCount(
-  bbMinifigs: Array<{ minifig_id?: string; id?: string; included: boolean }>,
+  rows: Array<{ instance_key?: string; minifig_id?: string; id?: string; included: boolean }>,
   expected: Minifig[]
 ) {
   const byId = new Map<string, boolean>();
-  bbMinifigs.forEach((r) => {
+  rows.forEach((r) => {
     const k = rowKey(r);
     if (k) byId.set(k, !!r.included);
   });
@@ -76,91 +86,143 @@ function getIncludedCount(
   }, 0);
 }
 
+function deriveTierFromScore100(score100: number) {
+  return clampTier10(Math.round(score100 / 10), 8);
+}
+
 /**
- * ✅ Score algorithm
- * - SET mode: score is derived from checklist + sub-scores
- * - MINIFIG mode: score is derived ONLY from minifig details (no overall baseline selector)
+ * LEGO score rules (0–100)
+ * - sealed = 95 (not 100 by default)
+ * - open_complete baseline = 85
+ * - open_incomplete baseline = 65
  */
-function computeScore(mode: "set" | "minifig", bb: any, expectedMinifigs: Minifig[]) {
-  // -------- SET MODE --------
-  if (mode === "set") {
-    if (!!bb.sealed) return 10;
-
-    // start from 9 for used sets; subtract penalties
-    let score = 9;
-
-    const piecesComplete = bb.piecesComplete !== false;
-    if (!piecesComplete) score -= 2;
-
-    // Minifigs included penalty
-    const rows: Array<{ minifig_id?: string; id?: string; included: boolean }> = Array.isArray(bb.minifigs)
-      ? bb.minifigs
-      : [];
-    if (expectedMinifigs.length > 0) {
-      const included = getIncludedCount(rows, expectedMinifigs);
-      const missing = expectedMinifigs.length - included;
-
-      if (missing > 0) {
-        // -1 per 2 missing, cap -3
-        score -= Math.min(3, Math.ceil(missing / 2));
-      }
-    }
-
-    // Box included + condition
-    const boxIncluded = !!bb.box?.included;
-    if (!boxIncluded) {
-      score -= 1;
-    } else {
-      const boxScore = clampScore(bb.box?.score ?? 8, 8);
-      if (boxScore <= 6) score -= 2;
-      else if (boxScore <= 7) score -= 1;
-    }
-
-    // Instructions included + condition
-    const instIncluded = !!bb.instructions?.included;
-    if (!instIncluded) {
-      score -= 1;
-    } else {
-      const instScore = clampScore(bb.instructions?.score ?? 8, 8);
-      if (instScore <= 6) score -= 2;
-      else if (instScore <= 7) score -= 1;
-    }
-
-    // Stickers
-    const stickersApplied = !!bb.stickersApplied;
-    if (stickersApplied) {
-      const stickerQ = clampScore(bb.stickerQuality ?? 8, 8);
-      if (stickerQ <= 3) score -= 2;
-      else if (stickerQ <= 5) score -= 1;
-    }
-
-    // Discoloration / yellowing
-    const discolor = clampScore(bb.discoloration ?? 8, 8);
-    if (discolor <= 3) score -= 2;
-    else if (discolor <= 5) score -= 1;
-
-    if (!!bb.yellowing) score -= 1;
-
-    return clampScore(Math.round(score), 8);
+function computeLegoScore100(bb: any, expectedMinifigs: Minifig[]) {
+  // --- Sealed ---
+  if (!!bb.sealed) {
+    return 95;
   }
 
-  // -------- MINIFIG MODE (NO OVERALL BASELINE) --------
-  // Start perfect and subtract based on actuals.
-  let score = 10;
+  // Determine state baseline
+  const piecesComplete = bb.piecesComplete !== false;
+  let score = piecesComplete ? 85 : 65;
 
-  // Big issues
-  if (bb.cracks) score -= 4;
-  if (bb.looseJoints) score -= 3;
-  if (bb.biteMarks) score -= 3;
+  // Pieces incomplete penalty (extra, beyond baseline)
+  if (!piecesComplete) score -= 5;
 
-  // Medium issues
-  if (bb.yellowing) score -= 2;
-  if (bb.grime) score -= 1;
+  // Minifigs missing penalty (only if expected known)
+  const rows: Array<{ instance_key?: string; minifig_id?: string; id?: string; included: boolean }> = Array.isArray(bb.minifigs)
+    ? bb.minifigs
+    : [];
 
-  // Missing accessories is smaller penalty
-  if (bb.hasAccessories === false) score -= 1;
+  if (expectedMinifigs.length > 0) {
+    const included = getIncludedCount(rows, expectedMinifigs);
+    const missing = Math.max(0, expectedMinifigs.length - included);
+    if (missing > 0) score -= Math.min(12, missing * 3);
+  }
 
-  return clampScore(Math.round(score), 8);
+  // Box included + tier
+  const boxIncluded = !!bb.box?.included;
+  if (!boxIncluded) {
+    score -= 5;
+  } else {
+    const boxTier = clampTier10(bb.box?.tier ?? bb.box?.score ?? 8, 8);
+    if (boxTier <= 6) score -= 6;
+    else if (boxTier <= 7) score -= 3;
+  }
+
+  // Instructions included + tier
+  const instIncluded = !!bb.instructions?.included;
+  if (!instIncluded) {
+    score -= 4;
+  } else {
+    const instTier = clampTier10(bb.instructions?.tier ?? bb.instructions?.score ?? 8, 8);
+    if (instTier <= 6) score -= 4;
+    else if (instTier <= 7) score -= 2;
+  }
+
+  // Stickers
+  const stickersApplied = !!bb.stickers?.applied ?? !!bb.stickersApplied;
+  if (stickersApplied) {
+    const stickerTier = clampTier10(bb.stickers?.tier ?? bb.stickerQuality ?? 8, 8);
+    if (stickerTier <= 3) score -= 5;
+    else if (stickerTier <= 5) score -= 2;
+  }
+
+  // Discoloration / yellowing tier
+  const discolorTier = clampTier10(bb.discoloration_tier ?? bb.discoloration ?? 8, 8);
+  if (discolorTier <= 3) score -= 7;
+  else if (discolorTier <= 5) score -= 3;
+
+  // Visible yellowing
+  if (!!bb.yellowing) score -= 4;
+
+  return clampScore100(Math.round(score), 80);
+}
+
+/**
+ * Minifig score rules (0–100)
+ * Start at 100 and subtract.
+ */
+function computeMinifigScore100(bb: any) {
+  let score = 100;
+
+  if (bb.cracks) score -= 40;
+  if (bb.looseJoints) score -= 30;
+  if (bb.biteMarks) score -= 30;
+
+  if (bb.yellowing) score -= 20;
+  if (bb.grime) score -= 10;
+
+  if (bb.hasAccessories === false) score -= 10;
+
+  return clampScore100(Math.round(score), 80);
+}
+
+function buildLegoConditionJson(mode: "set" | "minifig", bb: any) {
+  // Determine state string
+  const state = bb.sealed
+    ? "sealed"
+    : bb.piecesComplete !== false
+      ? "open_complete"
+      : "open_incomplete";
+
+  return {
+    v: 1,
+    item_type: "lego",
+    mode: "context",
+    data: {
+      type: mode === "set" ? "set" : "minifig",
+      state,
+      sealed: !!bb.sealed,
+      pieces_complete: bb.piecesComplete !== false,
+
+      box: {
+        included: !!bb.box?.included,
+        tier: clampTier10(bb.box?.tier ?? bb.box?.score ?? 8, 8),
+      },
+      instructions: {
+        included: !!bb.instructions?.included,
+        tier: clampTier10(bb.instructions?.tier ?? bb.instructions?.score ?? 8, 8),
+      },
+      stickers: {
+        applied: !!(bb.stickers?.applied ?? bb.stickersApplied),
+        tier: clampTier10(bb.stickers?.tier ?? bb.stickerQuality ?? 8, 8),
+      },
+
+      discoloration_tier: clampTier10(bb.discoloration_tier ?? bb.discoloration ?? 8, 8),
+      yellowing: !!bb.yellowing,
+
+      // Set-only
+      minifigs: Array.isArray(bb.minifigs) ? bb.minifigs : [],
+
+      // Minifig-only flags
+      hasAccessories: bb.hasAccessories !== false,
+      cracks: !!bb.cracks,
+      looseJoints: !!bb.looseJoints,
+      biteMarks: !!bb.biteMarks,
+      grime: !!bb.grime,
+    },
+  };
 }
 
 export default function ItemConditionBuildingBlocks({
@@ -171,52 +233,53 @@ export default function ItemConditionBuildingBlocks({
   conditionScore,
   onChange,
 }: Props) {
+  // Normalize input (condition_json) into an internal "bb" state shape the UI expects.
   const root = useMemo(() => {
     const cv = conditionValues ?? {};
-    const bb = cv.building_blocks ?? {};
+    const data = cv?.data ?? {};
+    const bb = data ?? {};
     const type = bb.type ?? (mode === "set" ? "set" : "minifig");
 
-    const normalized = {
-      ...cv,
-      building_blocks: {
-        ...bb,
-        type,
+    const normalizedBB: any = {
+      type,
 
-        sealed: !!bb.sealed,
-        box: {
-          included: !!bb.box?.included,
-          score: clampScore(bb.box?.score ?? 8, 8),
-        },
-        instructions: {
-          included: !!bb.instructions?.included,
-          score: clampScore(bb.instructions?.score ?? 8, 8),
-        },
-        piecesComplete: bb.piecesComplete !== false,
-        stickersApplied: !!bb.stickersApplied,
-        stickerQuality: clampScore(bb.stickerQuality ?? 8, 8),
-        discoloration: clampScore(bb.discoloration ?? 8, 8),
-        minifigs: Array.isArray(bb.minifigs) ? bb.minifigs : [],
-
-        // minifig-only flags
-        hasAccessories: bb.hasAccessories !== false,
-        cracks: !!bb.cracks,
-        looseJoints: !!bb.looseJoints,
-        biteMarks: !!bb.biteMarks,
-        yellowing: !!bb.yellowing,
-        grime: !!bb.grime,
+      sealed: !!bb.sealed,
+      box: {
+        included: !!bb.box?.included,
+        tier: clampTier10(bb.box?.tier ?? 8, 8),
       },
+      instructions: {
+        included: !!bb.instructions?.included,
+        tier: clampTier10(bb.instructions?.tier ?? 8, 8),
+      },
+      piecesComplete: bb.pieces_complete !== false,
+
+      stickersApplied: !!bb.stickers?.applied,
+      stickerQuality: clampTier10(bb.stickers?.tier ?? 8, 8),
+
+      discoloration: clampTier10(bb.discoloration_tier ?? 8, 8),
+      yellowing: !!bb.yellowing,
+
+      minifigs: Array.isArray(bb.minifigs) ? bb.minifigs : [],
+
+      // minifig-only flags
+      hasAccessories: bb.hasAccessories !== false,
+      cracks: !!bb.cracks,
+      looseJoints: !!bb.looseJoints,
+      biteMarks: !!bb.biteMarks,
+      grime: !!bb.grime,
     };
 
-    return normalized;
+    return { bb: normalizedBB };
   }, [conditionValues, conditionScore, mode]);
 
-  const bb = root.building_blocks;
+  const bb = root.bb;
 
-  // ✅ FIX: ensure we have ONE ROW PER EXPECTED INSTANCE (not per minifig_id)
+  // Ensure 1 row per expected instance (set mode)
   useEffect(() => {
     if (mode !== "set") return;
 
-    const current: Array<{ minifig_id?: string; id?: string; included: boolean }> = Array.isArray(bb.minifigs)
+    const current: Array<{ instance_key?: string; included: boolean }> = Array.isArray(bb.minifigs)
       ? bb.minifigs
       : [];
 
@@ -228,8 +291,6 @@ export default function ItemConditionBuildingBlocks({
 
     let changed = false;
 
-    // IMPORTANT: expectedMinifigs may contain duplicates with different instance_key.
-    // We must ensure each instance exists in map.
     for (const mf of expectedMinifigs) {
       const k = mfKey(mf);
       if (!k) continue;
@@ -246,31 +307,26 @@ export default function ItemConditionBuildingBlocks({
         const k = mfKey(mf);
         if (!k) return null;
         return {
-          // ✅ store "instance key" here so duplicates are independent
-          minifig_id: k,
+          instance_key: k,
           included: !!map.get(k),
         };
       })
-      .filter(Boolean) as Array<{ minifig_id: string; included: boolean }>;
+      .filter(Boolean) as Array<{ instance_key: string; included: boolean }>;
 
-    const nextValues = {
-      ...root,
-      building_blocks: {
-        ...bb,
-        type: "set",
-        minifigs: nextMinifigs,
-      },
-    };
+    const nextBB = { ...bb, type: "set", minifigs: nextMinifigs };
+    const nextJson = buildLegoConditionJson("set", {
+      ...nextBB,
+      stickers: { applied: nextBB.stickersApplied, tier: nextBB.stickerQuality },
+      discoloration_tier: nextBB.discoloration,
+    });
+    const nextScore100 = computeLegoScore100(nextBB, expectedMinifigs);
 
-    const nextBB = nextValues.building_blocks;
-    const nextScore = computeScore("set", nextBB, expectedMinifigs);
-
-    onChange(nextValues, nextScore);
+    onChange(nextJson, nextScore100);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, catalogItemId, expectedMinifigs]);
 
   const minifigState = useMemo(() => {
-    const rows: Array<{ minifig_id?: string; id?: string; included: boolean }> = Array.isArray(bb.minifigs)
+    const rows: Array<{ instance_key?: string; included: boolean }> = Array.isArray(bb.minifigs)
       ? bb.minifigs
       : [];
     const byId = new Map<string, boolean>();
@@ -291,35 +347,44 @@ export default function ItemConditionBuildingBlocks({
     return { byId, total, includedCount, all, none };
   }, [bb.minifigs, expectedMinifigs]);
 
-  const computedScore = useMemo(() => computeScore(mode, bb, expectedMinifigs), [mode, bb, expectedMinifigs]);
+  const score100 = useMemo(() => {
+    if (mode === "set") return computeLegoScore100(bb, expectedMinifigs);
+    return computeMinifigScore100(bb);
+  }, [mode, bb, expectedMinifigs]);
+
+  const tier10 = useMemo(() => deriveTierFromScore100(score100), [score100]);
+
+  const push = (nextBB: any) => {
+    const nextJson = buildLegoConditionJson(mode, {
+      ...nextBB,
+      stickers: { applied: nextBB.stickersApplied, tier: nextBB.stickerQuality },
+      discoloration_tier: nextBB.discoloration,
+    });
+
+    const nextScore100 = mode === "set" ? computeLegoScore100(nextBB, expectedMinifigs) : computeMinifigScore100(nextBB);
+    onChange(nextJson, nextScore100);
+  };
 
   const setBB = (patch: Partial<typeof bb>) => {
-    const nextBB = { ...bb, ...patch };
-    const nextValues = { ...root, building_blocks: nextBB };
-    const nextScore = computeScore(mode, nextBB, expectedMinifigs);
-    onChange(nextValues, nextScore);
+    const nextBB: any = { ...bb, ...patch };
+    push(nextBB);
   };
 
   const setBBNested = (path: "box" | "instructions", patch: any) => {
-    const nextBB = { ...bb, [path]: { ...(bb as any)[path], ...patch } };
-    const nextValues = { ...root, building_blocks: nextBB };
-    const nextScore = computeScore(mode, nextBB, expectedMinifigs);
-    onChange(nextValues, nextScore);
+    const nextBB: any = { ...bb, [path]: { ...(bb as any)[path], ...patch } };
+    push(nextBB);
   };
 
-  // ✅ FIX: id here is the INSTANCE KEY now
   const setMinifigIncluded = (instanceKey: string, included: boolean) => {
-    const curr: Array<{ minifig_id?: string; id?: string; included: boolean }> = Array.isArray(bb.minifigs)
+    const curr: Array<{ instance_key?: string; included: boolean }> = Array.isArray(bb.minifigs)
       ? bb.minifigs
       : [];
 
     const key = String(instanceKey);
-
     const next = curr.map((r) => (rowKey(r) === key ? { ...r, included } : r));
-    const nextBB = { ...bb, minifigs: next };
-    const nextValues = { ...root, building_blocks: nextBB };
-    const nextScore = computeScore(mode, nextBB, expectedMinifigs);
-    onChange(nextValues, nextScore);
+
+    const nextBB: any = { ...bb, minifigs: next };
+    push(nextBB);
   };
 
   const setAllMinifigs = (included: boolean) => {
@@ -327,14 +392,12 @@ export default function ItemConditionBuildingBlocks({
       .map((mf) => {
         const k = mfKey(mf);
         if (!k) return null;
-        return { minifig_id: k, included };
+        return { instance_key: k, included };
       })
-      .filter(Boolean) as Array<{ minifig_id: string; included: boolean }>;
+      .filter(Boolean) as Array<{ instance_key: string; included: boolean }>;
 
-    const nextBB = { ...bb, minifigs: next };
-    const nextValues = { ...root, building_blocks: nextBB };
-    const nextScore = computeScore(mode, nextBB, expectedMinifigs);
-    onChange(nextValues, nextScore);
+    const nextBB: any = { ...bb, minifigs: next };
+    push(nextBB);
   };
 
   return (
@@ -347,13 +410,12 @@ export default function ItemConditionBuildingBlocks({
 
         <div className="flex items-center gap-2 shrink-0">
           <Badge>
-            Score: {computedScore} — {getConditionLabel(computedScore)}
+            {tier10}/10 • {score100}/100 — {getConditionLabel(tier10)}
           </Badge>
         </div>
       </div>
 
       <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-        {/* Set-only: sealed/box/instructions */}
         {mode === "set" ? (
           <div className="rounded-2xl border border-[#E5E9F2] bg-[#F8FAFC] p-3 space-y-3 md:col-span-2">
             <div className="flex items-center justify-between gap-3">
@@ -380,8 +442,8 @@ export default function ItemConditionBuildingBlocks({
                   <span className="text-[11px] text-[#6B7280]">Box condition</span>
                   <select
                     className="rounded-xl border border-[#E5E9F2] bg-white px-2 py-1 text-xs font-semibold"
-                    value={clampScore(bb.box?.score ?? 8, 8)}
-                    onChange={(e) => setBBNested("box", { score: clampScore(e.target.value, 8) })}
+                    value={clampTier10(bb.box?.tier ?? 8, 8)}
+                    onChange={(e) => setBBNested("box", { tier: clampTier10(e.target.value, 8) })}
                     disabled={!!bb.sealed || !bb.box?.included}
                   >
                     {scoreOptions().map((n) => (
@@ -390,9 +452,7 @@ export default function ItemConditionBuildingBlocks({
                       </option>
                     ))}
                   </select>
-                  <span className="text-[11px] font-semibold text-[#0F172A]">
-                    {getConditionLabel(clampScore(bb.box?.score ?? 8, 8))}
-                  </span>
+                  <span className="text-[11px] font-semibold text-[#0F172A]">{getConditionLabel(clampTier10(bb.box?.tier ?? 8, 8))}</span>
                 </div>
               </div>
 
@@ -411,8 +471,8 @@ export default function ItemConditionBuildingBlocks({
                   <span className="text-[11px] text-[#6B7280]">Instruction condition</span>
                   <select
                     className="rounded-xl border border-[#E5E9F2] bg-white px-2 py-1 text-xs font-semibold"
-                    value={clampScore(bb.instructions?.score ?? 8, 8)}
-                    onChange={(e) => setBBNested("instructions", { score: clampScore(e.target.value, 8) })}
+                    value={clampTier10(bb.instructions?.tier ?? 8, 8)}
+                    onChange={(e) => setBBNested("instructions", { tier: clampTier10(e.target.value, 8) })}
                     disabled={!!bb.sealed || !bb.instructions?.included}
                   >
                     {scoreOptions().map((n) => (
@@ -421,9 +481,7 @@ export default function ItemConditionBuildingBlocks({
                       </option>
                     ))}
                   </select>
-                  <span className="text-[11px] font-semibold text-[#0F172A]">
-                    {getConditionLabel(clampScore(bb.instructions?.score ?? 8, 8))}
-                  </span>
+                  <span className="text-[11px] font-semibold text-[#0F172A]">{getConditionLabel(clampTier10(bb.instructions?.tier ?? 8, 8))}</span>
                 </div>
               </div>
             </div>
@@ -456,8 +514,8 @@ export default function ItemConditionBuildingBlocks({
                 <div className="mt-2 flex items-center gap-2">
                   <select
                     className="rounded-xl border border-[#E5E9F2] bg-white px-2 py-1 text-xs font-semibold"
-                    value={clampScore(bb.stickerQuality ?? 8, 8)}
-                    onChange={(e) => setBB({ stickerQuality: clampScore(e.target.value, 8) })}
+                    value={clampTier10(bb.stickerQuality ?? 8, 8)}
+                    onChange={(e) => setBB({ stickerQuality: clampTier10(e.target.value, 8) })}
                     disabled={!!bb.sealed || !bb.stickersApplied}
                   >
                     {scoreOptions().map((n) => (
@@ -466,9 +524,7 @@ export default function ItemConditionBuildingBlocks({
                       </option>
                     ))}
                   </select>
-                  <span className="text-[11px] font-semibold text-[#0F172A]">
-                    {getConditionLabel(clampScore(bb.stickerQuality ?? 8, 8))}
-                  </span>
+                  <span className="text-[11px] font-semibold text-[#0F172A]">{getConditionLabel(clampTier10(bb.stickerQuality ?? 8, 8))}</span>
                 </div>
               </div>
 
@@ -477,8 +533,8 @@ export default function ItemConditionBuildingBlocks({
                 <div className="mt-2 flex items-center gap-2">
                   <select
                     className="rounded-xl border border-[#E5E9F2] bg-white px-2 py-1 text-xs font-semibold"
-                    value={clampScore(bb.discoloration ?? 8, 8)}
-                    onChange={(e) => setBB({ discoloration: clampScore(e.target.value, 8) })}
+                    value={clampTier10(bb.discoloration ?? 8, 8)}
+                    onChange={(e) => setBB({ discoloration: clampTier10(e.target.value, 8) })}
                     disabled={!!bb.sealed}
                   >
                     {scoreOptions().map((n) => (
@@ -487,18 +543,11 @@ export default function ItemConditionBuildingBlocks({
                       </option>
                     ))}
                   </select>
-                  <span className="text-[11px] font-semibold text-[#0F172A]">
-                    {getConditionLabel(clampScore(bb.discoloration ?? 8, 8))}
-                  </span>
+                  <span className="text-[11px] font-semibold text-[#0F172A]">{getConditionLabel(clampTier10(bb.discoloration ?? 8, 8))}</span>
                 </div>
 
                 <label className="mt-2 flex items-center gap-2 text-[12px] font-semibold text-[#0F172A]">
-                  <input
-                    type="checkbox"
-                    checked={!!bb.yellowing}
-                    onChange={(e) => setBB({ yellowing: e.target.checked })}
-                    disabled={!!bb.sealed}
-                  />
+                  <input type="checkbox" checked={!!bb.yellowing} onChange={(e) => setBB({ yellowing: e.target.checked })} disabled={!!bb.sealed} />
                   Visible yellowing present
                 </label>
               </div>
@@ -506,18 +555,13 @@ export default function ItemConditionBuildingBlocks({
           </div>
         ) : null}
 
-        {/* Minifig-only */}
         {mode === "minifig" ? (
           <div className="rounded-2xl border border-[#E5E9F2] bg-[#F8FAFC] p-3 space-y-3 md:col-span-2">
             <div className="text-xs font-semibold text-[#0F172A]">Minifigure Details</div>
 
             <label className="flex items-center justify-between rounded-2xl border border-[#E5E9F2] bg-white p-3">
               <span className="text-xs font-semibold text-[#0F172A]">Accessories included</span>
-              <input
-                type="checkbox"
-                checked={bb.hasAccessories !== false}
-                onChange={(e) => setBB({ hasAccessories: e.target.checked })}
-              />
+              <input type="checkbox" checked={bb.hasAccessories !== false} onChange={(e) => setBB({ hasAccessories: e.target.checked })} />
             </label>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -528,29 +572,17 @@ export default function ItemConditionBuildingBlocks({
 
               <label className="flex items-center justify-between rounded-2xl border border-[#E5E9F2] bg-white p-3">
                 <span className="text-xs font-semibold text-[#0F172A]">Loose joints</span>
-                <input
-                  type="checkbox"
-                  checked={!!bb.looseJoints}
-                  onChange={(e) => setBB({ looseJoints: e.target.checked })}
-                />
+                <input type="checkbox" checked={!!bb.looseJoints} onChange={(e) => setBB({ looseJoints: e.target.checked })} />
               </label>
 
               <label className="flex items-center justify-between rounded-2xl border border-[#E5E9F2] bg-white p-3">
                 <span className="text-xs font-semibold text-[#0F172A]">Bite marks</span>
-                <input
-                  type="checkbox"
-                  checked={!!bb.biteMarks}
-                  onChange={(e) => setBB({ biteMarks: e.target.checked })}
-                />
+                <input type="checkbox" checked={!!bb.biteMarks} onChange={(e) => setBB({ biteMarks: e.target.checked })} />
               </label>
 
               <label className="flex items-center justify-between rounded-2xl border border-[#E5E9F2] bg-white p-3">
                 <span className="text-xs font-semibold text-[#0F172A]">Yellowing</span>
-                <input
-                  type="checkbox"
-                  checked={!!bb.yellowing}
-                  onChange={(e) => setBB({ yellowing: e.target.checked })}
-                />
+                <input type="checkbox" checked={!!bb.yellowing} onChange={(e) => setBB({ yellowing: e.target.checked })} />
               </label>
 
               <label className="flex items-center justify-between rounded-2xl border border-[#E5E9F2] bg-white p-3">
@@ -559,14 +591,11 @@ export default function ItemConditionBuildingBlocks({
               </label>
             </div>
 
-            <div className="text-[11px] text-[#6B7280]">
-              Score is calculated automatically from the selected issues (no manual overall rating).
-            </div>
+            <div className="text-[11px] text-[#6B7280]">Score is calculated automatically from the selected issues.</div>
           </div>
         ) : null}
       </div>
 
-      {/* Set-only: Minifig checklist */}
       {mode === "set" ? (
         <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-[#F8FAFC] p-3">
           <div className="flex items-center justify-between gap-3">
@@ -624,7 +653,6 @@ export default function ItemConditionBuildingBlocks({
                     <div className="min-w-0 flex-1">
                       <div className="text-xs font-semibold text-[#0F172A] truncate">
                         {safeText(mf.name)}
-                        {/* show copy marker when duplicated */}
                         {mf.instance_key?.includes("#") ? (
                           <span className="ml-1 text-[11px] font-semibold text-[#64748B]">
                             (#{mf.instance_key.split("#")[1]})
@@ -634,12 +662,7 @@ export default function ItemConditionBuildingBlocks({
                       <div className="text-[11px] text-[#6B7280] truncate">{safeText(mf.minifig_number)}</div>
                     </div>
 
-                    <input
-                      type="checkbox"
-                      checked={included}
-                      onChange={(e) => setMinifigIncluded(k, e.target.checked)}
-                      disabled={!k}
-                    />
+                    <input type="checkbox" checked={included} onChange={(e) => setMinifigIncluded(k, e.target.checked)} disabled={!k} />
                   </label>
                 );
               })}
