@@ -22,14 +22,6 @@ import GlobalDetailsSection from "./add-item/sections/GlobalDetailsSection";
 import WikiSection from "./add-item/sections/WikiSection";
 import VariantsSection from "./add-item/sections/VariantsSection";
 
-import BuildingBlocksSection from "./add-item/sections/kinds/BuildingBlocksSection";
-import CardsSection from "./add-item/sections/kinds/CardsSection";
-import MusicSection from "./add-item/sections/kinds/MusicSection";
-import ToysSection from "./add-item/sections/kinds/ToysSection";
-import MoviesSection from "./add-item/sections/kinds/MoviesSection";
-import GamingSection from "./add-item/sections/kinds/GamingSection";
-import ComicsSection from "./add-item/sections/kinds/ComicsSection";
-
 import CreateMinifigModal from "./add-item/modals/CreateMinifigModal";
 
 /* ---------------- types ---------------- */
@@ -132,6 +124,13 @@ export default function AddItemModal({
 
   const submit = async () => {
     if (saving) return;
+
+    // ✅ HARD VALIDATION: gaming must have a platform
+    if (form.itemKind === "gaming" && !form.gamePlatformId) {
+      setBanner({ type: "error", msg: "Please select a platform for this game." });
+      return;
+    }
+
     setSaving(true);
     setBanner(null);
 
@@ -153,6 +152,7 @@ export default function AddItemModal({
         wikiChecklist: form.wikiChecklist,
         wikiSources: form.wikiSources,
         linkedVariants: variants.linkedVariants,
+
         bbThemeId: form.bbThemeId,
         bbSubthemeId: form.bbSubthemeId,
         bbSetNumber: form.bbSetNumber,
@@ -160,6 +160,7 @@ export default function AddItemModal({
         bbRetailCad: form.bbRetailCad,
         bbRetailUsd: form.bbRetailUsd,
         selectedMinifigs: minifigsSnapshot,
+
         cardManufacturerId: form.cardManufacturerId,
         cardSetId: form.cardSetId,
         cardTypeId: form.cardTypeId,
@@ -167,15 +168,21 @@ export default function AddItemModal({
         cardYear: form.cardYear,
         cardRarityDropdown: form.cardRarityDropdown,
         cardRarityCustom: form.cardRarityCustom,
+
         musicArtistId: form.musicArtistId,
+
         toyManufacturerId: form.toyManufacturerId,
         toyBrandId: form.toyBrandId,
         toyLineId: form.toyLineId,
         toyModelNumber: form.toyModelNumber,
+
         movieDirectorIds: people.movieDirectorIds,
         movieActorIds: people.movieActorIds,
+
+        // ✅ gaming
         gamePlatformId: form.gamePlatformId,
         gamePublisherId: form.gamePublisherId,
+
         comicPublisherId: form.comicPublisherId,
         comicSeries: form.comicSeries,
         comicIssueNumber: form.comicIssueNumber,
@@ -242,6 +249,54 @@ export default function AddItemModal({
 
           <GlobalDetailsSection {...form} />
 
+          {/* ✅ ADD THIS: Gaming platform selector UI */}
+          {form.itemKind === "gaming" ? (
+            <div className="mt-4 rounded-2xl border bg-white p-4">
+              <div className="text-sm font-semibold text-[#0F172A]">Gaming Details</div>
+              <div className="mt-0.5 text-xs text-gray-500">Platform is required for video games.</div>
+
+              <div className="mt-3 grid grid-cols-1 gap-3">
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-gray-700">Platform</label>
+                  <select
+                    value={form.gamePlatformId || ""}
+                    onChange={(e) => form.setGamePlatformId(e.target.value)}
+                    className="w-full rounded-xl border bg-white px-3 py-2 text-sm"
+                  >
+                    <option value="">Select platform…</option>
+                    {(meta.gamePlatforms ?? []).map((p: any) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  {(meta.gamePlatforms ?? []).length === 0 ? (
+                    <div className="mt-1 text-[11px] text-gray-500">
+                      No platforms loaded. Check your <span className="font-semibold">useCatalogMeta</span> hook query.
+                    </div>
+                  ) : null}
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-gray-700">Publisher</label>
+                  <select
+                    value={form.gamePublisherId || ""}
+                    onChange={(e) => form.setGamePublisherId(e.target.value)}
+                    className="w-full rounded-xl border bg-white px-3 py-2 text-sm"
+                  >
+                    <option value="">(optional) Select publisher…</option>
+                    {(meta.gamePublishers ?? []).map((p: any) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           <WikiSection {...form} />
 
           <VariantsSection
@@ -263,7 +318,6 @@ export default function AddItemModal({
         </form>
       </AddItemModalShell>
 
-      {/* ✅ FIXED: pass the modal props explicitly (don’t spread the hook object) */}
       <CreateMinifigModal
         open={minifigs.minifigCreateOpen}
         creating={minifigs.creatingMinifig}
