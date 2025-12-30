@@ -150,8 +150,8 @@ export default function AddItemModal({
         wikiChecklist: form.wikiChecklist,
         wikiSources: form.wikiSources,
 
-        // NOTE: still pass these if your createCatalogItem stores them somewhere,
-        // but the actual linking is now handled by applyVariantGroupLinks().
+        // Keeping this doesn't hurt if createCatalogItem expects it,
+        // but variant grouping is handled AFTER via applyVariantGroupLinks().
         linkedVariants: variants.linkedVariants,
 
         // building blocks
@@ -198,12 +198,13 @@ export default function AddItemModal({
 
       await upsertItemDescription(id, form.wikiDescription);
 
-      // ✅ NEW: Variant group linking (transitive via group merge)
+      // ✅ NEW: Variant group linking (THIS is what creates variant_groups + updates catalog_items.variant_group_id)
       await applyVariantGroupLinks({
         catalogItemId: id,
-        linkedVariants: (variants.linkedVariants ?? []).map((v: any) => ({
-          catalogItemId: String(v?.catalogItemId ?? v?.id ?? ""),
-        })).filter((v: any) => v.catalogItemId),
+        // ✅ FIX: your hook uses target_id
+        linkedVariants: (variants.linkedVariants ?? [])
+          .map((v: any) => ({ catalogItemId: String(v?.target_id ?? "") }))
+          .filter((v: any) => v.catalogItemId),
         variantName: form.catalogVersion || variants.variantDefaultLabel || null,
       });
 
