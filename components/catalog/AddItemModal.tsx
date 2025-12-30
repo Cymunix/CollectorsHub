@@ -121,7 +121,7 @@ export default function AddItemModal({
     form.setFranchiseId(row.id);
   };
 
-  // ✅ NEW: create platform + publisher lookups
+  // ✅ these are ready to use once we add the UI in the correct section
   const createGamePlatform = async () => {
     const name = promptName("platform");
     if (!name) return;
@@ -134,8 +134,7 @@ export default function AddItemModal({
       gamePlatforms: [...(m.gamePlatforms ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
     }));
 
-    // if user is currently adding a game, select it immediately
-    form.setGamePlatformId?.(row.id);
+    if (typeof (form as any).setGamePlatformId === "function") (form as any).setGamePlatformId(row.id);
   };
 
   const createGamePublisher = async () => {
@@ -150,7 +149,7 @@ export default function AddItemModal({
       gamePublishers: [...(m.gamePublishers ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
     }));
 
-    form.setGamePublisherId?.(row.id);
+    if (typeof (form as any).setGamePublisherId === "function") (form as any).setGamePublisherId(row.id);
   };
 
   /* ---------------- submit ---------------- */
@@ -179,7 +178,6 @@ export default function AddItemModal({
         wikiSources: form.wikiSources,
         linkedVariants: variants.linkedVariants,
 
-        // building blocks
         bbThemeId: form.bbThemeId,
         bbSubthemeId: form.bbSubthemeId,
         bbSetNumber: form.bbSetNumber,
@@ -188,7 +186,6 @@ export default function AddItemModal({
         bbRetailUsd: form.bbRetailUsd,
         selectedMinifigs: minifigsSnapshot,
 
-        // cards
         cardManufacturerId: form.cardManufacturerId,
         cardSetId: form.cardSetId,
         cardTypeId: form.cardTypeId,
@@ -197,24 +194,20 @@ export default function AddItemModal({
         cardRarityDropdown: form.cardRarityDropdown,
         cardRarityCustom: form.cardRarityCustom,
 
-        // music
         musicArtistId: form.musicArtistId,
 
-        // toys
         toyManufacturerId: form.toyManufacturerId,
         toyBrandId: form.toyBrandId,
         toyLineId: form.toyLineId,
         toyModelNumber: form.toyModelNumber,
 
-        // movies
         movieDirectorIds: people.movieDirectorIds,
         movieActorIds: people.movieActorIds,
 
-        // ✅ gaming
-        gamePlatformId: form.gamePlatformId,
-        gamePublisherId: form.gamePublisherId,
+        // gaming (may be undefined if your form hook doesn’t expose them yet)
+        gamePlatformId: (form as any).gamePlatformId,
+        gamePublisherId: (form as any).gamePublisherId,
 
-        // comics
         comicPublisherId: form.comicPublisherId,
         comicSeries: form.comicSeries,
         comicIssueNumber: form.comicIssueNumber,
@@ -256,8 +249,6 @@ export default function AddItemModal({
     }
   };
 
-  /* ---------------- render ---------------- */
-
   return (
     <>
       <AddItemModalShell open={open} title={title} saving={saving} banner={banner} onClose={safeClose} onSubmit={submit}>
@@ -275,9 +266,6 @@ export default function AddItemModal({
             franchiseId={form.franchiseId}
             setFranchiseId={form.setFranchiseId}
             onCreateFranchise={createFranchise}
-            // ✅ NEW (optional): if your ClassificationSection supports it, ignore if it doesn’t
-            onCreateGamePlatform={createGamePlatform as any}
-            onCreateGamePublisher={createGamePublisher as any}
           />
 
           <PhotoSection itemImagePreview={form.itemImagePreview} onPick={form.pickItemImage} />
