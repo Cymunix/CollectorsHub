@@ -136,6 +136,7 @@ export function useCatalogMeta(open: boolean) {
 
           supabase.from("people").select("id,name").order("name"),
 
+          // ✅ if these table names are wrong, you'll now SEE it
           supabase.from("game_platforms").select("id,name").order("name"),
           supabase.from("game_publishers").select("id,name").order("name"),
 
@@ -145,6 +146,11 @@ export function useCatalogMeta(open: boolean) {
         // hard fail only on the foundational tables
         if (catRes.error) throw catRes.error;
         if (subRes.error) throw subRes.error;
+
+        // ✅ DO NOT swallow platform/publisher errors anymore
+        // If RLS blocks you, you'll see it here immediately.
+        if (platformRes.error) throw platformRes.error;
+        if (publisherRes.error) throw publisherRes.error;
 
         if (cancelled) return;
 
@@ -168,10 +174,17 @@ export function useCatalogMeta(open: boolean) {
 
           people: peopleRes.error ? [] : ((peopleRes.data ?? []) as Person[]),
 
-          gamePlatforms: platformRes.error ? [] : ((platformRes.data ?? []) as GamePlatform[]),
-          gamePublishers: publisherRes.error ? [] : ((publisherRes.data ?? []) as GamePublisher[]),
+          // ✅ gaming
+          gamePlatforms: (platformRes.data ?? []) as GamePlatform[],
+          gamePublishers: (publisherRes.data ?? []) as GamePublisher[],
 
           comicPublishers: comicPubRes.error ? [] : ((comicPubRes.data ?? []) as ComicPublisher[]),
+        });
+
+        // Optional: quick debug
+        console.log("AddItemMeta loaded:", {
+          platforms: platformRes.data?.length ?? 0,
+          publishers: publisherRes.data?.length ?? 0,
         });
       } catch (e: any) {
         console.error(e);
