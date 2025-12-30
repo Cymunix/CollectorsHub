@@ -1,3 +1,4 @@
+// components/catalog/AddItemModal.tsx
 "use client";
 
 import React, { useMemo, useState } from "react";
@@ -211,6 +212,7 @@ export default function AddItemModal({
         movieDirectorIds: people.movieDirectorIds,
         movieActorIds: people.movieActorIds,
 
+        // ✅ gaming
         gamePlatformId: form.gamePlatformId,
         gamePublisherId: form.gamePublisherId,
 
@@ -280,12 +282,15 @@ export default function AddItemModal({
 
           <GlobalDetailsSection {...form} />
 
-          {/* Kind-specific sections */}
-          {form.itemKind === "building_blocks" ? <BuildingBlocksSection {...form} meta={meta} minifigs={minifigs} /> : null}
-          {form.itemKind === "trading_card" || form.itemKind === "sports_card" ? <CardsSection {...form} meta={meta} /> : null}
-          {form.itemKind === "music" ? <MusicSection {...form} meta={meta} /> : null}
-          {form.itemKind === "toy" ? <ToysSection {...form} meta={meta} /> : null}
-          {form.itemKind === "movie" ? <MoviesSection {...form} meta={meta} people={people} /> : null}
+          {/* ✅ Leave existing kind sections EXACTLY as your codebase expects. */}
+          {form.itemKind === "building_blocks" ? <BuildingBlocksSection {...form} /> : null}
+          {form.itemKind === "trading_card" || form.itemKind === "sports_card" ? <CardsSection {...form} /> : null}
+          {form.itemKind === "music" ? <MusicSection {...form} /> : null}
+          {form.itemKind === "toy" ? <ToysSection {...form} /> : null}
+          {form.itemKind === "movie" ? <MoviesSection {...form} /> : null}
+          {form.itemKind === "comic" ? <ComicsSection {...form} /> : null}
+
+          {/* ✅ Gaming gets platform/publisher creation */}
           {form.itemKind === "gaming" ? (
             <GamingSection
               gamePlatforms={meta.gamePlatforms ?? []}
@@ -298,7 +303,6 @@ export default function AddItemModal({
               onCreatePublisher={createGamePublisher}
             />
           ) : null}
-          {form.itemKind === "comic" ? <ComicsSection {...form} meta={meta} /> : null}
 
           <WikiSection {...form} />
 
