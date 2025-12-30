@@ -5,18 +5,14 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
-type VariantLinkRow = {
-  variant_catalog_item_id: string;
-  link_type: string | null;
-  label: string | null;
-  sort_order: number | null;
-};
-
-type CatalogItemLite = {
+type CatalogItemVariantRow = {
   id: string;
   name: string;
   upc: string | null;
-  version: string | null;
+  variant_name: string | null;
+  variant_rank: number | null;
+  variant_group_id: string | null;
+  base_catalog_item_id: string | null;
 };
 
 export default function ItemVariantsTab({ catalogItemId }: { catalogItemId: string }) {
@@ -25,8 +21,8 @@ export default function ItemVariantsTab({ catalogItemId }: { catalogItemId: stri
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  const [links, setLinks] = useState<VariantLinkRow[]>([]);
-  const [itemsById, setItemsById] = useState<Record<string, CatalogItemLite>>({});
+  const [groupId, setGroupId] = useState<string | null>(null);
+  const [items, setItems] = useState<CatalogItemVariantRow[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -34,66 +30,68 @@ export default function ItemVariantsTab({ catalogItemId }: { catalogItemId: stri
     const load = async () => {
       setLoading(true);
       setErr(null);
+      setItems([]);
+      setGroupId(null);
 
-      const linksRes = await supabase
-        .from("catalog_item_variant_links")
-        .select("variant_catalog_item_id,link_type,label,sort_order")
-        .eq("catalog_item_id", catalogItemId)
-        .order("sort_order", { ascending: true });
+      // 1) Get this item's group id
+      const baseRes = await supabase
+        .from("catalog_items")
+        .select("id, variant_group_id")
+        .eq("id", catalogItemId)
+        .single();
 
       if (cancelled) return;
 
-      if (linksRes.error) {
-        setErr(linksRes.error.message || "Failed to load variants.");
-        setLinks([]);
-        setItemsById({});
+      if (baseRes.error) {
+        setErr(baseRes.error.message || "Failed to load item.");
         setLoading(false);
         return;
       }
 
-      const rows = (linksRes.data ?? []) as any[];
-      const parsed: VariantLinkRow[] = rows.map((r) => ({
-        variant_catalog_item_id: String(r.variant_catalog_item_id),
-        link_type: r.link_type ?? null,
-        label: r.label ?? null,
-        sort_order: typeof r.sort_order === "number" ? r.sort_order : null,
-      }));
+      const vg = (baseRes.data as any)?.variant_group_id ? String((baseRes.data as any).variant_group_id) : null;
+      setGroupId(vg);
 
-      setLinks(parsed);
-
-      const ids = parsed.map((r) => r.variant_catalog_item_id).filter(Boolean);
-      if (!ids.length) {
-        setItemsById({});
+      if (!vg) {
+        // Not in a group → no variants
+        setItems([]);
         setLoading(false);
         return;
       }
 
+      // 2) Load all items in the group
       const itemsRes = await supabase
         .from("catalog_items")
-        .select("id,name,upc,version")
-        .in("id", ids);
+        .select("id,name,upc,variant_name,variant_rank,variant_group_id,base_catalog_item_id")
+        .eq("variant_group_id", vg)
+        .order("variant_rank", { ascending: true, nullsFirst: true })
+        .order("name", { ascending: true });
 
       if (cancelled) return;
 
       if (itemsRes.error) {
-        setErr(itemsRes.error.message || "Failed to load variant items.");
-        setItemsById({});
+        setErr(itemsRes.error.message || "Failed to load variants.");
+        setItems([]);
         setLoading(false);
         return;
       }
 
-      const map: Record<string, CatalogItemLite> = {};
-      for (const it of itemsRes.data ?? []) {
-        const id = String((it as any).id);
-        map[id] = {
-          id,
-          name: String((it as any).name ?? "Variant"),
-          upc: (it as any).upc ?? null,
-          version: (it as any).version ?? null,
-        };
-      }
+      const rows = (itemsRes.data ?? []) as any[];
 
-      setItemsById(map);
+      // Keep the current item first (nice UX), then others
+      const normalized: CatalogItemVariantRow[] = rows.map((r) => ({
+        id: String(r.id),
+        name: String(r.name ?? "Variant"),
+        upc: r.upc ?? null,
+        variant_name: r.variant_name ?? null,
+        variant_rank: typeof r.variant_rank === "number" ? r.variant_rank : null,
+        variant_group_id: r.variant_group_id ? String(r.variant_group_id) : null,
+        base_catalog_item_id: r.base_catalog_item_id ? String(r.base_catalog_item_id) : null,
+      }));
+
+      const current = normalized.find((x) => x.id === catalogItemId);
+      const others = normalized.filter((x) => x.id !== catalogItemId);
+
+      setItems(current ? [current, ...others] : normalized);
       setLoading(false);
     };
 
@@ -103,17 +101,7 @@ export default function ItemVariantsTab({ catalogItemId }: { catalogItemId: stri
     };
   }, [catalogItemId]);
 
-  const rows = useMemo(() => {
-    return links.map((l) => {
-      const it = itemsById[l.variant_catalog_item_id];
-      return {
-        ...l,
-        itemName: it?.name ?? "Unknown item",
-        upc: it?.upc ?? null,
-        version: it?.version ?? null,
-      };
-    });
-  }, [links, itemsById]);
+  const rows = useMemo(() => items, [items]);
 
   return (
     <div className="rounded-2xl border border-[#E5E9F2] bg-white shadow-sm overflow-hidden">
@@ -127,30 +115,44 @@ export default function ItemVariantsTab({ catalogItemId }: { catalogItemId: stri
         {err ? <div className="text-sm text-red-700">{err}</div> : null}
 
         {!loading && !err ? (
-          rows.length ? (
-            <div className="space-y-2">
-              {rows.map((r, idx) => (
-                <button
-                  key={`${r.variant_catalog_item_id}-${idx}`}
-                  type="button"
-                  onClick={() => router.push(`/catalog/${r.variant_catalog_item_id}`)}
-                  className="w-full text-left rounded-xl border border-[#E5E9F2] bg-white hover:bg-[#F8FAFC] transition px-3 py-3"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold text-[#0F172A] truncate">{r.itemName}</div>
-                      <div className="mt-1 text-[11px] text-[#64748B]">
-                        {r.link_type ? r.link_type : "variant"}
-                        {r.label ? ` • ${r.label}` : ""}
-                        {r.version ? ` • ${r.version}` : ""}
-                        {r.upc ? ` • UPC: ${r.upc}` : ""}
+          groupId ? (
+            rows.length ? (
+              <div className="space-y-2">
+                {rows.map((r) => {
+                  const isCurrent = r.id === catalogItemId;
+                  return (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => !isCurrent && router.push(`/catalog/${r.id}`)}
+                      className={[
+                        "w-full text-left rounded-xl border transition px-3 py-3",
+                        isCurrent
+                          ? "border-[#CBD5E1] bg-[#F8FAFC] cursor-default"
+                          : "border-[#E5E9F2] bg-white hover:bg-[#F8FAFC]",
+                      ].join(" ")}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-[#0F172A] truncate">
+                            {r.name}
+                            {isCurrent ? " (This item)" : ""}
+                          </div>
+                          <div className="mt-1 text-[11px] text-[#64748B]">
+                            {r.variant_name ? r.variant_name : "variant"}
+                            {typeof r.variant_rank === "number" ? ` • Rank: ${r.variant_rank}` : ""}
+                            {r.upc ? ` • UPC: ${r.upc}` : ""}
+                          </div>
+                        </div>
+                        {!isCurrent ? <div className="text-xs text-[#2563EB] shrink-0">Open →</div> : null}
                       </div>
-                    </div>
-                    <div className="text-xs text-[#2563EB] shrink-0">Open →</div>
-                  </div>
-                </button>
-              ))}
-            </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-sm text-[#64748B]">No variants in this group yet.</div>
+            )
           ) : (
             <div className="text-sm text-[#64748B]">No variants linked yet.</div>
           )
