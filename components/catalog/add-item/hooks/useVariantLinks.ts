@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 export type CatalogSearchRow = {
@@ -26,6 +26,9 @@ export function useVariantLinks() {
   const [linkedVariants, setLinkedVariants] = useState<VariantDraft[]>([]);
   const [variantDefaultType, setVariantDefaultType] = useState<string>(LINK_TYPES[0] ?? "variant");
   const [variantDefaultLabel, setVariantDefaultLabel] = useState("");
+
+  // ✅ This is what your Variants UI should use to show “already linked”
+  const linkedIds = useMemo(() => new Set(linkedVariants.map((v) => v.target_id)), [linkedVariants]);
 
   const addVariant = (row: CatalogSearchRow) => {
     setLinkedVariants((prev) => {
@@ -94,6 +97,7 @@ export function useVariantLinks() {
     variantDefaultLabel,
     setVariantDefaultLabel,
     linkedVariants,
+    linkedIds, // ✅ NEW
     addVariant,
     removeVariant,
     updateVariant,
