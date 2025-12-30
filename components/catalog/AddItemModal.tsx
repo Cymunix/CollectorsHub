@@ -22,6 +22,9 @@ import GlobalDetailsSection from "./add-item/sections/GlobalDetailsSection";
 import WikiSection from "./add-item/sections/WikiSection";
 import VariantsSection from "./add-item/sections/VariantsSection";
 
+// ✅ render only this kind section (won't break other kinds)
+import GamingSection from "./add-item/sections/kinds/GamingSection";
+
 import CreateMinifigModal from "./add-item/modals/CreateMinifigModal";
 
 /* ---------------- types ---------------- */
@@ -74,7 +77,7 @@ export default function AddItemModal({
     metaError: string | null;
   };
 
-  const form = useAddItemForm(meta);
+  const form = useAddItemForm(meta) as any;
   const variants = useVariantLinks();
   const people = usePeoplePicker(meta.people);
   const minifigs = useMinifigs(() => form.subcategoryId, () => form.franchiseId);
@@ -83,7 +86,7 @@ export default function AddItemModal({
   const [banner, setBanner] = useState<{ type: "error" | "success"; msg: string } | null>(null);
 
   const title = useMemo(() => {
-    const kind = (form.itemKind || "building_blocks").replace(/_/g, " ");
+    const kind = String(form.itemKind || "building_blocks").replace(/_/g, " ");
     return `Create Catalog Item • ${kind}`;
   }, [form.itemKind]);
 
@@ -95,7 +98,7 @@ export default function AddItemModal({
   };
 
   const resetAll = () => {
-    form.reset();
+    form.reset?.();
     variants.resetVariants();
     minifigs.resetMinifigs();
     people.resetPeople();
@@ -118,38 +121,7 @@ export default function AddItemModal({
       franchises: [...(m.franchises ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
     }));
 
-    form.setFranchiseId(row.id);
-  };
-
-  // ✅ these are ready to use once we add the UI in the correct section
-  const createGamePlatform = async () => {
-    const name = promptName("platform");
-    if (!name) return;
-
-    const row = await safeInsertLookup("game_platforms", name);
-    if (!row) return;
-
-    setMeta((m) => ({
-      ...m,
-      gamePlatforms: [...(m.gamePlatforms ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
-    }));
-
-    if (typeof (form as any).setGamePlatformId === "function") (form as any).setGamePlatformId(row.id);
-  };
-
-  const createGamePublisher = async () => {
-    const name = promptName("publisher");
-    if (!name) return;
-
-    const row = await safeInsertLookup("game_publishers", name);
-    if (!row) return;
-
-    setMeta((m) => ({
-      ...m,
-      gamePublishers: [...(m.gamePublishers ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
-    }));
-
-    if (typeof (form as any).setGamePublisherId === "function") (form as any).setGamePublisherId(row.id);
+    form.setFranchiseId?.(row.id);
   };
 
   /* ---------------- submit ---------------- */
@@ -178,6 +150,7 @@ export default function AddItemModal({
         wikiSources: form.wikiSources,
         linkedVariants: variants.linkedVariants,
 
+        // building blocks
         bbThemeId: form.bbThemeId,
         bbSubthemeId: form.bbSubthemeId,
         bbSetNumber: form.bbSetNumber,
@@ -186,6 +159,7 @@ export default function AddItemModal({
         bbRetailUsd: form.bbRetailUsd,
         selectedMinifigs: minifigsSnapshot,
 
+        // cards
         cardManufacturerId: form.cardManufacturerId,
         cardSetId: form.cardSetId,
         cardTypeId: form.cardTypeId,
@@ -194,20 +168,24 @@ export default function AddItemModal({
         cardRarityDropdown: form.cardRarityDropdown,
         cardRarityCustom: form.cardRarityCustom,
 
+        // music
         musicArtistId: form.musicArtistId,
 
+        // toys
         toyManufacturerId: form.toyManufacturerId,
         toyBrandId: form.toyBrandId,
         toyLineId: form.toyLineId,
         toyModelNumber: form.toyModelNumber,
 
+        // movies
         movieDirectorIds: people.movieDirectorIds,
         movieActorIds: people.movieActorIds,
 
-        // gaming (may be undefined if your form hook doesn’t expose them yet)
-        gamePlatformId: (form as any).gamePlatformId,
-        gamePublisherId: (form as any).gamePublisherId,
+        // ✅ gaming
+        gamePlatformId: form.gamePlatformId,
+        gamePublisherId: form.gamePublisherId,
 
+        // comics
         comicPublisherId: form.comicPublisherId,
         comicSeries: form.comicSeries,
         comicIssueNumber: form.comicIssueNumber,
@@ -249,6 +227,8 @@ export default function AddItemModal({
     }
   };
 
+  /* ---------------- render ---------------- */
+
   return (
     <>
       <AddItemModalShell open={open} title={title} saving={saving} banner={banner} onClose={safeClose} onSubmit={submit}>
@@ -271,6 +251,31 @@ export default function AddItemModal({
           <PhotoSection itemImagePreview={form.itemImagePreview} onPick={form.pickItemImage} />
 
           <GlobalDetailsSection {...form} />
+
+          {/* ✅ Gaming kind-specific section: platform + publisher */}
+          {form.itemKind === "gaming" ? (
+            <GamingSection
+              gamePlatforms={meta.gamePlatforms ?? []}
+              gamePublishers={meta.gamePublishers ?? []}
+              gamePlatformId={form.gamePlatformId ?? ""}
+              setGamePlatformId={form.setGamePlatformId}
+              gamePublisherId={form.gamePublisherId ?? ""}
+              setGamePublisherId={form.setGamePublisherId}
+              canCreate={true}
+              onPlatformCreated={(row) =>
+                setMeta((m) => ({
+                  ...m,
+                  gamePlatforms: [...(m.gamePlatforms ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
+                }))
+              }
+              onPublisherCreated={(row) =>
+                setMeta((m) => ({
+                  ...m,
+                  gamePublishers: [...(m.gamePublishers ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
+                }))
+              }
+            />
+          ) : null}
 
           <WikiSection {...form} />
 
