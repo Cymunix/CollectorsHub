@@ -1,14 +1,8 @@
-// components/catalog/add-item/sections/kinds/GamingSection.tsx
 "use client";
 
 import React from "react";
-import FieldLabel from "../../blocks/FieldLabel";
-import Select from "../../blocks/Select";
-import InlineCreateButton from "../../blocks/InlineCreateButton";
 
-// local types (because "@/lib/catalog/types" does NOT export these)
-type GamePlatform = { id: string; name: string };
-type GamePublisher = { id: string; name: string };
+type Row = { id: string; name: string };
 
 export default function GamingSection({
   gamePlatforms,
@@ -17,56 +11,101 @@ export default function GamingSection({
   setGamePlatformId,
   gamePublisherId,
   setGamePublisherId,
-  onCreateGamePlatform,
-  onCreateGamePublisher,
+  onCreatePlatform,
+  onCreatePublisher,
 }: {
-  gamePlatforms: GamePlatform[];
-  gamePublishers: GamePublisher[];
+  gamePlatforms: Row[];
+  gamePublishers: Row[];
   gamePlatformId: string;
   setGamePlatformId: (v: string) => void;
   gamePublisherId: string;
   setGamePublisherId: (v: string) => void;
-  onCreateGamePlatform: () => void;
-  onCreateGamePublisher: () => void;
+  onCreatePlatform?: () => void;
+  onCreatePublisher?: () => void;
 }) {
+  const platformsEmpty = (gamePlatforms?.length ?? 0) === 0;
+  const publishersEmpty = (gamePublishers?.length ?? 0) === 0;
+
   return (
-    <div className="rounded-2xl border p-4 mb-4">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-xs font-semibold">Gaming</h3>
-        <span className="text-[11px] text-gray-500">Required: Platform, Release Year, Version</span>
+    <section className="mt-6 rounded-2xl border bg-white p-4">
+      <div className="mb-3">
+        <h3 className="text-sm font-semibold text-[#0F172A]">Gaming Details</h3>
+        <p className="mt-0.5 text-xs text-gray-500">Platform is required for video games.</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-        <div className="space-y-1">
-          <div className="flex items-center justify-between">
-            <FieldLabel req>Platform</FieldLabel>
-            <InlineCreateButton onClick={onCreateGamePlatform}>+ New</InlineCreateButton>
+      <div className="grid grid-cols-1 gap-4">
+        {/* Platform */}
+        <div>
+          <div className="mb-1 flex items-center justify-between">
+            <label className="text-xs font-semibold text-gray-700">
+              Platform <span className="text-red-500">*</span>
+            </label>
+
+            {onCreatePlatform ? (
+              <button
+                type="button"
+                onClick={onCreatePlatform}
+                className="text-[11px] font-semibold text-indigo-600 hover:underline"
+              >
+                + Add platform
+              </button>
+            ) : null}
           </div>
-          <Select value={gamePlatformId} onChange={(e) => setGamePlatformId(e.target.value)}>
-            <option value="">Select…</option>
-            {(gamePlatforms ?? []).map((p) => (
+
+          <select
+            value={gamePlatformId}
+            onChange={(e) => setGamePlatformId(e.target.value)}
+            className="w-full rounded-xl border bg-white px-3 py-2 text-sm"
+          >
+            <option value="">{platformsEmpty ? "No platforms available" : "Select platform..."}</option>
+            {gamePlatforms.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
               </option>
             ))}
-          </Select>
+          </select>
+
+          {platformsEmpty ? (
+            <div className="mt-2 text-xs text-gray-500">
+              No platforms loaded. Add one (admin) or check RLS/table names.
+            </div>
+          ) : null}
         </div>
 
-        <div className="space-y-1">
-          <div className="flex items-center justify-between">
-            <FieldLabel>Publisher</FieldLabel>
-            <InlineCreateButton onClick={onCreateGamePublisher}>+ New</InlineCreateButton>
+        {/* Publisher */}
+        <div>
+          <div className="mb-1 flex items-center justify-between">
+            <label className="text-xs font-semibold text-gray-700">Publisher</label>
+
+            {onCreatePublisher ? (
+              <button
+                type="button"
+                onClick={onCreatePublisher}
+                className="text-[11px] font-semibold text-indigo-600 hover:underline"
+              >
+                + Add publisher
+              </button>
+            ) : null}
           </div>
-          <Select value={gamePublisherId} onChange={(e) => setGamePublisherId(e.target.value)}>
-            <option value="">(optional)</option>
-            {(gamePublishers ?? []).map((p) => (
+
+          <select
+            value={gamePublisherId}
+            onChange={(e) => setGamePublisherId(e.target.value)}
+            className="w-full rounded-xl border bg-white px-3 py-2 text-sm"
+          >
+            <option value="">{publishersEmpty ? "No publishers available" : "(optional) Select publisher..."}</option>
+            {gamePublishers.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
               </option>
             ))}
-          </Select>
+          </select>
+
+          {publishersEmpty ? (
+            <div className="mt-2 text-xs text-gray-500">No publishers loaded. Add one (admin) or check RLS.</div>
+          ) : null}
         </div>
       </div>
-    </div>
+    </section>
   );
 }
