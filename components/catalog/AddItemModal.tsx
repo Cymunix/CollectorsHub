@@ -14,7 +14,8 @@ import { safeInsertLookup } from "@/lib/catalog/lookups";
 import { createCatalogItem } from "@/lib/catalog/createCatalogItem";
 
 import { ensureBuildingBlocksRow, upsertSetMinifigLinks } from "@/lib/db/catalog";
-import { upsertItemDescription, replaceVariantLinks } from "@/lib/db/catalog_write";
+import { upsertItemDescription } from "@/lib/db/catalog_write";
+import { applyVariantGroupLinks } from "@/lib/db/variant_groups_write";
 
 import ClassificationSection from "./add-item/sections/ClassificationSection";
 import PhotoSection from "./add-item/sections/PhotoSection";
@@ -54,7 +55,7 @@ type CatalogMeta = {
   gamePlatforms: NamedRow[];
   gamePublishers: NamedRow[];
 
-  comicPublishers: NamedRow[];
+  comicPublishers: any[];
 
   [key: string]: any;
 };
@@ -148,6 +149,9 @@ export default function AddItemModal({
         wikiFacts: form.wikiFacts,
         wikiChecklist: form.wikiChecklist,
         wikiSources: form.wikiSources,
+
+        // NOTE: still pass these if your createCatalogItem stores them somewhere,
+        // but the actual linking is now handled by applyVariantGroupLinks().
         linkedVariants: variants.linkedVariants,
 
         // building blocks
@@ -194,11 +198,13 @@ export default function AddItemModal({
 
       await upsertItemDescription(id, form.wikiDescription);
 
-      await replaceVariantLinks({
+      // ✅ NEW: Variant group linking (transitive via group merge)
+      await applyVariantGroupLinks({
         catalogItemId: id,
-        linkedVariants: variants.linkedVariants,
-        defaultType: variants.variantDefaultType,
-        defaultLabel: variants.variantDefaultLabel,
+        linkedVariants: (variants.linkedVariants ?? []).map((v: any) => ({
+          catalogItemId: String(v?.catalogItemId ?? v?.id ?? ""),
+        })).filter((v: any) => v.catalogItemId),
+        variantName: form.catalogVersion || variants.variantDefaultLabel || null,
       });
 
       if (form.itemKind === "building_blocks") {
