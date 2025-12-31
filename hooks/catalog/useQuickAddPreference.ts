@@ -1,38 +1,25 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import type { QuickAddDefault } from "@/lib/catalog/types";
 
 type WishlistPriority = "low" | "medium" | "high";
 type CollectionVisibility = "private" | "public";
 
-function clampScore100(n: any, fallback = 80) {
-  const x = Number(n);
-  if (!Number.isFinite(x)) return fallback;
-  return Math.max(0, Math.min(100, Math.round(x)));
-}
-
-function score100ToTier10(score100: number) {
-  const t = Math.round(clampScore100(score100, 80) / 10);
-  return Math.max(1, Math.min(10, t));
-}
-
-function clampInt(n: any, min: number, max: number, fallback: number) {
-  const x = Number(n);
-  if (!Number.isFinite(x)) return fallback;
-  return Math.max(min, Math.min(max, Math.round(x)));
+function clamp(n: number, lo: number, hi: number) {
+  return Math.max(lo, Math.min(hi, n));
 }
 
 export function useQuickAddPreference() {
   const [loading, setLoading] = useState(true);
 
-  // Where Quick Add goes (collection/wishlist/both/ask)
+  // Quick add mode
   const [value, setValue] = useState<QuickAddDefault>("collection");
 
-  // ✅ NEW: defaults used by Quick Add
-  // IMPORTANT: this is now 0–100 (stored in profiles.default_condition_score)
-  const [defaultConditionScore100, setDefaultConditionScore100] = useState<number>(80);
+  // ✅ Defaults from PreferencesTab / profiles columns
+  const [defaultConditionTier10, setDefaultConditionTier10] = useState<number>(8);
+  const [defaultConditionScore100, setDefaultConditionScore100] = useState<number>(80); // tier10 * 10
   const [defaultQuantity, setDefaultQuantity] = useState<number>(1);
   const [defaultWishlistPriority, setDefaultWishlistPriority] = useState<WishlistPriority>("medium");
   const [defaultCollectionVisibility, setDefaultCollectionVisibility] = useState<CollectionVisibility>("private");
@@ -42,12 +29,16 @@ export function useQuickAddPreference() {
 
     const load = async () => {
       try {
-        const { data } = await supabase.auth.getUser();
+        const { data, error } = await supabase.auth.getUser();
+        if (error) throw error;
+
         const userId = data.user?.id ?? null;
 
         if (!userId) {
           if (!cancelled) {
+            // logged out fallback
             setValue("collection");
+            setDefaultConditionTier10(8);
             setDefaultConditionScore100(80);
             setDefaultQuantity(1);
             setDefaultWishlistPriority("medium");
@@ -57,8 +48,7 @@ export function useQuickAddPreference() {
           return;
         }
 
-        // Pull everything Quick Add needs.
-        // If some columns don't exist yet, Supabase will error. In that case we fall back.
+        // Pull everything we need (some cols may not exist yet)
         const res = await supabase
           .from("profiles")
           .select(
@@ -69,38 +59,40 @@ export function useQuickAddPreference() {
 
         if (cancelled) return;
 
-        // If the select fails due to missing cols, res.error will exist.
-        if ((res as any).error) {
-          // fallback
-          setValue("collection");
-          setDefaultConditionScore100(80);
-          setDefaultQuantity(1);
-          setDefaultWishlistPriority("medium");
-          setDefaultCollectionVisibility("private");
-          setLoading(false);
-          return;
-        }
-
+        // ----- quick add default -----
         const vRaw = (res.data as any)?.quick_add_default;
         const v = String(vRaw ?? "").trim();
-        if (v === "wishlist" || v === "collection" || v === "both" || v === "ask") setValue(v);
-        else setValue("collection");
+        if (v === "wishlist" || v === "collection" || v === "both" || v === "ask") {
+          setValue(v);
+        } else {
+          setValue("collection");
+        }
 
-        // ✅ default_condition_score is now 0–100
-        setDefaultConditionScore100(clampScore100((res.data as any)?.default_condition_score, 80));
+        // ----- condition default (stored as 1–10 in profiles) -----
+        const dcsRaw = Number((res.data as any)?.default_condition_score);
+        const tier10 = Number.isFinite(dcsRaw) ? clamp(Math.round(dcsRaw), 1, 10) : 8;
+        setDefaultConditionTier10(tier10);
+        setDefaultConditionScore100(tier10 * 10);
 
-        setDefaultQuantity(clampInt((res.data as any)?.default_quantity, 1, 999, 1));
+        // ----- quantity default -----
+        const dqRaw = Number((res.data as any)?.default_quantity);
+        const qty = Number.isFinite(dqRaw) ? clamp(Math.round(dqRaw), 1, 999) : 1;
+        setDefaultQuantity(qty);
 
-        const pr = String((res.data as any)?.default_wishlist_priority ?? "medium").trim();
+        // ----- wishlist priority -----
+        const pr = String((res.data as any)?.default_wishlist_priority ?? "medium").trim().toLowerCase();
         setDefaultWishlistPriority(pr === "low" || pr === "high" ? (pr as any) : "medium");
 
-        const vis = String((res.data as any)?.default_collection_visibility ?? "private").trim();
+        // ----- collection visibility -----
+        const vis = String((res.data as any)?.default_collection_visibility ?? "private").trim().toLowerCase();
         setDefaultCollectionVisibility(vis === "public" ? "public" : "private");
 
         setLoading(false);
       } catch {
         if (!cancelled) {
+          // fallback if columns don't exist or query fails
           setValue("collection");
+          setDefaultConditionTier10(8);
           setDefaultConditionScore100(80);
           setDefaultQuantity(1);
           setDefaultWishlistPriority("medium");
@@ -116,21 +108,13 @@ export function useQuickAddPreference() {
     };
   }, []);
 
-  // Handy UI tier (1–10) derived from score100
-  const defaultConditionTier10 = useMemo(
-    () => score100ToTier10(defaultConditionScore100),
-    [defaultConditionScore100]
-  );
-
   return {
     loading,
-
-    // Back-compat: keep returning value
     value,
 
-    // ✅ NEW outputs
-    defaultConditionScore100,
+    // ✅ expose defaults for quick add
     defaultConditionTier10,
+    defaultConditionScore100,
     defaultQuantity,
     defaultWishlistPriority,
     defaultCollectionVisibility,
