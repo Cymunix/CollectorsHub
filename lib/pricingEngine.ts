@@ -52,14 +52,21 @@ export function tier10ToGrade(tier10: number): ConditionGrade {
   return "poor";
 }
 
+/** Score → meta (compat layer). */
+export function scoreToMeta(score10: number): ConditionMeta {
+  const t = clamp(Math.round(Number(score10) || 0), 1, 10);
+  if (t <= 2) return { state: "open_incomplete", grade: "poor", flags: ["for_parts"] };
+  if (t <= 3) return { state: "open_incomplete", grade: "poor", flags: [] };
+  if (t <= 4) return { state: "open_complete", grade: "fair", flags: [] };
+  if (t <= 6) return { state: "open_complete", grade: "good", flags: [] };
+  if (t <= 8) return { state: "open_complete", grade: "excellent", flags: [] };
+  return { state: "open_complete", grade: "mint", flags: [] };
+}
+
 /**
  * Back-compat + normalization:
  * - If condition_json.meta exists, use it.
- * - Else infer from known legacy shapes:
- *   - lego context: condition_json.item_type === "lego" + data.state or sealed/pieces_complete
- *   - generic tier10: data.tier10
- *   - graded card: data.is_graded + grade_value
- *   - for_parts: data.for_parts
+ * - Else infer from known legacy shapes.
  */
 export function deriveConditionMeta(conditionJson: any): ConditionMeta {
   const cj = conditionJson ?? {};
@@ -69,7 +76,6 @@ export function deriveConditionMeta(conditionJson: any): ConditionMeta {
     const state = String(meta.state || "").trim() as ConditionState;
     const grade = String(meta.grade || "").trim() as ConditionGrade;
     const flags = uniq(Array.isArray(meta.flags) ? meta.flags : []);
-    // validate state/grade lightly
     const okState: ConditionState[] = ["sealed", "open_complete", "open_incomplete", "loose"];
     const okGrade: ConditionGrade[] = ["mint", "excellent", "good", "fair", "poor"];
     return {
@@ -81,19 +87,19 @@ export function deriveConditionMeta(conditionJson: any): ConditionMeta {
 
   const data = cj?.data ?? {};
 
-  if (!!data?.for_parts) {
+  if (!!data?.for_parts || !!cj?.for_parts) {
     return { state: "open_incomplete", grade: "poor", flags: ["for_parts"] };
   }
 
-  // LEGO
+  // LEGO (Building Blocks)
   if (String(cj?.item_type || "").toLowerCase() === "lego") {
     const s = String(data?.state || "").toLowerCase();
     const sealed = !!data?.sealed || s === "sealed";
     const piecesComplete = data?.pieces_complete !== false;
 
-    const state: ConditionState = sealed ? "sealed" : piecesComplete ? "open_complete" : "open_incomplete";
+    let state: ConditionState = sealed ? "sealed" : piecesComplete ? "open_complete" : "open_incomplete";
 
-    // crude grade inference if no meta exists (UI-level only)
+    // crude grade inference
     let tier10 = 8;
     if (sealed) tier10 = 9;
     if (!piecesComplete) tier10 = 6;
@@ -106,12 +112,29 @@ export function deriveConditionMeta(conditionJson: any): ConditionMeta {
     if (data?.instructions?.included === false) flags.push("instructions_missing");
     if (!!data?.yellowing) flags.push("yellowing");
 
+    // IMPORTANT: if UI has instruction/box “condition sliders”, treat very low tiers as missing/for-parts
+    const instrTier = Number(
+      data?.instructions?.condition_tier10 ??
+        data?.instructions?.tier10 ??
+        data?.instructions?.condition ??
+        NaN
+    );
+    if (Number.isFinite(instrTier) && instrTier <= 2) {
+      flags.push("instructions_missing");
+      state = state === "sealed" ? "sealed" : "open_incomplete";
+    }
+
+    const boxTier = Number(data?.box?.condition_tier10 ?? data?.box?.tier10 ?? data?.box?.condition ?? NaN);
+    if (Number.isFinite(boxTier) && boxTier <= 2) {
+      flags.push("box_missing");
+    }
+
     return { state, grade, flags: uniq(flags) };
   }
 
-  // Graded cards (derive tier10 from grade_value)
-  if (!!data?.is_graded) {
-    const gv = Number(data?.grade_value);
+  // Graded cards
+  if (!!data?.is_graded || !!cj?.graded) {
+    const gv = Number(data?.grade_value ?? cj?.gradeValue);
     let tier10 = 8;
     if (Number.isFinite(gv)) {
       if (gv >= 9.5) tier10 = 10;
@@ -125,37 +148,33 @@ export function deriveConditionMeta(conditionJson: any): ConditionMeta {
       else tier10 = 2;
     }
     const grade = tier10ToGrade(tier10);
-    const flags = uniq(["graded", String(data?.grading_company || "").toUpperCase()].filter(Boolean));
+    const flags = uniq(["graded", String(data?.grading_company || cj?.gradingCompany || "").toUpperCase()].filter(Boolean));
     return { state: "open_complete", grade, flags };
   }
 
-  // Generic tier10
-  const t = Number(data?.tier10);
+  // Generic tier10 / conditionScore
+  const t = Number(data?.tier10 ?? cj?.tier10 ?? cj?.conditionScore ?? cj?.condition_score);
   if (Number.isFinite(t)) {
     return { state: "open_complete", grade: tier10ToGrade(clamp(t, 1, 10)), flags: [] };
   }
 
-  // Default
   return { state: "open_complete", grade: "excellent", flags: [] };
 }
 
 /**
- * Pricing: multipliers ONLY. No “entered scores”.
- * You can tune, but this is the hook everything should call.
+ * Pricing: multipliers ONLY.
  */
 export function getConditionMultiplier(meta: ConditionMeta) {
   const flags = new Set(meta.flags || []);
 
-  // hard floor
   if (flags.has("for_parts")) return 0.35;
 
-  // base by state
   let m = 1.0;
+
   if (meta.state === "sealed") m *= 1.25;
   else if (meta.state === "open_incomplete") m *= 0.75;
   else if (meta.state === "loose") m *= 0.9;
 
-  // base by grade
   switch (meta.grade) {
     case "mint":
       m *= 1.15;
@@ -174,13 +193,11 @@ export function getConditionMultiplier(meta: ConditionMeta) {
       break;
   }
 
-  // example: small penalties for key flags (real world)
   if (flags.has("yellowing")) m *= 0.9;
   if (flags.has("pieces_incomplete")) m *= 0.9;
   if (flags.has("box_missing")) m *= 0.93;
   if (flags.has("instructions_missing")) m *= 0.96;
 
-  // graded premium isolated (don’t double-count)
   if (flags.has("graded")) m *= 1.05;
 
   return clamp(m, 0.25, 1.8);
@@ -188,27 +205,102 @@ export function getConditionMultiplier(meta: ConditionMeta) {
 
 /** UI helper (optional): show a tier10 derived from meta */
 export function metaToTier10(meta: ConditionMeta) {
-  // sealed tends to present as 9/10 in UI, but still depends on grade
   let t = gradeToTier10(meta.grade);
   if (meta.state === "sealed") t = Math.max(t, 9);
   if ((meta.flags || []).includes("for_parts")) t = 2;
   return clamp(t, 1, 10);
 }
 
-// ---- Pricing helpers (back-compat for UI) ----
+// -------------------------
+// HUMAN DISPLAY CONDITION
+// -------------------------
 
-export type DealBadge = "great" | "good" | "fair" | "overpriced" | "unknown";
+export type DisplayCondition = "Sealed" | "Excellent" | "Good" | "Fair" | "Poor" | "For Parts";
+
+type Cap = "Excellent" | "Good" | "Fair" | "Poor" | "For Parts";
+function worse(a: Cap, b: Cap): Cap {
+  const order: Cap[] = ["Excellent", "Good", "Fair", "Poor", "For Parts"];
+  return order.indexOf(a) > order.indexOf(b) ? a : b;
+}
+function gradeToCap(g: ConditionGrade): Cap {
+  switch (g) {
+    case "mint":
+    case "excellent":
+      return "Excellent";
+    case "good":
+      return "Good";
+    case "fair":
+      return "Fair";
+    case "poor":
+      return "Poor";
+  }
+}
+
+export function deriveDisplayCondition(meta: ConditionMeta): { label: DisplayCondition; reasons: string[] } {
+  const flags = new Set(meta.flags || []);
+  const reasons: string[] = [];
+
+  if (flags.has("for_parts")) return { label: "For Parts", reasons: ["For parts / broken"] };
+  if (meta.state === "sealed") return { label: "Sealed", reasons: [] };
+
+  let cap: Cap = gradeToCap(meta.grade);
+
+  // state caps
+  if (meta.state === "open_incomplete") {
+    cap = worse(cap, "Fair");
+    reasons.push("Incomplete");
+  }
+  if (meta.state === "loose") {
+    cap = worse(cap, "Good");
+    reasons.push("Loose / unboxed");
+  }
+
+  // flag caps
+  if (flags.has("pieces_incomplete")) {
+    cap = worse(cap, "Fair");
+    reasons.push("Missing pieces");
+  }
+  if (flags.has("instructions_missing")) {
+    cap = worse(cap, "Good");
+    reasons.push("Instructions missing");
+  }
+  if (flags.has("box_missing")) {
+    cap = worse(cap, "Good");
+    reasons.push("Box missing");
+  }
+  if (flags.has("yellowing")) {
+    cap = worse(cap, "Good");
+    reasons.push("Yellowing");
+  }
+
+  const label: DisplayCondition =
+    cap === "Excellent" ? "Excellent" :
+    cap === "Good" ? "Good" :
+    cap === "Fair" ? "Fair" :
+    cap === "Poor" ? "Poor" :
+    "For Parts";
+
+  return { label, reasons: uniq(reasons) };
+}
+
+// -------------------------
+// FAIR VALUE + DEAL BADGE (UI COMPAT)
+// -------------------------
+
+export type DealBadgeKey = "great" | "good" | "fair" | "overpriced" | "unknown";
+export type DealBadge = { key: DealBadgeKey; label: string; color: "green" | "blue" | "red" | "gray" };
 
 /**
- * Returns "fair value" for the UI.
- * Current model: baseValue * conditionMultiplier, where baseValue comes from listing/market data.
- *
- * This is intentionally defensive because different call-sites may pass different shapes.
+ * Returns fair value for UI.
+ * Accepts multiple shapes, including your current call:
+ * getFairValue({ baseMarketPrice, conditionScore, conditionMeta, meta, ... })
  */
 export function getFairValue(input: any): number | null {
   if (!input) return null;
 
+  // support different base field names
   const baseCandidates = [
+    input.baseMarketPrice,
     input.baseValueCad,
     input.base_value_cad,
     input.baseValue,
@@ -231,13 +323,21 @@ export function getFairValue(input: any): number | null {
       }
     }
   }
-
   if (base == null) return null;
 
-  const meta: ConditionMeta | null =
+  // meta sources (prefer explicit meta; fall back to score; fall back to deriveConditionMeta(condition_json))
+  const explicitMeta: ConditionMeta | null =
     (input.conditionMeta as ConditionMeta) ??
     (input.meta as ConditionMeta) ??
     (typeof input.state === "string" && typeof input.grade === "string" ? (input as ConditionMeta) : null);
+
+  const score = input.conditionScore ?? input.condition_score ?? null;
+  const scoreMeta = score != null ? scoreToMeta(Number(score)) : null;
+
+  const derivedFromJson =
+    input.condition_json ? deriveConditionMeta(input.condition_json) : null;
+
+  const meta = explicitMeta ?? scoreMeta ?? derivedFromJson;
 
   const m = meta ? getConditionMultiplier(meta) : 1.0;
   const fair = base * m;
@@ -247,17 +347,33 @@ export function getFairValue(input: any): number | null {
 
 /**
  * Deal badge from price vs fair value.
- * Ratio thresholds are intentionally simple; tune later.
+ * Supports:
+ * - getDealBadge(price, fair)
+ * - getDealBadge({ listingPrice, fairValue })
  */
-export function getDealBadge(priceCad: number | null | undefined, fairValueCad: number | null | undefined): DealBadge {
-  const p = typeof priceCad === "number" ? priceCad : null;
-  const fv = typeof fairValueCad === "number" ? fairValueCad : null;
+export function getDealBadge(
+  a: number | null | undefined | { listingPrice?: number | null; fairValue?: number | null },
+  b?: number | null | undefined
+): DealBadge {
+  const listingPrice =
+    typeof a === "object" && a
+      ? (typeof a.listingPrice === "number" ? a.listingPrice : a.listingPrice == null ? null : Number(a.listingPrice))
+      : (typeof a === "number" ? a : a == null ? null : Number(a));
 
-  if (!p || !fv || p <= 0 || fv <= 0) return "unknown";
+  const fairValue =
+    typeof a === "object" && a
+      ? (typeof a.fairValue === "number" ? a.fairValue : a.fairValue == null ? null : Number(a.fairValue))
+      : (typeof b === "number" ? b : b == null ? null : Number(b));
+
+  const p = typeof listingPrice === "number" && Number.isFinite(listingPrice) ? listingPrice : null;
+  const fv = typeof fairValue === "number" && Number.isFinite(fairValue) ? fairValue : null;
+
+  if (!p || !fv || p <= 0 || fv <= 0) return { key: "unknown", label: "Unknown", color: "gray" };
 
   const r = p / fv;
-  if (r <= 0.8) return "great";
-  if (r <= 0.95) return "good";
-  if (r <= 1.05) return "fair";
-  return "overpriced";
+
+  if (r <= 0.8) return { key: "great", label: "Great deal", color: "green" };
+  if (r <= 0.95) return { key: "good", label: "Good deal", color: "green" };
+  if (r <= 1.05) return { key: "fair", label: "Fair", color: "blue" };
+  return { key: "overpriced", label: "Overpriced", color: "red" };
 }
