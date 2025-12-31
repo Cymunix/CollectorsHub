@@ -19,7 +19,11 @@ function PrimaryButton({
       onClick={onClick}
       disabled={!!disabled}
       className={`w-full rounded-2xl px-4 py-3 text-sm font-semibold transition shadow-sm
-        ${disabled ? "bg-[#0F172A]/60 text-white cursor-not-allowed" : "bg-[#0F172A] text-white hover:bg-[#111C33]"}`}
+        ${
+          disabled
+            ? "bg-[#0F172A]/60 text-white cursor-not-allowed"
+            : "bg-[#0F172A] text-white hover:bg-[#111C33]"
+        }`}
     >
       {children}
     </button>
@@ -47,8 +51,8 @@ function SecondaryButton({
           disabled
             ? "cursor-not-allowed opacity-60"
             : danger
-              ? "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
-              : "border-[#E5E9F2] bg-white text-[#0F172A] hover:bg-[#F8FAFC]"
+            ? "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
+            : "border-[#E5E9F2] bg-white text-[#0F172A] hover:bg-[#F8FAFC]"
         }`}
     >
       {children}
@@ -58,7 +62,9 @@ function SecondaryButton({
 
 function isUuid(v: any) {
   const s = String(v ?? "").trim();
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    s
+  );
 }
 
 // Accept "uuid#1" and normalize to "uuid"
@@ -76,22 +82,20 @@ function toNonNegInt(v: any) {
   return Math.max(0, n);
 }
 
-function pickSeedMinifigIds(seedMinifigs: { minifig_id: string; instance_key?: string }[] | undefined): string[] {
+function pickSeedMinifigIds(
+  seedMinifigs: { minifig_id: string; instance_key?: string }[] | undefined
+): string[] {
   const rows = Array.isArray(seedMinifigs) ? seedMinifigs : [];
   const out: string[] = [];
 
   for (const m of rows) {
-    const id = normalizeMinifigId((m as any)?.minifig_id ?? (m as any)?.id ?? (m as any)?.instance_key);
+    const id = normalizeMinifigId(
+      (m as any)?.minifig_id ?? (m as any)?.id ?? (m as any)?.instance_key
+    );
     if (id) out.push(id);
   }
 
   return Array.from(new Set(out));
-}
-
-function clampScore100(n: any, fallback = 80) {
-  const x = Number(n);
-  if (!Number.isFinite(x)) return fallback;
-  return Math.max(0, Math.min(100, Math.round(x)));
 }
 
 export default function ItemAddActions({
@@ -99,6 +103,7 @@ export default function ItemAddActions({
   userId,
   onRequireAuth,
   conditionValues,
+  // ✅ FIX: conditionScore is OPTIONAL (page.tsx doesn’t pass it, and we don’t need it here)
   conditionScore,
   seedMinifigs,
 }: {
@@ -106,8 +111,8 @@ export default function ItemAddActions({
   userId: string | null;
   onRequireAuth: () => void;
   conditionValues: Record<string, any>;
-  conditionScore: number; // ✅ REQUIRED: 0–100
-  seedMinifigs?: { minifig_id: string; instance_key?: string }[]; // from page.tsx expected set minifigs (can be instance keys)
+  conditionScore?: number; // optional
+  seedMinifigs?: { minifig_id: string; instance_key?: string }[]; // from page.tsx bbMinifigs
 }) {
   const [adding, setAdding] = useState(false);
   const [banner, setBanner] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
@@ -139,11 +144,9 @@ export default function ItemAddActions({
     };
   }, [userId, catalogItemId]);
 
-  // ✅ NEW condition system: LEGO set if item_type=lego AND data.type=set
   const isBuildingBlocksSet = useMemo(() => {
-    const itemType = String(conditionValues?.item_type ?? "").toLowerCase().trim();
-    const t = String(conditionValues?.data?.type ?? "").toLowerCase().trim();
-    return itemType === "lego" && t === "set";
+    const t = String(conditionValues?.building_blocks?.type ?? "").toLowerCase().trim();
+    return t.includes("set");
   }, [conditionValues]);
 
   const handleAddToCollection = async () => {
@@ -158,47 +161,38 @@ export default function ItemAddActions({
 
     setAdding(true);
     try {
-      const score100 = clampScore100(conditionScore, 80);
-
       if (isBuildingBlocksSet) {
-        // 1) Create collection copy (SAVE BOTH condition_json + condition_score)
+        console.log(
+          "[add set] raw condition minifigs sample:",
+          (conditionValues as any)?.building_blocks?.minifigs?.slice?.(0, 5)
+        );
+
+        // 1) Create collection copy
         const ins = await supabase
           .from("user_collection_items")
-          .insert([
-            {
-              user_id: userId,
-              catalog_item_id: catalogItemId,
-              condition_json: conditionValues,
-              condition_score: score100,
-            },
-          ])
+          .insert([{ user_id: userId, catalog_item_id: catalogItemId, condition_json: conditionValues }])
           .select("id")
           .maybeSingle();
 
+        console.log("[add set] INSERT user_collection_items:", ins);
         if (ins.error) throw ins.error;
 
         const userCollectionItemId = ins.data?.id as string | undefined;
         if (!userCollectionItemId) throw new Error("Failed to create collection copy (missing id).");
 
         // 2) Aggregate UI selections by base minifig UUID
-        // NEW shape: conditionValues.data.minifigs = [{ instance_key, included, ... }]
-        // Legacy fallback: conditionValues.building_blocks.minifigs
-        const rawRows =
-          (conditionValues as any)?.data?.minifigs ??
-          (conditionValues as any)?.building_blocks?.minifigs ??
-          [];
-
+        const rawRows = (conditionValues as any)?.building_blocks?.minifigs;
         const pickedById = new Map<string, { included_qty: number; notes: string | null }>();
 
         if (Array.isArray(rawRows)) {
           for (const m of rawRows) {
-            // NEW preferred keys:
             const idCandidate =
-              m?.instance_key ??
               m?.minifig_id ??
-              m?.id ??
               m?.minifigId ??
-              m?.minifig?.id;
+              m?.minifig?.id ??
+              m?.minifig?.minifig_id ??
+              m?.id ??
+              m?.instance_key;
 
             const id = normalizeMinifigId(idCandidate);
             if (!id) continue;
@@ -206,7 +200,6 @@ export default function ItemAddActions({
             const checked = !!m?.included || !!m?.checked || !!m?.selected || !!m?.isChecked;
             if (!checked) continue;
 
-            // If qty exists (future), honor it. Otherwise each checked instance counts as 1.
             const hasQtyProp =
               Object.prototype.hasOwnProperty.call(m, "included_qty") ||
               Object.prototype.hasOwnProperty.call(m, "includedQty") ||
@@ -215,6 +208,7 @@ export default function ItemAddActions({
               Object.prototype.hasOwnProperty.call(m, "count");
 
             const rawQty = m?.included_qty ?? m?.includedQty ?? m?.qty ?? m?.quantity ?? m?.count;
+
             const qty = hasQtyProp ? toNonNegInt(rawQty) : 1;
 
             const prev = pickedById.get(id);
@@ -225,8 +219,15 @@ export default function ItemAddActions({
           }
         }
 
-        // 3) Normalize seed list (expected minifigs for this set)
+        console.log("[add set] pickedById (aggregated):", Array.from(pickedById.entries()).slice(0, 20));
+
+        // 3) Normalize seed list from page.tsx (bbMinifigs)
         const seededIds = pickSeedMinifigIds(seedMinifigs);
+
+        console.log("[add set] seededIds count:", seededIds.length, seededIds.slice(0, 10));
+
+        const matched = seededIds.filter((id) => pickedById.has(id)).length;
+        console.log("[add set] match count (seed ∩ picked):", matched);
 
         // 4) Build ONE row per (user_collection_item_id, minifig_id)
         const rows = seededIds.map((minifigId) => {
@@ -235,10 +236,12 @@ export default function ItemAddActions({
             user_collection_item_id: userCollectionItemId,
             minifig_id: minifigId,
             included: !!picked,
-            included_qty: picked ? picked.included_qty : 0, // ALWAYS int
+            included_qty: picked ? picked.included_qty : 0,
             notes: picked ? picked.notes : null,
           };
         });
+
+        console.log("[add set] UPSERT PAYLOAD sample:", rows.slice(0, 10));
 
         // 5) Single upsert with correct conflict target
         const up = await supabase
@@ -246,30 +249,25 @@ export default function ItemAddActions({
           .upsert(rows, { onConflict: "user_collection_item_id,minifig_id" })
           .select("user_collection_item_id,minifig_id,included,included_qty,notes");
 
+        console.log("[add set] UPSERT RESULT:", up);
         if (up.error) throw up.error;
 
         setBanner({
           type: "ok",
-          msg: `Added set copy. copyId=${userCollectionItemId}. minifigsSaved=${up.data?.length ?? 0}.`,
+          msg: `Added set copy. copyId=${userCollectionItemId}. minifigsSaved=${up.data?.length ?? 0}. matched=${matched}`,
         });
 
         return;
       }
 
-      // Non-set: just add item copy (SAVE BOTH condition_json + condition_score)
+      // Non-set: just add item copy
       const ins = await supabase
         .from("user_collection_items")
-        .insert([
-          {
-            user_id: userId,
-            catalog_item_id: catalogItemId,
-            condition_json: conditionValues,
-            condition_score: score100,
-          },
-        ])
+        .insert([{ user_id: userId, catalog_item_id: catalogItemId, condition_json: conditionValues }])
         .select("id")
         .maybeSingle();
 
+      console.log("INSERT RESULT:", ins);
       if (ins.error) throw ins.error;
 
       setBanner({ type: "ok", msg: `Added to your collection! id=${ins.data?.id ?? "?"}` });
