@@ -8,7 +8,6 @@ type SaleRow = {
   id: string;
   sale_at: string | null;
   sale_price_cad: number | null;
-  // ✅ keep local name as condition_json so the rest of the file doesn't care about DB column names
   condition_json: Record<string, any> | null;
   source: string | null;
 };
@@ -20,10 +19,20 @@ function money(value: number | string | null | undefined, currency: string = "CA
   return new Intl.NumberFormat("en-CA", { style: "currency", currency, maximumFractionDigits: 2 }).format(n);
 }
 
-function clampScore(n: any, fallback = 8) {
+function clampTier10(n: any, fallback = 8) {
   const x = Number(n);
   if (!Number.isFinite(x)) return fallback;
   return Math.max(1, Math.min(10, x));
+}
+
+function clampScore100(n: any, fallback = 80) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return fallback;
+  return Math.max(0, Math.min(100, Math.round(x)));
+}
+
+function score100ToTier10(score100: any) {
+  return clampTier10(Math.round(clampScore100(score100) / 10), 8);
 }
 
 function formatRelativeTime(iso: string | null | undefined) {
@@ -59,24 +68,35 @@ function formatShortDate(iso: string | null | undefined) {
   return d.toLocaleDateString();
 }
 
+/**
+ * New schema:
+ * cj = { v, item_type, mode, data: {...} }
+ * Legacy schema:
+ * cj = { conditionScore, isGraded, gradingCompany, ... }
+ */
 function formatConditionOrGradeFromJson(cj: Record<string, any> | null | undefined) {
   if (!cj) return "—";
-  if (!!cj.for_parts) return "Broken / For Parts";
 
-  const isGraded = !!(cj.isGraded ?? cj.graded);
+  const data = cj?.data ?? cj;
+
+  // For parts
+  const forParts = !!(data?.for_parts ?? data?.forParts ?? data?.broken_for_parts);
+  if (forParts) return "Broken / For Parts";
+
+  // Graded
+  const isGraded = !!(data?.is_graded ?? data?.isGraded ?? data?.graded);
   const company =
-    typeof cj.gradingCompany === "string"
-      ? cj.gradingCompany
-      : typeof cj.grading_company === "string"
-      ? cj.grading_company
-      : "";
-  const black = !!(cj.isBlackLabel ?? cj.black_label);
-  const gradeValueRaw = cj.gradeValue ?? cj.grade ?? cj.grade_value;
+    typeof data?.grading_company === "string"
+      ? data.grading_company
+      : typeof data?.gradingCompany === "string"
+        ? data.gradingCompany
+        : "";
+  const black = !!(data?.is_black_label ?? data?.isBlackLabel ?? data?.black_label);
+  const gradeValueRaw = data?.grade_value ?? data?.gradeValue ?? data?.grade ?? data?.grade_value;
 
   if (isGraded && (company || gradeValueRaw !== undefined)) {
     const gv = gradeValueRaw !== undefined && gradeValueRaw !== null && gradeValueRaw !== "" ? Number(gradeValueRaw) : NaN;
     const isBgs = String(company || "").toUpperCase() === "BGS";
-
     if (isBgs && black) return "BGS Black Label 10";
     if (company && Number.isFinite(gv)) return `${company} ${gv}`;
     if (company) return String(company);
@@ -84,10 +104,25 @@ function formatConditionOrGradeFromJson(cj: Record<string, any> | null | undefin
     return "Graded";
   }
 
-  const score = cj.conditionScore ?? cj.condition_score;
-  if (score !== undefined && score !== null && score !== "") {
-    const s = clampScore(score, 8);
-    return `${s} – ${getConditionLabel(s)}`;
+  // Raw: prefer explicit score100 if present on the json (optional)
+  // Otherwise fall back to tier10 if stored (generic items)
+  // Otherwise legacy conditionScore 1–10
+  const score100Maybe = data?.condition_score ?? cj?.condition_score;
+  if (score100Maybe !== undefined && score100Maybe !== null && score100Maybe !== "") {
+    const tier10 = score100ToTier10(score100Maybe);
+    return `${tier10}/10 – ${getConditionLabel(tier10)}`;
+  }
+
+  const tier10Maybe = data?.tier10;
+  if (tier10Maybe !== undefined && tier10Maybe !== null && tier10Maybe !== "") {
+    const t = clampTier10(tier10Maybe, 8);
+    return `${t}/10 – ${getConditionLabel(t)}`;
+  }
+
+  const legacyScore = data?.conditionScore ?? data?.condition_score;
+  if (legacyScore !== undefined && legacyScore !== null && legacyScore !== "") {
+    const t = clampTier10(legacyScore, 8);
+    return `${t}/10 – ${getConditionLabel(t)}`;
   }
 
   return "—";
@@ -106,52 +141,57 @@ function formatSaleSource(raw: any): "Store" | "Online" | "Collector" | "—" {
 }
 
 /**
- * Build a stable "condition key" so we can filter sales to match the user's selected condition.
+ * Filter key:
  * - Graded: company|grade|blacklabel
- * - Raw: score|for_parts
- * - For parts: for_parts
+ * - Raw: tier10 (derived from score100 if present)
  */
 function conditionKeyFromJson(cj: Record<string, any> | null | undefined): string {
   if (!cj) return "unknown";
+  const data = cj?.data ?? cj;
 
-  const forParts = !!(cj.for_parts ?? cj.forParts ?? cj.broken_for_parts);
+  const forParts = !!(data?.for_parts ?? data?.forParts ?? data?.broken_for_parts);
   if (forParts) return "for_parts";
 
-  const isGraded = !!(cj.isGraded ?? cj.graded);
+  const isGraded = !!(data?.is_graded ?? data?.isGraded ?? data?.graded);
   const companyRaw =
-    typeof cj.gradingCompany === "string"
-      ? cj.gradingCompany
-      : typeof cj.grading_company === "string"
-      ? cj.grading_company
-      : "";
+    typeof data?.grading_company === "string"
+      ? data.grading_company
+      : typeof data?.gradingCompany === "string"
+        ? data.gradingCompany
+        : "";
   const company = String(companyRaw || "").trim().toUpperCase();
-
-  const black = !!(cj.isBlackLabel ?? cj.black_label);
-  const gradeValueRaw = cj.gradeValue ?? cj.grade ?? cj.grade_value;
+  const black = !!(data?.is_black_label ?? data?.isBlackLabel ?? data?.black_label);
+  const gradeValueRaw = data?.grade_value ?? data?.gradeValue ?? data?.grade;
 
   if (isGraded) {
     const gv = gradeValueRaw !== undefined && gradeValueRaw !== null && gradeValueRaw !== "" ? Number(gradeValueRaw) : NaN;
-    const g = Number.isFinite(gv) ? String(gv) : "";
-    return `graded|${company || "UNKNOWN"}|${g || "?"}|${black ? "black" : "normal"}`;
+    const g = Number.isFinite(gv) ? String(gv) : "?";
+    return `graded|${company || "UNKNOWN"}|${g}|${black ? "black" : "normal"}`;
   }
 
-  const scoreRaw = cj.conditionScore ?? cj.condition_score;
-  const score = scoreRaw !== undefined && scoreRaw !== null && scoreRaw !== "" ? clampScore(scoreRaw, 8) : null;
+  const score100Maybe = data?.condition_score ?? cj?.condition_score;
+  if (score100Maybe !== undefined && score100Maybe !== null && score100Maybe !== "") {
+    const tier10 = score100ToTier10(score100Maybe);
+    return `raw|${tier10}`;
+  }
 
-  if (typeof score === "number" && Number.isFinite(score)) return `raw|${score}`;
+  const tier10Maybe = data?.tier10;
+  if (tier10Maybe !== undefined && tier10Maybe !== null && tier10Maybe !== "") {
+    const t = clampTier10(tier10Maybe, 8);
+    return `raw|${t}`;
+  }
+
+  const legacyScore = data?.conditionScore ?? data?.condition_score;
+  if (legacyScore !== undefined && legacyScore !== null && legacyScore !== "") {
+    const t = clampTier10(legacyScore, 8);
+    return `raw|${t}`;
+  }
 
   return "unknown";
 }
 
 export default function ItemSalesHistoryTab({
   catalogItemId,
-  /**
-   * ✅ Pass the user's currently selected condition JSON from the item page.
-   * This is what we filter sales against.
-   *
-   * Example usage in parent:
-   * <ItemSalesHistoryTab catalogItemId={catalogItemId} selectedConditionJson={conditionValues} />
-   */
   selectedConditionJson,
 }: {
   catalogItemId: string;
@@ -169,7 +209,6 @@ export default function ItemSalesHistoryTab({
     setSalesErr(null);
 
     try {
-      // ✅ FIX: use condition_jsonb (jsonb column), not condition_json
       const res = await supabase
         .from("marketplace_sales")
         .select("id,sale_at,sale_price_cad,condition_jsonb,source")
@@ -185,7 +224,6 @@ export default function ItemSalesHistoryTab({
         sale_at: r.sale_at ?? null,
         sale_price_cad:
           typeof r.sale_price_cad === "number" ? r.sale_price_cad : r.sale_price_cad === null ? null : Number(r.sale_price_cad),
-        // map DB field -> local field
         condition_json: (r.condition_jsonb ?? null) as any,
         source: r.source ?? null,
       })) as SaleRow[];
@@ -205,12 +243,9 @@ export default function ItemSalesHistoryTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [catalogItemId]);
 
-  // ✅ Filter to ONLY sales that match the user's selected condition
   const filteredSales = useMemo(() => {
-    // If nothing meaningful is selected, don't hide everything — show all.
     if (!selectedConditionJson) return sales;
     if (selectedKey === "unknown") return sales;
-
     return sales.filter((s) => conditionKeyFromJson(s.condition_json) === selectedKey);
   }, [sales, selectedConditionJson, selectedKey]);
 
@@ -239,18 +274,10 @@ export default function ItemSalesHistoryTab({
             <table className="w-full border-separate border-spacing-0">
               <thead>
                 <tr className="text-left">
-                  <th className="sticky top-0 bg-white border-b border-[#E5E9F2] px-3 py-2 text-[11px] font-semibold text-[#0F172A]">
-                    Date
-                  </th>
-                  <th className="sticky top-0 bg-white border-b border-[#E5E9F2] px-3 py-2 text-[11px] font-semibold text-[#0F172A]">
-                    Sold Price
-                  </th>
-                  <th className="sticky top-0 bg-white border-b border-[#E5E9F2] px-3 py-2 text-[11px] font-semibold text-[#0F172A]">
-                    Condition / Grade
-                  </th>
-                  <th className="sticky top-0 bg-white border-b border-[#E5E9F2] px-3 py-2 text-[11px] font-semibold text-[#0F172A]">
-                    Source
-                  </th>
+                  <th className="sticky top-0 bg-white border-b border-[#E5E9F2] px-3 py-2 text-[11px] font-semibold text-[#0F172A]">Date</th>
+                  <th className="sticky top-0 bg-white border-b border-[#E5E9F2] px-3 py-2 text-[11px] font-semibold text-[#0F172A]">Sold Price</th>
+                  <th className="sticky top-0 bg-white border-b border-[#E5E9F2] px-3 py-2 text-[11px] font-semibold text-[#0F172A]">Condition / Grade</th>
+                  <th className="sticky top-0 bg-white border-b border-[#E5E9F2] px-3 py-2 text-[11px] font-semibold text-[#0F172A]">Source</th>
                 </tr>
               </thead>
               <tbody>
