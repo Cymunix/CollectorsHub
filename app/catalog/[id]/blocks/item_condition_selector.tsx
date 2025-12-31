@@ -13,7 +13,15 @@ function normalizeCert(input: any): string {
   return s.slice(0, 64);
 }
 
-function SectionCard({ title, children, right }: { title: string; children: React.ReactNode; right?: React.ReactNode }) {
+function SectionCard({
+  title,
+  children,
+  right,
+}: {
+  title: string;
+  children: React.ReactNode;
+  right?: React.ReactNode;
+}) {
   return (
     <section className="rounded-2xl border border-[#E5E9F2] bg-white shadow-sm">
       <div className="flex items-center justify-between border-b border-[#EEF2F7] px-4 py-3 gap-3">
@@ -39,7 +47,11 @@ function CheckboxRow({
   emphasize?: boolean;
 }) {
   return (
-    <div className={`rounded-xl border bg-white px-3 py-2 ${emphasize ? "border-[#F59E0B] bg-[#FFFBEB]" : "border-[#E5E9F2]"}`}>
+    <div
+      className={`rounded-xl border bg-white px-3 py-2 ${
+        emphasize ? "border-[#F59E0B] bg-[#FFFBEB]" : "border-[#E5E9F2]"
+      }`}
+    >
       <label className="flex items-center gap-3">
         <input
           type="checkbox"
@@ -71,7 +83,9 @@ function SelectRow({
     <div className="rounded-xl border border-[#E5E9F2] bg-white px-3 py-2">
       <div className="text-sm text-[#0F172A] font-medium">{label}</div>
       <select
-        className={`mt-2 w-full rounded-lg border border-[#E5E9F2] bg-white px-3 py-2 text-sm ${disabled ? "opacity-70 cursor-not-allowed" : ""}`}
+        className={`mt-2 w-full rounded-lg border border-[#E5E9F2] bg-white px-3 py-2 text-sm ${
+          disabled ? "opacity-70 cursor-not-allowed" : ""
+        }`}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={!!disabled}
@@ -108,7 +122,9 @@ function NumberRow({
     <div className="rounded-xl border border-[#E5E9F2] bg-white px-3 py-2">
       <div className="text-sm text-[#0F172A] font-medium">{label}</div>
       <input
-        className={`mt-2 w-full rounded-lg border border-[#E5E9F2] bg-white px-3 py-2 text-sm ${disabled ? "opacity-70 cursor-not-allowed" : ""}`}
+        className={`mt-2 w-full rounded-lg border border-[#E5E9F2] bg-white px-3 py-2 text-sm ${
+          disabled ? "opacity-70 cursor-not-allowed" : ""
+        }`}
         type="number"
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -140,7 +156,9 @@ function TextRow({
     <div className="rounded-xl border border-[#E5E9F2] bg-white px-3 py-2">
       <div className="text-sm text-[#0F172A] font-medium">{label}</div>
       <input
-        className={`mt-2 w-full rounded-lg border border-[#E5E9F2] bg-white px-3 py-2 text-sm ${disabled ? "opacity-70 cursor-not-allowed" : ""}`}
+        className={`mt-2 w-full rounded-lg border border-[#E5E9F2] bg-white px-3 py-2 text-sm ${
+          disabled ? "opacity-70 cursor-not-allowed" : ""
+        }`}
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -172,7 +190,9 @@ function StatusPills({
             type="button"
             onClick={() => onPick(s)}
             className={`rounded-full px-4 py-2 text-[12px] font-semibold border transition ${
-              active ? "bg-[#0F172A] text-white border-[#0F172A]" : "bg-white text-[#0F172A] border-[#E5E9F2] hover:bg-[#F8FAFC]"
+              active
+                ? "bg-[#0F172A] text-white border-[#0F172A]"
+                : "bg-white text-[#0F172A] border-[#E5E9F2] hover:bg-[#F8FAFC]"
             }`}
             title={statusLabel(s)}
           >
@@ -191,13 +211,16 @@ function toggleFlag(flags: string[], flag: string, nextOn: boolean) {
   return Array.from(set);
 }
 
-function resolveMetaFromInputs(conditionValues: Record<string, any>, conditionMeta?: ConditionMeta): ConditionMeta {
+function resolveMetaFromInputs(
+  conditionValues: Record<string, any>,
+  conditionMeta?: ConditionMeta
+): ConditionMeta {
   const data = conditionValues?.data ?? {};
   const meta = conditionMeta ?? conditionValues?.meta ?? null;
 
   const status: ConditionStatus =
     (meta?.status as ConditionStatus) ||
-    (typeof data?.status === "string" ? data.status : null) ||
+    (typeof data?.status === "string" ? (data.status as ConditionStatus) : null) ||
     (!!data?.sealed ? "sealed" : null) ||
     (!!data?.for_parts ? "for_parts" : null) ||
     "complete";
@@ -208,26 +231,14 @@ function resolveMetaFromInputs(conditionValues: Record<string, any>, conditionMe
     ? data.flags
     : [];
 
-  const grade = meta?.grade && typeof meta.grade === "object"
-    ? meta.grade
-    : (data?.is_graded
-        ? {
-            is_graded: true,
-            company: typeof data?.grading_company === "string" ? data.grading_company : null,
-            grade_value: data?.grade_value === "" || data?.grade_value == null ? null : Number(data.grade_value),
-          }
-        : undefined);
-
-  const notes = typeof meta?.notes === "string" ? meta.notes : (typeof data?.notes === "string" ? data.notes : null);
-
-  // Normalize: if status=for_parts, make sure for_parts flag exists.
-  const normalizedFlags = status === "for_parts" ? toggleFlag(flags, "for_parts", true) : toggleFlag(flags, "for_parts", false);
+  const normalizedFlags =
+    status === "for_parts"
+      ? toggleFlag(flags, "for_parts", true)
+      : toggleFlag(flags, "for_parts", false);
 
   return {
     status,
     flags: normalizedFlags,
-    grade,
-    notes,
   };
 }
 
@@ -265,7 +276,9 @@ export default function ItemConditionSelector({
         .eq("catalog_item_id", catalogItemId)
         .limit(200);
 
-      const ids = (linkRes.data ?? []).map((r: any) => r.minifig_id).filter(Boolean);
+      const ids = (linkRes.data ?? [])
+        .map((r: any) => r.minifig_id)
+        .filter(Boolean);
       if (!ids.length) {
         setLinkedMinifigs([]);
         return;
@@ -309,9 +322,12 @@ export default function ItemConditionSelector({
   }
 
   const data = conditionValues?.data ?? {};
-  const meta = useMemo(() => resolveMetaFromInputs(conditionValues ?? {}, conditionMeta), [conditionValues, conditionMeta]);
+  const meta = useMemo(
+    () => resolveMetaFromInputs(conditionValues ?? {}, conditionMeta),
+    [conditionValues, conditionMeta]
+  );
 
-  const isGraded = !!meta.grade?.is_graded;
+  const isGraded = !!data?.is_graded;
 
   const summary = useMemo(() => {
     const chips: string[] = [];
@@ -320,29 +336,23 @@ export default function ItemConditionSelector({
     const important = (meta.flags || []).filter((f) => f !== "for_parts").slice(0, 3);
     for (const f of important) chips.push(flagLabel(f));
 
-    if (meta.grade?.is_graded) {
-      const c = meta.grade.company ? String(meta.grade.company).toUpperCase() : "GRADED";
-      const gv = meta.grade.grade_value;
-      chips.push(gv != null && Number.isFinite(gv) ? `${c} ${gv}` : c);
+    if (data?.is_graded) {
+      const c = data?.grading_company ? String(data.grading_company).toUpperCase() : "GRADED";
+      const gv = data?.grade_value;
+      chips.push(gv != null && Number.isFinite(Number(gv)) ? `${c} ${Number(gv)}` : c);
     }
 
     return { title: statusLabel(meta.status), chips };
-  }, [meta]);
+  }, [meta, data]);
 
   const emit = (nextMeta: ConditionMeta, nextDataPatch?: Record<string, any>) => {
-    // keep your legacy "data" blob alive, but push in the new truth:
     const nextData: Record<string, any> = {
       ...(data ?? {}),
       ...(nextDataPatch ?? {}),
       status: nextMeta.status,
       flags: nextMeta.flags,
-      // convenient legacy booleans:
       sealed: nextMeta.status === "sealed",
       for_parts: nextMeta.status === "for_parts",
-      is_graded: !!nextMeta.grade?.is_graded,
-      grading_company: nextMeta.grade?.company ?? null,
-      grade_value: nextMeta.grade?.grade_value ?? null,
-      notes: nextMeta.notes ?? null,
     };
 
     const nextJson = {
@@ -357,47 +367,46 @@ export default function ItemConditionSelector({
   };
 
   const setStatus = (s: ConditionStatus) => {
-    // If sealed, it’s logically “not missing pieces” — but we won’t be aggressive.
-    // We WILL ensure for_parts flag stays consistent.
     const nextMeta: ConditionMeta = {
       ...meta,
       status: s,
-      flags: s === "for_parts" ? toggleFlag(meta.flags, "for_parts", true) : toggleFlag(meta.flags, "for_parts", false),
+      flags:
+        s === "for_parts"
+          ? toggleFlag(meta.flags, "for_parts", true)
+          : toggleFlag(meta.flags, "for_parts", false),
     };
 
-    // If switching away from graded? no — grading is independent of status.
     emit(nextMeta);
   };
 
   const setFlag = (flag: string, on: boolean) => {
-    // For parts is controlled by status, not a random flag checkbox
     if (flag === "for_parts") return;
-
-    // If status is sealed, we still allow flags like yellowing/damaged etc.
     const nextFlags = toggleFlag(meta.flags, flag, on);
     emit({ ...meta, flags: nextFlags });
   };
 
   const setGraded = (on: boolean) => {
     if (!on) {
-      const nextMeta: ConditionMeta = { ...meta, grade: { is_graded: false } as any };
-      // store legacy fields
-      emit({ ...meta, grade: { is_graded: false } as any }, { is_graded: false, grading_company: null, grade_value: null, certification_number: "" });
+      emit(meta, {
+        is_graded: false,
+        grading_company: null,
+        grade_value: null,
+        certification_number: "",
+      });
       return;
     }
 
-    const company = typeof data?.grading_company === "string" && data.grading_company.trim().length ? data.grading_company : "PSA";
+    const company =
+      typeof data?.grading_company === "string" && data.grading_company.trim().length
+        ? data.grading_company
+        : "PSA";
+
     const gradeValue =
       data?.grade_value === null || data?.grade_value === undefined || data?.grade_value === ""
         ? 9
         : Number(data.grade_value);
 
-    const nextMeta: ConditionMeta = {
-      ...meta,
-      grade: { is_graded: true, company, grade_value: Number.isFinite(gradeValue) ? gradeValue : null },
-    };
-
-    emit(nextMeta, {
+    emit(meta, {
       is_graded: true,
       grading_company: company,
       grade_value: Number.isFinite(gradeValue) ? gradeValue : null,
@@ -406,22 +415,13 @@ export default function ItemConditionSelector({
   };
 
   const setGradeCompany = (company: string) => {
-    const nextMeta: ConditionMeta = {
-      ...meta,
-      grade: { ...(meta.grade ?? { is_graded: true }), is_graded: true, company },
-    };
-    emit(nextMeta, { grading_company: company });
+    emit(meta, { is_graded: true, grading_company: company });
   };
 
   const setGradeValue = (v: string) => {
     const n = v === "" ? null : Number(v);
     const gv = n != null && Number.isFinite(n) ? n : null;
-
-    const nextMeta: ConditionMeta = {
-      ...meta,
-      grade: { ...(meta.grade ?? { is_graded: true }), is_graded: true, grade_value: gv },
-    };
-    emit(nextMeta, { grade_value: gv });
+    emit(meta, { is_graded: true, grade_value: gv });
   };
 
   const setCert = (v: string) => {
@@ -482,7 +482,8 @@ export default function ItemConditionSelector({
         {/* For Parts explanation */}
         {meta.status === "for_parts" ? (
           <div className="rounded-xl border border-[#F59E0B] bg-[#FFFBEB] px-3 py-2 text-xs text-[#92400E]">
-            <span className="font-semibold">For Parts</span> means it’s broken / incomplete enough that it should be priced accordingly.
+            <span className="font-semibold">For Parts</span> means it’s broken / incomplete enough
+            that it should be priced accordingly.
           </div>
         ) : null}
 
@@ -494,23 +495,25 @@ export default function ItemConditionSelector({
             label="This item is graded"
             checked={isGraded}
             onChange={setGraded}
-            subtext={<span className="text-[#64748B]">Turn this on only if it has an official grade slab/case.</span>}
+            subtext={
+              <span className="text-[#64748B]">
+                Turn this on only if it has an official grade slab/case.
+              </span>
+            }
           />
 
           {isGraded ? (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
               <SelectRow
                 label="Company"
-                value={typeof meta.grade?.company === "string" ? meta.grade!.company! : ""}
+                value={typeof data?.grading_company === "string" ? data.grading_company : ""}
                 options={["PSA", "BGS", "CGC", "SGC", "CBCS", "WATA", "AFA", "UKG", "Other"]}
                 onChange={setGradeCompany}
               />
               <NumberRow
                 label="Grade value"
                 value={
-                  meta.grade?.grade_value === null || meta.grade?.grade_value === undefined
-                    ? ""
-                    : String(meta.grade.grade_value)
+                  data?.grade_value === null || data?.grade_value === undefined ? "" : String(data.grade_value)
                 }
                 min={0}
                 max={10}
@@ -530,16 +533,13 @@ export default function ItemConditionSelector({
 
         {/* Debug (optional) */}
         <div className="rounded-xl border border-[#E5E9F2] bg-[#F8FAFC] px-3 py-2 text-xs text-[#334155]">
-          Stored meta:{" "}
-          <span className="font-mono">
-            {meta.status}
-          </span>
+          Stored meta: <span className="font-mono">{meta.status}</span>
           {" • flags="}
-          <span className="font-mono">
-            [{(meta.flags || []).join(", ")}]
-          </span>
-          {meta.grade?.is_graded ? (
-            <span className="font-mono">{` • grade=${String(meta.grade.company ?? "GRADED")} ${meta.grade.grade_value ?? ""}`}</span>
+          <span className="font-mono">[{(meta.flags || []).join(", ")}]</span>
+          {data?.is_graded ? (
+            <span className="font-mono">{` • grade=${String(data?.grading_company ?? "GRADED")} ${
+              data?.grade_value ?? ""
+            }`}</span>
           ) : null}
         </div>
       </div>
