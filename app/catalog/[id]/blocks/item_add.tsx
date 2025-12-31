@@ -177,9 +177,8 @@ export default function ItemAddActions({
   // ✅ Default meta if nothing provided yet (keeps DB rows valid)
   const resolvedMeta: ConditionMeta = useMemo(
     () => ({
-      state: conditionMeta?.state ?? "open_complete",
-      grade: conditionMeta?.grade ?? "good",
-      flags: Array.isArray(conditionMeta?.flags) ? conditionMeta!.flags : [],
+      status: conditionMeta?.status ?? "complete",
+      flags: Array.isArray(conditionMeta?.flags) ? conditionMeta.flags : [],
     }),
     [conditionMeta]
   );
