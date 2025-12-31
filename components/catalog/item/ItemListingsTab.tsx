@@ -198,8 +198,11 @@ function LinkRow({ label, href, sub }: { label: string; href: string; sub?: stri
 }
 
 function ConditionLine({ condition_json }: { condition_json: Record<string, any> | null }) {
-  const meta: ConditionMeta = useMemo(() => deriveConditionMeta(condition_json), [condition_json]);
-  const view = useMemo(() => formatConditionView(meta), [meta]);
+  const meta: ConditionMeta | null = useMemo(
+    () => (condition_json ? deriveConditionMeta(condition_json) : null),
+    [condition_json]
+  );
+  const view = useMemo(() => formatConditionView(meta ?? undefined), [meta]);
 
   return (
     <div className="flex flex-wrap items-center gap-1.5">
@@ -407,7 +410,8 @@ export default function ItemListingsTab({
             <div className="rounded-xl border border-[#E5E9F2] bg-white p-3">
               <div className="text-sm font-semibold text-[#0F172A]">Buy externally</div>
               <div className="mt-1 text-[11px] text-[#64748B]">
-                These links search the web for <span className="font-semibold text-[#0F172A]">{safeText(itemName)}</span>.
+                These links search the web for{" "}
+                <span className="font-semibold text-[#0F172A]">{safeText(itemName)}</span>.
               </div>
             </div>
 
@@ -421,7 +425,8 @@ export default function ItemListingsTab({
             <div className="rounded-xl border border-[#E5E9F2] bg-white p-4">
               <div className="text-sm font-semibold text-[#0F172A]">Local listings</div>
               <div className="mt-1 text-[11px] text-[#64748B]">
-                Local results will show nearby store inventory and events once store locations + radius filtering are wired.
+                Local results will show nearby store inventory and events once store locations + radius filtering are
+                wired.
               </div>
 
               <div className="mt-3 flex flex-wrap gap-2">
@@ -484,12 +489,20 @@ export default function ItemListingsTab({
                   const listingPrice =
                     typeof l.price_cad === "number" ? l.price_cad : l.price_cad === null ? null : Number(l.price_cad);
 
+                  // NEW: getFairValue expects category + (conditionMeta/conditionScore), not condition_json
+                  const category = String(categoryName ?? "").trim() || "unknown";
+                  const meta: ConditionMeta | null = l.condition_json ? deriveConditionMeta(l.condition_json) : null;
+                  const score = (meta as any)?.conditionScore;
+
                   const fairRaw =
                     baseMarketPrice == null
                       ? null
                       : getFairValue({
                           baseMarketPrice,
-                          condition_json: l.condition_json,
+                          category,
+                          conditionMeta: meta ?? undefined,
+                          conditionScore:
+                            typeof score === "number" && Number.isFinite(score) ? score : undefined,
                         });
 
                   const fair = normalizeFairValueResult(fairRaw);
