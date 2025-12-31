@@ -18,6 +18,24 @@ import { detectKindFromCategoryName } from "@/lib/catalog/utils";
 import CatalogFilters from "@/components/catalog/CatalogFilters";
 import CatalogGrid from "@/components/catalog/CatalogGrid";
 
+function isDuplicateError(msg: string) {
+  const m = (msg || "").toLowerCase();
+  return m.includes("duplicate") || m.includes("unique") || m.includes("already exists");
+}
+
+function buildDefaultConditionJson(tier10: number) {
+  // This matches your ItemConditionSelector non-LEGO JSON shape
+  return {
+    v: 1,
+    item_type: "generic",
+    mode: "tier10",
+    data: {
+      tier10,
+      for_parts: false,
+    },
+  };
+}
+
 export default function CatalogScreen() {
   const up = useUserProfile() as any;
 
@@ -54,6 +72,7 @@ export default function CatalogScreen() {
     franchises: meta.franchises,
   });
 
+  // ✅ Your upgraded preference hook
   const quickPref = useQuickAddPreference();
 
   // -------------------- Filters --------------------
@@ -165,7 +184,6 @@ export default function CatalogScreen() {
   const clearSearch = () => {
     const next = new URLSearchParams(sp.toString());
     next.delete("search");
-    // keep other params if any
     const qs = next.toString();
     router.push(qs ? `/catalog?${qs}` : "/catalog");
   };
@@ -303,10 +321,7 @@ export default function CatalogScreen() {
   const ITEMS_PER_PAGE = 25;
   const [page, setPage] = useState<number>(1);
 
-  const totalPages = useMemo(
-    () => Math.max(1, Math.ceil(visibleCards.length / ITEMS_PER_PAGE)),
-    [visibleCards.length]
-  );
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(visibleCards.length / ITEMS_PER_PAGE)), [visibleCards.length]);
   const safePage = Math.min(Math.max(1, page), totalPages);
 
   const pagedCards = useMemo(() => {
@@ -354,7 +369,7 @@ export default function CatalogScreen() {
     router.push(`/catalog/${it.id}`);
   };
 
-  // -------------------- Quick Add --------------------
+  // -------------------- Quick Add helpers --------------------
   const ensureUserId = async (): Promise<string | null> => {
     const { data, error } = await supabase.auth.getUser();
     if (error) return null;
@@ -363,40 +378,125 @@ export default function CatalogScreen() {
     return uid;
   };
 
+  // ✅ Safe wishlist insert: tries to include priority, falls back if the column doesn't exist
   const addToWishlist = async (catalogItemId: string) => {
     setBanner(null);
     const uid = await ensureUserId();
     if (!uid) return;
 
-    const res = await supabase.from("user_wishlist_items").insert([{ user_id: uid, catalog_item_id: catalogItemId }]);
+    const priority = (quickPref as any)?.defaultWishlistPriority ?? "medium";
 
-    if (res.error) {
-      const msg = res.error.message || "Failed to add to wishlist.";
-      if (msg.toLowerCase().includes("duplicate") || msg.toLowerCase().includes("unique")) {
+    // Try with priority first
+    const res1 = await supabase
+      .from("user_wishlist_items")
+      .insert([{ user_id: uid, catalog_item_id: catalogItemId, priority }]);
+
+    if (res1.error) {
+      const msg1 = res1.error.message || "Failed to add to wishlist.";
+
+      // If the error smells like "column doesn't exist", retry without priority
+      const m = msg1.toLowerCase();
+      const maybeMissingCol =
+        m.includes("column") && (m.includes("priority") || m.includes("does not exist") || m.includes("unknown"));
+
+      if (maybeMissingCol) {
+        const res2 = await supabase
+          .from("user_wishlist_items")
+          .insert([{ user_id: uid, catalog_item_id: catalogItemId }]);
+
+        if (res2.error) {
+          const msg2 = res2.error.message || "Failed to add to wishlist.";
+          if (isDuplicateError(msg2)) {
+            setBanner({ type: "ok", msg: "Already in your wishlist." });
+            return;
+          }
+          setBanner({ type: "err", msg: msg2 });
+          return;
+        }
+
+        setBanner({ type: "ok", msg: "Added to wishlist." });
+        return;
+      }
+
+      if (isDuplicateError(msg1)) {
         setBanner({ type: "ok", msg: "Already in your wishlist." });
         return;
       }
-      setBanner({ type: "err", msg });
+      setBanner({ type: "err", msg: msg1 });
       return;
     }
 
     setBanner({ type: "ok", msg: "Added to wishlist." });
   };
 
+  // ✅ Safe collection insert: tries to include condition_score (0–100), condition_json, quantity, visibility
   const addToCollection = async (catalogItemId: string) => {
     setBanner(null);
     const uid = await ensureUserId();
     if (!uid) return;
 
-    const res = await supabase.from("user_collection_items").insert([{ user_id: uid, catalog_item_id: catalogItemId }]);
+    // Defaults from preferences (with sane fallbacks)
+    const score100 = Number((quickPref as any)?.defaultConditionScore100);
+    const safeScore100 = Number.isFinite(score100) ? Math.max(0, Math.min(100, Math.round(score100))) : 80;
 
-    if (res.error) {
-      const msg = res.error.message || "Failed to add to collection.";
-      if (msg.toLowerCase().includes("duplicate") || msg.toLowerCase().includes("unique")) {
+    const tier10 = Number((quickPref as any)?.defaultConditionTier10);
+    const safeTier10 = Number.isFinite(tier10) ? Math.max(1, Math.min(10, Math.round(tier10))) : 8;
+
+    const qty = Number((quickPref as any)?.defaultQuantity);
+    const safeQty = Number.isFinite(qty) ? Math.max(1, Math.min(999, Math.round(qty))) : 1;
+
+    const visibility = String((quickPref as any)?.defaultCollectionVisibility ?? "private") === "public" ? "public" : "private";
+
+    const condition_json = buildDefaultConditionJson(safeTier10);
+
+    // Try full insert first
+    const res1 = await supabase.from("user_collection_items").insert([
+      {
+        user_id: uid,
+        catalog_item_id: catalogItemId,
+        quantity: safeQty,
+        condition_score: safeScore100, // ✅ 0–100
+        condition_json, // ✅ new shape
+        visibility,
+      },
+    ]);
+
+    if (res1.error) {
+      const msg1 = res1.error.message || "Failed to add to collection.";
+      const m = msg1.toLowerCase();
+
+      // If it looks like missing columns, retry with the bare minimum
+      const maybeMissingCol =
+        m.includes("column") &&
+        (m.includes("condition_score") ||
+          m.includes("condition_json") ||
+          m.includes("quantity") ||
+          m.includes("visibility") ||
+          m.includes("does not exist") ||
+          m.includes("unknown"));
+
+      if (maybeMissingCol) {
+        const res2 = await supabase.from("user_collection_items").insert([{ user_id: uid, catalog_item_id: catalogItemId }]);
+
+        if (res2.error) {
+          const msg2 = res2.error.message || "Failed to add to collection.";
+          if (isDuplicateError(msg2)) {
+            setBanner({ type: "ok", msg: "Already in your collection." });
+            return;
+          }
+          setBanner({ type: "err", msg: msg2 });
+          return;
+        }
+
+        setBanner({ type: "ok", msg: "Added to your collection." });
+        return;
+      }
+
+      if (isDuplicateError(msg1)) {
         setBanner({ type: "ok", msg: "Already in your collection." });
         return;
       }
-      setBanner({ type: "err", msg });
+      setBanner({ type: "err", msg: msg1 });
       return;
     }
 
@@ -412,6 +512,7 @@ export default function CatalogScreen() {
       await addToCollection(catalogItemId);
       return;
     }
+    // "ask" isn't wired here (that would require a UI prompt). Defaulting to collection.
     return addToCollection(catalogItemId);
   };
 
