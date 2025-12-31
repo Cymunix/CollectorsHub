@@ -71,13 +71,13 @@ function prettyConditionFromJson(condition_json: Record<string, any> | null | un
       .replace(/\b\w/g, (c) => c.toUpperCase());
     chips.push(status);
 
-    const flags = Array.isArray(meta.flags) ? meta.flags : [];
+    const flags: string[] = Array.isArray(meta.flags) ? (meta.flags as string[]) : [];
     if (flags.length) {
       chips.push(
         ...flags
-          .filter((f) => f !== "for_parts")
+          .filter((f: string) => f !== "for_parts")
           .slice(0, 3)
-          .map((f) =>
+          .map((f: string) =>
             String(f)
               .replace(/^graded:/i, "Graded: ")
               .replace(/[_-]+/g, " ")
@@ -392,13 +392,8 @@ export default function ItemListingsTab({
                     typeof baseMarketPrice === "number" && Number.isFinite(baseMarketPrice) ? baseMarketPrice : 0;
 
                   const listingPrice =
-                    typeof l.price_cad === "number"
-                      ? l.price_cad
-                      : l.price_cad == null
-                        ? NaN
-                        : Number(l.price_cad);
+                    typeof l.price_cad === "number" ? l.price_cad : l.price_cad == null ? NaN : Number(l.price_cad);
 
-                  // Score -> meta (deterministic mapping)
                   const conditionMeta: ConditionMeta = {
                     status: lScore >= 9 ? "sealed" : lScore >= 7 ? "complete" : lScore >= 5 ? "incomplete" : "for_parts",
                     flags: [],
@@ -424,11 +419,7 @@ export default function ItemListingsTab({
                         <div className="h-14 w-14 rounded-lg border border-[#E5E9F2] bg-[#F8FAFC] overflow-hidden flex items-center justify-center shrink-0">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           {l.photo_url ? (
-                            <img
-                              src={l.photo_url}
-                              alt={safeText(l.title ?? itemName)}
-                              className="h-full w-full object-cover"
-                            />
+                            <img src={l.photo_url} alt={safeText(l.title ?? itemName)} className="h-full w-full object-cover" />
                           ) : (
                             <div className="text-[10px] text-[#94A3B8]">No photo</div>
                           )}
@@ -442,9 +433,7 @@ export default function ItemListingsTab({
                               </div>
 
                               <div className="mt-1 flex items-center gap-2">
-                                <div className="text-[11px] text-[#64748B]">
-                                  Condition • {listingConditionText(l)}
-                                </div>
+                                <div className="text-[11px] text-[#64748B]">Condition • {listingConditionText(l)}</div>
                                 {badge ? <DealBadgePill badge={badge} /> : null}
                               </div>
 
