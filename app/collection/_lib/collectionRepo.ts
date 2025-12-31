@@ -9,7 +9,7 @@ import type {
   CatalogMinifigRow,
 } from "./types";
 import { clamp1to10 } from "./formatters";
-import type { ConditionMeta } from "@/lib/pricingEngine";
+import type { ConditionMeta, ConditionStatus } from "@/lib/pricingEngine";
 
 const TABLE_COPIES = "user_collection_items";
 const TABLE_CATALOG = "catalog_items";
@@ -35,6 +35,25 @@ function score100ToTier10(score100: any, fallbackTier10 = 8) {
   if (!Number.isFinite(n)) return clamp1to10(fallbackTier10);
   const t = Math.round(Math.max(0, Math.min(100, n)) / 10);
   return clamp1to10(t);
+}
+
+function uniq(flags: string[]) {
+  return Array.from(new Set((flags || []).map(String).filter(Boolean)));
+}
+
+function toStatusFromLegacyState(stateRaw: any, flags: string[]): ConditionStatus {
+  const s = String(stateRaw ?? "").toLowerCase().trim();
+
+  // flags win
+  if (flags.includes("for_parts") || s.includes("for_parts")) return "for_parts";
+  if (flags.some((f) => f.toLowerCase().startsWith("graded:")) || s === "graded") return "graded";
+  if (s === "sealed" || s.includes("sealed")) return "sealed";
+
+  // old states
+  if (s.includes("incomplete")) return "incomplete";
+
+  // open_complete, loose, empty -> treat as complete for meta
+  return "complete";
 }
 
 /**
@@ -119,19 +138,27 @@ function legacyBuildingBlocksToTier10(condition_json: any): number | null {
   return clamp1to10(avg);
 }
 
+/**
+ * ✅ Normalize whatever we have (legacy columns, legacy meta blobs, new meta blobs)
+ * into NEW pricingEngine ConditionMeta: { status, flags }
+ *
+ * Important: we preserve legacy grade by stuffing it into a flag like "grade:good"
+ * so metaToTier10 can still do a decent display mapping.
+ */
 function normalizeMetaFromRow(row: any): ConditionMeta | null {
   // Prefer explicit columns if you added them
-  const state = row?.condition_state ?? null;
-  const grade = row?.condition_grade ?? null;
-  const flags = row?.condition_flags ?? null;
+  const legacyState = row?.condition_state ?? null;
+  const legacyGrade = row?.condition_grade ?? null;
+  const legacyFlagsRaw = row?.condition_flags ?? null;
 
-  const hasCols = state || grade || flags;
+  const hasCols = legacyState || legacyGrade || legacyFlagsRaw;
   if (hasCols) {
-    return {
-      state: String(state || "open_complete") as any,
-      grade: String(grade || "good") as any,
-      flags: Array.isArray(flags) ? flags.map(String) : [],
-    };
+    const flags = uniq(Array.isArray(legacyFlagsRaw) ? legacyFlagsRaw.map(String) : []);
+    const gradeStr = String(legacyGrade ?? "").trim().toLowerCase();
+    if (gradeStr) flags.push(`grade:${gradeStr}`);
+
+    const status = toStatusFromLegacyState(legacyState, flags);
+    return { status, flags: uniq(flags) };
   }
 
   // Otherwise try condition_json.data.condition_meta or condition_meta
@@ -140,37 +167,56 @@ function normalizeMetaFromRow(row: any): ConditionMeta | null {
 
   const m = data?.condition_meta ?? data?.conditionMeta ?? null;
   if (m && typeof m === "object") {
-    return {
-      state: String((m as any).state || "open_complete") as any,
-      grade: String((m as any).grade || "good") as any,
-      flags: Array.isArray((m as any).flags) ? (m as any).flags.map(String) : [],
-    };
+    const flags = uniq(Array.isArray((m as any).flags) ? (m as any).flags.map(String) : []);
+
+    // New shape inside meta already
+    const statusRaw = (m as any).status ?? null;
+    if (statusRaw) {
+      const s = String(statusRaw).toLowerCase().trim();
+      return { status: (s as any) as ConditionStatus, flags };
+    }
+
+    // Legacy shape inside meta
+    const st = (m as any).state ?? null;
+    const gr = (m as any).grade ?? null;
+    const gradeStr = String(gr ?? "").trim().toLowerCase();
+    if (gradeStr) flags.push(`grade:${gradeStr}`);
+
+    const status = toStatusFromLegacyState(st, flags);
+    return { status, flags: uniq(flags) };
   }
 
   // If you store meta at top-level data (Path 2 simplified)
+  if (data?.status || data?.flags) {
+    const flags = uniq(Array.isArray(data?.flags) ? data.flags.map(String) : []);
+    const status = String(data?.status ?? "complete").toLowerCase().trim() as any;
+    return { status, flags };
+  }
+
+  // Legacy top-level data (state/grade/flags)
   if (data?.state || data?.grade || data?.flags) {
-    return {
-      state: String(data?.state || "open_complete") as any,
-      grade: String(data?.grade || "good") as any,
-      flags: Array.isArray(data?.flags) ? data.flags.map(String) : [],
-    };
+    const flags = uniq(Array.isArray(data?.flags) ? data.flags.map(String) : []);
+    const gradeStr = String(data?.grade ?? "").trim().toLowerCase();
+    if (gradeStr) flags.push(`grade:${gradeStr}`);
+
+    const status = toStatusFromLegacyState(data?.state, flags);
+    return { status, flags: uniq(flags) };
   }
 
   return null;
 }
 
 /**
- * Main mapping for Collection cards:
- * - Prefer REAL WORLD ConditionMeta if present -> show tier from meta (simple mapping)
- * - Otherwise use condition_score (0–100) -> tier
- * - Otherwise fallbacks.
+ * Main mapping for Collection cards (DISPLAY ONLY):
+ * - Now that meta is {status, flags}, map it to a tier10 for display
  */
 function metaToTier10(meta: ConditionMeta): number {
-  // This is a DISPLAY mapping only. Pricing uses meta elsewhere.
-  const state = String((meta as any).state ?? "");
-  const grade = String((meta as any).grade ?? "");
+  const status = String(meta?.status ?? "").toLowerCase().trim();
 
-  // Base by grade
+  // If we preserved a legacy grade flag, use it
+  const gradeFlag = (meta?.flags ?? []).find((f) => String(f).toLowerCase().startsWith("grade:"));
+  const grade = gradeFlag ? String(gradeFlag.split(":")[1] ?? "").toLowerCase().trim() : "";
+
   const baseByGrade: Record<string, number> = {
     mint: 10,
     excellent: 9,
@@ -181,10 +227,12 @@ function metaToTier10(meta: ConditionMeta): number {
 
   let t = baseByGrade[grade] ?? 8;
 
-  // State nudges (sealed is more “presentation” than score; keep small)
-  if (state === "sealed") t = Math.min(10, t + 1);
-  if (state === "open_incomplete") t = Math.max(1, t - 1);
-  if (state === "loose") t = Math.max(1, t - 1);
+  // Status nudges (simple + consistent)
+  if (status === "sealed") t = Math.min(10, Math.max(t, 9));
+  if (status === "complete") t = Math.max(1, t);
+  if (status === "incomplete") t = Math.max(1, Math.min(t, 6));
+  if (status === "for_parts") t = Math.max(1, Math.min(t, 3));
+  if (status === "graded") t = Math.min(10, Math.max(t, 9));
 
   return clamp1to10(t);
 }
