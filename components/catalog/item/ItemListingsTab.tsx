@@ -1,10 +1,10 @@
+// components/catalog/item/ItemListingsTab.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import {
   deriveConditionMeta,
-  formatCondition,
   getDealBadge,
   getFairValue,
   type DealBadge,
@@ -61,14 +61,78 @@ function money(value: number | string | null | undefined, currency: string = "CA
 
 function normalizeFairValueResult(raw: any): { value: number | null } {
   if (typeof raw === "number" && Number.isFinite(raw)) return { value: raw };
-  if (raw && typeof raw === "object" && typeof raw.value === "number" && Number.isFinite(raw.value)) return { value: raw.value };
+  if (raw && typeof raw === "object" && typeof raw.value === "number" && Number.isFinite(raw.value))
+    return { value: raw.value };
   return { value: null };
+}
+
+/**
+ * Local replacement for removed pricingEngine.formatCondition(meta)
+ * Returns { title, chips } for UI.
+ */
+function formatConditionView(meta: ConditionMeta | null | undefined): { title: string; chips: string[] } {
+  const m: any = meta ?? {};
+  const chips: string[] = [];
+
+  // New meta model (status/flags) — preferred
+  const statusRaw = String(m.status ?? m.state ?? "").trim(); // tolerate older "state"
+  const flagsRaw = Array.isArray(m.flags) ? m.flags : [];
+
+  const status =
+    statusRaw === "sealed" ||
+    statusRaw === "complete" ||
+    statusRaw === "incomplete" ||
+    statusRaw === "for_parts" ||
+    statusRaw === "open_complete" ||
+    statusRaw === "open_incomplete" ||
+    statusRaw === "loose"
+      ? statusRaw
+      : "";
+
+  const title =
+    status === "sealed"
+      ? "New & Sealed"
+      : status === "complete" || status === "open_complete"
+      ? "Complete"
+      : status === "incomplete" || status === "open_incomplete"
+      ? "Incomplete"
+      : status === "for_parts"
+      ? "For Parts"
+      : status === "loose"
+      ? "Loose"
+      : "Unknown";
+
+  for (const f of flagsRaw) {
+    const s = String(f).trim();
+    if (!s) continue;
+    if (s === "for_parts") continue;
+    chips.push(s.replaceAll("_", " "));
+  }
+
+  // Some metas also include a grade (mint/good/etc). Show it as a chip.
+  const gradeRaw = String(m.grade ?? "").trim();
+  if (gradeRaw) chips.unshift(gradeRaw.replaceAll("_", " "));
+
+  // Dedupe
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const c of chips) {
+    const k = c.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(c);
+  }
+
+  return { title, chips: out };
 }
 
 function DealBadgePill({ badge }: { badge: DealBadge }) {
   const tooltip = "Compared to recent condition-adjusted market value.";
 
-  const stylesByColor: Record<DealBadge["color"], string> = {
+  // If DealBadge.color is not a literal union, TS can complain. This keeps it safe.
+  const color = String((badge as any)?.color ?? "gray") as "green" | "blue" | "red" | "gray";
+
+  const stylesByColor: Record<"green" | "blue" | "red" | "gray", string> = {
     green: "border-emerald-200 bg-emerald-50 text-emerald-700",
     blue: "border-blue-200 bg-blue-50 text-blue-700",
     red: "border-red-200 bg-red-50 text-red-700",
@@ -78,9 +142,11 @@ function DealBadgePill({ badge }: { badge: DealBadge }) {
   return (
     <span
       title={tooltip}
-      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${stylesByColor[badge.color]}`}
+      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+        stylesByColor[color]
+      }`}
     >
-      {badge.label}
+      {String((badge as any)?.label ?? "Deal")}
     </span>
   );
 }
@@ -91,7 +157,9 @@ function MiniTab({ active, onClick, children }: { active: boolean; onClick: () =
       type="button"
       onClick={onClick}
       className={`rounded-full px-3 py-1.5 text-[11px] font-semibold border transition ${
-        active ? "bg-[#0F172A] text-white border-[#0F172A]" : "bg-white text-[#0F172A] border-[#E5E9F2] hover:bg-[#F8FAFC]"
+        active
+          ? "bg-[#0F172A] text-white border-[#0F172A]"
+          : "bg-white text-[#0F172A] border-[#E5E9F2] hover:bg-[#F8FAFC]"
       }`}
     >
       {children}
@@ -131,7 +199,7 @@ function LinkRow({ label, href, sub }: { label: string; href: string; sub?: stri
 
 function ConditionLine({ condition_json }: { condition_json: Record<string, any> | null }) {
   const meta: ConditionMeta = useMemo(() => deriveConditionMeta(condition_json), [condition_json]);
-  const view = useMemo(() => formatCondition(meta), [meta]);
+  const view = useMemo(() => formatConditionView(meta), [meta]);
 
   return (
     <div className="flex flex-wrap items-center gap-1.5">
@@ -251,7 +319,9 @@ export default function ItemListingsTab({
     try {
       let q = supabase
         .from("marketplace_listings")
-        .select("id,created_at,seller_user_id,catalog_item_id,user_collection_item_id,title,description,price_cad,photo_url,condition_json,status")
+        .select(
+          "id,created_at,seller_user_id,catalog_item_id,user_collection_item_id,title,description,price_cad,photo_url,condition_json,status"
+        )
         .eq("catalog_item_id", catalogItemId)
         .eq("status", "active");
 
@@ -419,7 +489,6 @@ export default function ItemListingsTab({
                       ? null
                       : getFairValue({
                           baseMarketPrice,
-                          // use condition_json as the source of truth; deriveConditionMeta handles legacy
                           condition_json: l.condition_json,
                         });
 
@@ -436,7 +505,11 @@ export default function ItemListingsTab({
                         <div className="h-14 w-14 rounded-lg border border-[#E5E9F2] bg-[#F8FAFC] overflow-hidden flex items-center justify-center shrink-0">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           {l.photo_url ? (
-                            <img src={l.photo_url} alt={safeText(l.title ?? itemName)} className="h-full w-full object-cover" />
+                            <img
+                              src={l.photo_url}
+                              alt={safeText(l.title ?? itemName)}
+                              className="h-full w-full object-cover"
+                            />
                           ) : (
                             <div className="text-[10px] text-[#94A3B8]">No photo</div>
                           )}
@@ -445,7 +518,9 @@ export default function ItemListingsTab({
                         <div className="min-w-0 flex-1">
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
-                              <div className="text-sm font-semibold text-[#0F172A] truncate">{safeText(l.title ?? itemName)}</div>
+                              <div className="text-sm font-semibold text-[#0F172A] truncate">
+                                {safeText(l.title ?? itemName)}
+                              </div>
 
                               <div className="mt-1 flex items-center gap-2">
                                 <ConditionLine condition_json={l.condition_json} />
