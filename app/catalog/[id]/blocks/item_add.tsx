@@ -175,13 +175,13 @@ export default function ItemAddActions({
   }, [conditionValues]);
 
   // ✅ Default meta if nothing provided yet (keeps DB rows valid)
-  const resolvedMeta: ConditionMeta = useMemo(
-    () => ({
+  const resolvedMeta: ConditionMeta = useMemo(() => {
+    const flags = Array.isArray(conditionMeta?.flags) ? conditionMeta?.flags : [];
+    return {
       status: conditionMeta?.status ?? "complete",
-      flags: Array.isArray(conditionMeta?.flags) ? conditionMeta.flags : [],
-    }),
-    [conditionMeta]
-  );
+      flags: flags ?? [],
+    };
+  }, [conditionMeta]);
 
   const handleAddToCollection = async () => {
     setBanner(null);
