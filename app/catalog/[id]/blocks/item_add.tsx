@@ -47,8 +47,8 @@ function SecondaryButton({
           disabled
             ? "cursor-not-allowed opacity-60"
             : danger
-            ? "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
-            : "border-[#E5E9F2] bg-white text-[#0F172A] hover:bg-[#F8FAFC]"
+              ? "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
+              : "border-[#E5E9F2] bg-white text-[#0F172A] hover:bg-[#F8FAFC]"
         }`}
     >
       {children}
@@ -88,18 +88,26 @@ function pickSeedMinifigIds(seedMinifigs: { minifig_id: string; instance_key?: s
   return Array.from(new Set(out));
 }
 
+function clampScore100(n: any, fallback = 80) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return fallback;
+  return Math.max(0, Math.min(100, Math.round(x)));
+}
+
 export default function ItemAddActions({
   catalogItemId,
   userId,
   onRequireAuth,
   conditionValues,
+  conditionScore,
   seedMinifigs,
 }: {
   catalogItemId: string;
   userId: string | null;
   onRequireAuth: () => void;
   conditionValues: Record<string, any>;
-  seedMinifigs?: { minifig_id: string; instance_key?: string }[]; // from page.tsx bbMinifigs
+  conditionScore: number; // ✅ REQUIRED: 0–100
+  seedMinifigs?: { minifig_id: string; instance_key?: string }[]; // from page.tsx expected set minifigs (can be instance keys)
 }) {
   const [adding, setAdding] = useState(false);
   const [banner, setBanner] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
@@ -131,9 +139,11 @@ export default function ItemAddActions({
     };
   }, [userId, catalogItemId]);
 
+  // ✅ NEW condition system: LEGO set if item_type=lego AND data.type=set
   const isBuildingBlocksSet = useMemo(() => {
-    const t = String(conditionValues?.building_blocks?.type ?? "").toLowerCase().trim();
-    return t.includes("set");
+    const itemType = String(conditionValues?.item_type ?? "").toLowerCase().trim();
+    const t = String(conditionValues?.data?.type ?? "").toLowerCase().trim();
+    return itemType === "lego" && t === "set";
   }, [conditionValues]);
 
   const handleAddToCollection = async () => {
@@ -148,39 +158,47 @@ export default function ItemAddActions({
 
     setAdding(true);
     try {
-      if (isBuildingBlocksSet) {
-        // ✅ Logs show in BROWSER DevTools console, not terminal
-        console.log(
-          "[add set] raw condition minifigs sample:",
-          (conditionValues as any)?.building_blocks?.minifigs?.slice?.(0, 5)
-        );
+      const score100 = clampScore100(conditionScore, 80);
 
-        // 1) Create collection copy
+      if (isBuildingBlocksSet) {
+        // 1) Create collection copy (SAVE BOTH condition_json + condition_score)
         const ins = await supabase
           .from("user_collection_items")
-          .insert([{ user_id: userId, catalog_item_id: catalogItemId, condition_json: conditionValues }])
+          .insert([
+            {
+              user_id: userId,
+              catalog_item_id: catalogItemId,
+              condition_json: conditionValues,
+              condition_score: score100,
+            },
+          ])
           .select("id")
           .maybeSingle();
 
-        console.log("[add set] INSERT user_collection_items:", ins);
         if (ins.error) throw ins.error;
 
         const userCollectionItemId = ins.data?.id as string | undefined;
         if (!userCollectionItemId) throw new Error("Failed to create collection copy (missing id).");
 
         // 2) Aggregate UI selections by base minifig UUID
-        const rawRows = (conditionValues as any)?.building_blocks?.minifigs;
+        // NEW shape: conditionValues.data.minifigs = [{ instance_key, included, ... }]
+        // Legacy fallback: conditionValues.building_blocks.minifigs
+        const rawRows =
+          (conditionValues as any)?.data?.minifigs ??
+          (conditionValues as any)?.building_blocks?.minifigs ??
+          [];
+
         const pickedById = new Map<string, { included_qty: number; notes: string | null }>();
 
         if (Array.isArray(rawRows)) {
           for (const m of rawRows) {
+            // NEW preferred keys:
             const idCandidate =
+              m?.instance_key ??
               m?.minifig_id ??
-              m?.minifigId ??
-              m?.minifig?.id ??
-              m?.minifig?.minifig_id ??
               m?.id ??
-              m?.instance_key;
+              m?.minifigId ??
+              m?.minifig?.id;
 
             const id = normalizeMinifigId(idCandidate);
             if (!id) continue;
@@ -188,6 +206,7 @@ export default function ItemAddActions({
             const checked = !!m?.included || !!m?.checked || !!m?.selected || !!m?.isChecked;
             if (!checked) continue;
 
+            // If qty exists (future), honor it. Otherwise each checked instance counts as 1.
             const hasQtyProp =
               Object.prototype.hasOwnProperty.call(m, "included_qty") ||
               Object.prototype.hasOwnProperty.call(m, "includedQty") ||
@@ -196,9 +215,6 @@ export default function ItemAddActions({
               Object.prototype.hasOwnProperty.call(m, "count");
 
             const rawQty = m?.included_qty ?? m?.includedQty ?? m?.qty ?? m?.quantity ?? m?.count;
-
-            // If qty prop exists but blank => 0 (your rule)
-            // If qty prop does NOT exist (per-instance checkbox), count this checked instance as 1
             const qty = hasQtyProp ? toNonNegInt(rawQty) : 1;
 
             const prev = pickedById.get(id);
@@ -209,15 +225,8 @@ export default function ItemAddActions({
           }
         }
 
-        console.log("[add set] pickedById (aggregated):", Array.from(pickedById.entries()).slice(0, 20));
-
-        // 3) Normalize seed list from page.tsx (bbMinifigs)
+        // 3) Normalize seed list (expected minifigs for this set)
         const seededIds = pickSeedMinifigIds(seedMinifigs);
-
-        console.log("[add set] seededIds count:", seededIds.length, seededIds.slice(0, 10));
-
-        const matched = seededIds.filter((id) => pickedById.has(id)).length;
-        console.log("[add set] match count (seed ∩ picked):", matched);
 
         // 4) Build ONE row per (user_collection_item_id, minifig_id)
         const rows = seededIds.map((minifigId) => {
@@ -231,33 +240,36 @@ export default function ItemAddActions({
           };
         });
 
-        console.log("[add set] UPSERT PAYLOAD sample:", rows.slice(0, 10));
-
         // 5) Single upsert with correct conflict target
         const up = await supabase
           .from("user_collection_item_minifigs")
           .upsert(rows, { onConflict: "user_collection_item_id,minifig_id" })
           .select("user_collection_item_id,minifig_id,included,included_qty,notes");
 
-        console.log("[add set] UPSERT RESULT:", up);
         if (up.error) throw up.error;
 
         setBanner({
           type: "ok",
-          msg: `Added set copy. copyId=${userCollectionItemId}. minifigsSaved=${up.data?.length ?? 0}. matched=${matched}`,
+          msg: `Added set copy. copyId=${userCollectionItemId}. minifigsSaved=${up.data?.length ?? 0}.`,
         });
 
         return;
       }
 
-      // Non-set: just add item copy
+      // Non-set: just add item copy (SAVE BOTH condition_json + condition_score)
       const ins = await supabase
         .from("user_collection_items")
-        .insert([{ user_id: userId, catalog_item_id: catalogItemId, condition_json: conditionValues }])
+        .insert([
+          {
+            user_id: userId,
+            catalog_item_id: catalogItemId,
+            condition_json: conditionValues,
+            condition_score: score100,
+          },
+        ])
         .select("id")
         .maybeSingle();
 
-      console.log("INSERT RESULT:", ins);
       if (ins.error) throw ins.error;
 
       setBanner({ type: "ok", msg: `Added to your collection! id=${ins.data?.id ?? "?"}` });
@@ -301,7 +313,7 @@ export default function ItemAddActions({
         .eq("user_id", userId)
         .eq("catalog_item_id", catalogItemId);
 
-        if (del.error) throw del.error;
+      if (del.error) throw del.error;
 
       setWishlisted(false);
       setBanner({ type: "ok", msg: "Removed from your wishlist." });
