@@ -7,55 +7,19 @@ import ItemConditionBuildingBlocks from "@/components/catalog/ItemConditionBuild
 
 type Minifig = { id: string; minifig_number: string; name: string | null; image_url: string | null };
 
+type ConditionState = "sealed" | "open_complete" | "open_incomplete" | "loose";
+type ConditionGrade = "mint" | "excellent" | "good" | "fair" | "poor";
+type ConditionMeta = { state: ConditionState; grade: ConditionGrade; flags: string[] };
+
 function clampTier10(n: any, fallback = 8) {
   const x = Number(n);
   if (!Number.isFinite(x)) return fallback;
   return Math.max(1, Math.min(10, x));
 }
 
-function tierToScore100(tier10: number) {
-  return Math.max(0, Math.min(100, Math.round(tier10 * 10)));
-}
-
-function score100ToTier10(score100: number) {
-  return clampTier10(Math.round(Number(score100 || 0) / 10), 8);
-}
-
 function normalizeCert(input: any): string {
   const s = String(input ?? "").trim().replace(/\s+/g, " ");
   return s.slice(0, 64);
-}
-
-/**
- * Grade -> 0–100 mapping (stable)
- * You can tune later, but do NOT constantly change it.
- */
-function gradeToScore100(company: string, gradeValue: any, isBlackLabel: boolean) {
-  const c = String(company || "").toUpperCase();
-  const g = Number(gradeValue);
-
-  if (c === "BGS" && isBlackLabel) return 100;
-
-  // Support halves (9.5 etc)
-  const map: Record<string, number> = {
-    "10": 100,
-    "9.5": 97,
-    "9": 94,
-    "8.5": 90,
-    "8": 86,
-    "7.5": 82,
-    "7": 78,
-    "6.5": 74,
-    "6": 70,
-    "5": 60,
-    "4": 50,
-    "3": 40,
-    "2": 30,
-    "1": 20,
-  };
-
-  const key = Number.isFinite(g) ? String(g) : "";
-  return map[key] ?? 80;
 }
 
 function deriveGradeLabel(gradingCompany: string, gradeValue: any, isBlackLabel: boolean) {
@@ -64,6 +28,50 @@ function deriveGradeLabel(gradingCompany: string, gradeValue: any, isBlackLabel:
   if ((gradingCompany || "").toUpperCase() === "BGS" && isBlackLabel) return "BGS Black Label";
   if (gradingCompany) return `${gradingCompany} ${gvText}`;
   return `Graded ${gvText}`;
+}
+
+function gradeFromTier10(tier10: number): ConditionGrade {
+  const t = clampTier10(tier10, 8);
+  if (t >= 9) return "mint";
+  if (t >= 8) return "excellent";
+  if (t >= 6) return "good";
+  if (t >= 4) return "fair";
+  return "poor";
+}
+
+function uniqFlags(flags: string[]) {
+  return Array.from(new Set(flags.filter(Boolean)));
+}
+
+/**
+ * Graded card value -> tier10 (1–10) for UI labels only
+ * (No more numeric score as source of truth.)
+ */
+function gradedToTier10(company: string, gradeValue: any, isBlackLabel: boolean) {
+  const c = String(company || "").toUpperCase();
+  const g = Number(gradeValue);
+
+  if (c === "BGS" && isBlackLabel) return 10;
+
+  const map: Record<string, number> = {
+    "10": 10,
+    "9.5": 10,
+    "9": 9,
+    "8.5": 9,
+    "8": 8,
+    "7.5": 8,
+    "7": 7,
+    "6.5": 7,
+    "6": 6,
+    "5": 5,
+    "4": 4,
+    "3": 3,
+    "2": 2,
+    "1": 1,
+  };
+
+  const key = Number.isFinite(g) ? String(g) : "";
+  return clampTier10(map[key] ?? 8, 8);
 }
 
 function SectionCard({ title, children, right }: { title: string; children: React.ReactNode; right?: React.ReactNode }) {
@@ -239,13 +247,42 @@ function ScorePills({
   );
 }
 
+function metaForGeneric(tier10: number, forParts: boolean): ConditionMeta {
+  const t = clampTier10(tier10, 8);
+
+  if (forParts) {
+    return { state: "open_incomplete", grade: "poor", flags: ["for_parts"] };
+  }
+
+  return {
+    state: "open_complete",
+    grade: gradeFromTier10(t),
+    flags: [],
+  };
+}
+
+function metaForGradedCard(company: string, gradeValue: any, black: boolean, forParts: boolean): ConditionMeta {
+  if (forParts) return { state: "open_incomplete", grade: "poor", flags: ["for_parts"] };
+
+  const tier10 = gradedToTier10(company, gradeValue, black);
+  const flags = ["graded", String(company || "").toUpperCase()].filter(Boolean);
+
+  if (String(company || "").toUpperCase() === "BGS" && black) flags.push("black_label");
+
+  return {
+    state: "open_complete",
+    grade: gradeFromTier10(tier10),
+    flags: uniqFlags(flags),
+  };
+}
+
 export default function ItemConditionSelector({
   catalogItemId,
   categoryName,
   isBuildingBlocks,
   isGradableCategory,
   conditionValues,
-  conditionScore,
+  conditionMeta,
   onChange,
 }: {
   catalogItemId: string;
@@ -256,11 +293,11 @@ export default function ItemConditionSelector({
   // NOW: this is condition_json
   conditionValues: Record<string, any>;
 
-  // NOW: this is score 0–100
-  conditionScore: number;
+  // NEW: state/grade/flags
+  conditionMeta?: ConditionMeta;
 
-  // NOW: nextScore is 0–100
-  onChange: (nextValues: Record<string, any>, nextScore: number) => void;
+  // NEW: return json + meta (no score)
+  onChange: (nextValues: Record<string, any>, nextMeta: ConditionMeta) => void;
 }) {
   const [linkedMinifigs, setLinkedMinifigs] = useState<Minifig[]>([]);
 
@@ -304,7 +341,6 @@ export default function ItemConditionSelector({
 
   // ✅ LEGO path: only render the building blocks editor.
   if (isBuildingBlocks) {
-    // Convert linkedMinifigs into expected list (no duplicates here — your other component handles duplicates with instance_key)
     const expected = linkedMinifigs.map((m) => ({
       id: m.id,
       minifig_number: m.minifig_number,
@@ -318,38 +354,44 @@ export default function ItemConditionSelector({
         catalogItemId={catalogItemId}
         expectedMinifigs={expected}
         conditionValues={conditionValues}
-        conditionScore={conditionScore}
+        conditionMeta={conditionMeta}
         onChange={onChange}
       />
     );
   }
 
   // --- NON-LEGO PATH (simple v1) ---
-  // We store a generic condition JSON with a tier10 input.
-  const tier10 = useMemo(() => score100ToTier10(conditionScore), [conditionScore]);
+  const data = conditionValues?.data ?? {};
+  const forParts = !!data?.for_parts;
 
-  // Graded card detection: stored inside JSON
-  const isGraded = !!conditionValues?.data?.is_graded;
+  const isGraded = !!data?.is_graded;
 
-  // Derived display
+  const tier10 = useMemo(() => {
+    if (forParts) return 2;
+
+    if (isGradableCategory && isGraded) {
+      const company = String(data?.grading_company || "").toUpperCase();
+      const black = !!data?.is_black_label;
+      return gradedToTier10(company, data?.grade_value, black);
+    }
+
+    return clampTier10(data?.tier10 ?? 8, 8);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.tier10, data?.for_parts, isGradableCategory, isGraded, data?.grading_company, data?.grade_value, data?.is_black_label]);
+
   const summaryRight = useMemo(() => {
-    // For parts override
-    if (!!conditionValues?.data?.for_parts) return { scoreText: "For Parts", labelText: "" };
-
+    if (forParts) return { scoreText: "For Parts", labelText: "" };
     const t = clampTier10(tier10, 8);
     return { scoreText: String(t), labelText: getConditionLabel(t) };
-  }, [conditionValues, tier10]);
+  }, [forParts, tier10]);
 
-  // Keep derived grade score in sync (0–100)
+  // Keep derived graded label in sync (in JSON) and emit meta
   useEffect(() => {
     if (!isGradableCategory) return;
     if (!isGraded) return;
 
-    const data = conditionValues?.data ?? {};
     const company = String(data?.grading_company || "").toUpperCase();
     const black = !!data?.is_black_label;
-
-    const score100 = gradeToScore100(company, data?.grade_value, black);
 
     const nextJson = {
       v: 1,
@@ -361,9 +403,10 @@ export default function ItemConditionSelector({
       },
     };
 
-    onChange(nextJson, score100);
+    const nextMeta = metaForGradedCard(company, data?.grade_value, black, !!data?.for_parts);
+    onChange(nextJson, nextMeta);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isGradableCategory, isGraded, conditionValues?.data?.grade_value, conditionValues?.data?.grading_company, conditionValues?.data?.is_black_label]);
+  }, [isGradableCategory, isGraded, data?.grade_value, data?.grading_company, data?.is_black_label]);
 
   return (
     <SectionCard
@@ -372,8 +415,8 @@ export default function ItemConditionSelector({
         <div className="flex items-baseline gap-2">
           <span className="text-2xl font-extrabold text-[#0F172A]">{summaryRight.scoreText}</span>
           <span className="text-base font-bold text-[#0F172A]">{summaryRight.labelText ? `— ${summaryRight.labelText}` : ""}</span>
-          {isGradableCategory && isGraded && conditionValues?.data?.grade_label ? (
-            <span className="text-sm font-semibold text-[#64748B]">• {String(conditionValues.data.grade_label)}</span>
+          {isGradableCategory && isGraded && data?.grade_label ? (
+            <span className="text-sm font-semibold text-[#64748B]">• {String(data.grade_label)}</span>
           ) : null}
         </div>
       }
@@ -384,47 +427,48 @@ export default function ItemConditionSelector({
           disabled={isGradableCategory && isGraded}
           onPick={(nextTier10) => {
             const t = clampTier10(nextTier10, 8);
-            const score100 = tierToScore100(t);
 
             const nextJson = {
               v: 1,
               item_type: "generic",
               mode: "tier10",
               data: {
-                ...(conditionValues?.data ?? {}),
+                ...(data ?? {}),
                 tier10: t,
-                for_parts: !!(conditionValues?.data ?? {})?.for_parts,
+                for_parts: !!(data ?? {})?.for_parts,
               },
             };
 
-            onChange(nextJson, score100);
+            const nextMeta = metaForGeneric(t, !!(data ?? {})?.for_parts);
+            onChange(nextJson, nextMeta);
           }}
         />
 
         <CheckboxRow
           label="Broken / For Parts"
-          checked={!!conditionValues?.data?.for_parts}
+          checked={!!data?.for_parts}
           onChange={(v) => {
-            const currData = conditionValues?.data ?? {};
             const nextJson = {
               v: 1,
               item_type: conditionValues?.item_type ?? "generic",
               mode: conditionValues?.mode ?? "tier10",
               data: {
-                ...currData,
+                ...(data ?? {}),
                 for_parts: v,
               },
             };
 
-            // If for parts: hard score = 20 (tier shows 2/10)
-            if (v) {
-              onChange(nextJson, 20);
+            if (isGradableCategory && !!data?.is_graded) {
+              const company = String(data?.grading_company || "").toUpperCase();
+              const black = !!data?.is_black_label;
+              const nextMeta = metaForGradedCard(company, data?.grade_value, black, v);
+              onChange(nextJson, nextMeta);
               return;
             }
 
-            // Otherwise keep current tier score
-            const t = clampTier10(currData?.tier10 ?? tier10, 8);
-            onChange(nextJson, tierToScore100(t));
+            const t = clampTier10((data ?? {})?.tier10 ?? tier10, 8);
+            const nextMeta = metaForGeneric(t, v);
+            onChange(nextJson, nextMeta);
           }}
           emphasize
           subtext={<span className="text-[#B45309]">Use this if it’s damaged, incomplete, or only good for parts.</span>}
@@ -433,33 +477,36 @@ export default function ItemConditionSelector({
         {isGradableCategory ? (
           <CheckboxRow
             label="Is graded?"
-            checked={!!conditionValues?.data?.is_graded}
+            checked={!!data?.is_graded}
             onChange={(v) => {
-              const currData = conditionValues?.data ?? {};
-
               if (!v) {
+                const t = clampTier10(data?.tier10 ?? tier10, 8);
                 const nextJson = {
                   v: 1,
                   item_type: "card",
                   mode: "raw",
                   data: {
                     is_graded: false,
-                    tier10: clampTier10(currData?.tier10 ?? tier10, 8),
-                    for_parts: !!currData?.for_parts,
+                    tier10: t,
+                    for_parts: !!data?.for_parts,
                   },
                 };
-                onChange(nextJson, tierToScore100(nextJson.data.tier10));
+                const nextMeta = metaForGeneric(t, !!data?.for_parts);
+                onChange(nextJson, nextMeta);
                 return;
               }
 
               const nextData: any = {
-                ...currData,
+                ...data,
                 is_graded: true,
-                grading_company: currData?.grading_company || "PSA",
-                grade_value: currData?.grade_value ?? 8,
-                is_black_label: !!currData?.is_black_label,
-                certification_number: String(currData?.certification_number ?? ""),
+                grading_company: data?.grading_company || "PSA",
+                grade_value: data?.grade_value ?? 8,
+                is_black_label: !!data?.is_black_label,
+                certification_number: String(data?.certification_number ?? ""),
               };
+
+              const company = String(nextData.grading_company || "").toUpperCase();
+              const black = !!nextData.is_black_label;
 
               const nextJson = {
                 v: 1,
@@ -467,12 +514,12 @@ export default function ItemConditionSelector({
                 mode: "graded",
                 data: {
                   ...nextData,
-                  grade_label: deriveGradeLabel(String(nextData.grading_company || ""), nextData.grade_value, !!nextData.is_black_label),
+                  grade_label: deriveGradeLabel(String(nextData.grading_company || ""), nextData.grade_value, black),
                 },
               };
 
-              const score100 = gradeToScore100(String(nextData.grading_company || ""), nextData.grade_value, !!nextData.is_black_label);
-              onChange(nextJson, score100);
+              const nextMeta = metaForGradedCard(company, nextData.grade_value, black, !!nextData.for_parts);
+              onChange(nextJson, nextMeta);
             }}
             subtext={<span className="text-[#64748B]">Enable only if it has a professional grade.</span>}
           />
@@ -482,16 +529,18 @@ export default function ItemConditionSelector({
           <div className="space-y-2">
             <SelectRow
               label="Grading Company"
-              value={typeof conditionValues?.data?.grading_company === "string" ? conditionValues.data.grading_company : ""}
+              value={typeof data?.grading_company === "string" ? data.grading_company : ""}
               options={["PSA", "BGS", "CGC", "SGC", "CBCS", "PGX", "Other"]}
               onChange={(v) => {
-                const currData = conditionValues?.data ?? {};
                 const isBgs = String(v || "").toUpperCase() === "BGS";
-                const nextData: any = { ...currData, grading_company: v };
+                const nextData: any = { ...(data ?? {}), grading_company: v };
                 if (!isBgs) nextData.is_black_label = false;
 
                 // If BGS black label => force 10
                 if (isBgs && !!nextData.is_black_label) nextData.grade_value = 10;
+
+                const company = String(nextData.grading_company || "").toUpperCase();
+                const black = !!nextData.is_black_label;
 
                 const nextJson = {
                   v: 1,
@@ -499,32 +548,31 @@ export default function ItemConditionSelector({
                   mode: "graded",
                   data: {
                     ...nextData,
-                    grade_label: deriveGradeLabel(String(v || ""), nextData.grade_value, !!nextData.is_black_label),
+                    grade_label: deriveGradeLabel(String(v || ""), nextData.grade_value, black),
                   },
                 };
 
-                const score100 = gradeToScore100(String(nextData.grading_company || ""), nextData.grade_value, !!nextData.is_black_label);
-                onChange(nextJson, score100);
+                const nextMeta = metaForGradedCard(company, nextData.grade_value, black, !!nextData.for_parts);
+                onChange(nextJson, nextMeta);
               }}
             />
 
             <NumberRow
               label="Grade Value"
               value={
-                String(conditionValues?.data?.grading_company || "").toUpperCase() === "BGS" && !!conditionValues?.data?.is_black_label
+                String(data?.grading_company || "").toUpperCase() === "BGS" && !!data?.is_black_label
                   ? "10"
-                  : conditionValues?.data?.grade_value === null || conditionValues?.data?.grade_value === undefined
+                  : data?.grade_value === null || data?.grade_value === undefined
                     ? ""
-                    : String(conditionValues.data.grade_value)
+                    : String(data.grade_value)
               }
               min={0}
               max={10}
               step={0.5}
-              disabled={String(conditionValues?.data?.grading_company || "").toUpperCase() === "BGS" && !!conditionValues?.data?.is_black_label}
+              disabled={String(data?.grading_company || "").toUpperCase() === "BGS" && !!data?.is_black_label}
               onChange={(v) => {
-                const currData = conditionValues?.data ?? {};
-                const company = String(currData?.grading_company || "").toUpperCase();
-                const black = !!currData?.is_black_label;
+                const company = String(data?.grading_company || "").toUpperCase();
+                const black = !!data?.is_black_label;
 
                 if (company === "BGS" && black) {
                   const nextJson = {
@@ -532,17 +580,19 @@ export default function ItemConditionSelector({
                     item_type: "card",
                     mode: "graded",
                     data: {
-                      ...currData,
+                      ...(data ?? {}),
                       grade_value: 10,
-                      grade_label: deriveGradeLabel(String(currData?.grading_company || ""), 10, true),
+                      grade_label: deriveGradeLabel(String(data?.grading_company || ""), 10, true),
                     },
                   };
-                  onChange(nextJson, 100);
+                  const nextMeta = metaForGradedCard(company, 10, true, !!data?.for_parts);
+                  onChange(nextJson, nextMeta);
                   return;
                 }
 
                 const gv = v === "" ? null : Number(v);
-                const nextData: any = { ...currData, grade_value: gv };
+                const nextData: any = { ...(data ?? {}), grade_value: gv };
+
                 const nextJson = {
                   v: 1,
                   item_type: "card",
@@ -553,18 +603,17 @@ export default function ItemConditionSelector({
                   },
                 };
 
-                const score100 = gradeToScore100(String(nextData.grading_company || ""), gv, !!nextData.is_black_label);
-                onChange(nextJson, score100);
+                const nextMeta = metaForGradedCard(company, gv, !!nextData?.is_black_label, !!nextData?.for_parts);
+                onChange(nextJson, nextMeta);
               }}
             />
 
-            {String(conditionValues?.data?.grading_company || "").toUpperCase() === "BGS" ? (
+            {String(data?.grading_company || "").toUpperCase() === "BGS" ? (
               <CheckboxRow
                 label="Black Label"
-                checked={!!conditionValues?.data?.is_black_label}
+                checked={!!data?.is_black_label}
                 onChange={(v) => {
-                  const currData = conditionValues?.data ?? {};
-                  const company = String(currData?.grading_company || "").toUpperCase();
+                  const company = String(data?.grading_company || "").toUpperCase();
 
                   if (company === "BGS" && v) {
                     const nextJson = {
@@ -572,17 +621,19 @@ export default function ItemConditionSelector({
                       item_type: "card",
                       mode: "graded",
                       data: {
-                        ...currData,
+                        ...(data ?? {}),
                         is_black_label: true,
                         grade_value: 10,
-                        grade_label: deriveGradeLabel(String(currData?.grading_company || ""), 10, true),
+                        grade_label: deriveGradeLabel(String(data?.grading_company || ""), 10, true),
                       },
                     };
-                    onChange(nextJson, 100);
+                    const nextMeta = metaForGradedCard(company, 10, true, !!data?.for_parts);
+                    onChange(nextJson, nextMeta);
                     return;
                   }
 
-                  const nextData: any = { ...currData, is_black_label: v };
+                  const nextData: any = { ...(data ?? {}), is_black_label: v };
+
                   const nextJson = {
                     v: 1,
                     item_type: "card",
@@ -593,8 +644,8 @@ export default function ItemConditionSelector({
                     },
                   };
 
-                  const score100 = gradeToScore100(String(nextData.grading_company || ""), nextData.grade_value, !!nextData.is_black_label);
-                  onChange(nextJson, score100);
+                  const nextMeta = metaForGradedCard(company, nextData.grade_value, !!nextData.is_black_label, !!nextData.for_parts);
+                  onChange(nextJson, nextMeta);
                 }}
                 subtext={<span className="text-[#64748B]">If checked, grade is locked to 10.</span>}
               />
@@ -602,30 +653,34 @@ export default function ItemConditionSelector({
 
             <TextRow
               label="Certification Number"
-              value={typeof conditionValues?.data?.certification_number === "string" ? conditionValues.data.certification_number : ""}
+              value={typeof data?.certification_number === "string" ? data.certification_number : ""}
               placeholder="e.g. PSA 12345678"
               onChange={(v) => {
-                const currData = conditionValues?.data ?? {};
                 const nextJson = {
                   v: 1,
                   item_type: "card",
                   mode: "graded",
                   data: {
-                    ...currData,
+                    ...(data ?? {}),
                     certification_number: normalizeCert(v),
+                    grade_label: deriveGradeLabel(String(data?.grading_company || ""), data?.grade_value, !!data?.is_black_label),
                   },
                 };
 
-                // score unchanged
-                onChange(nextJson, conditionScore);
+                const company = String(data?.grading_company || "").toUpperCase();
+                const nextMeta = metaForGradedCard(company, data?.grade_value, !!data?.is_black_label, !!data?.for_parts);
+                onChange(nextJson, nextMeta);
               }}
               help={<span>Optional, but recommended for graded items.</span>}
             />
 
             <div className="rounded-xl border border-[#E5E9F2] bg-[#F8FAFC] px-3 py-2 text-xs text-[#334155]">
               Derived condition:{" "}
-              <span className="font-semibold">{`${score100ToTier10(conditionScore)}/10`}</span> • {getConditionLabel(score100ToTier10(conditionScore))}
-              {conditionValues?.data?.grade_label ? <span className="text-[#64748B]"> • {String(conditionValues.data.grade_label)}</span> : null}
+              <span className="font-semibold">{`${tier10}/10`}</span> • {getConditionLabel(tier10)}
+              {data?.grade_label ? <span className="text-[#64748B]"> • {String(data.grade_label)}</span> : null}
+              {conditionMeta?.state && conditionMeta?.grade ? (
+                <span className="text-[#64748B]"> • {conditionMeta.state} / {conditionMeta.grade}</span>
+              ) : null}
             </div>
           </div>
         ) : null}
