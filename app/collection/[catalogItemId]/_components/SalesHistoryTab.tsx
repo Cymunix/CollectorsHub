@@ -1,7 +1,9 @@
+// app/catalog/[id]/tabs/item_sales_history.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
 import { fetchItemSalesHistory } from "../_lib/queries";
+import type { ConditionMeta } from "@/lib/pricingEngine";
 
 type SaleRow = {
   id: string;
@@ -10,6 +12,12 @@ type SaleRow = {
   source: string | null;
   url: string | null;
   condition_note: string | null;
+
+  // NEW (optional while migrating): stored on sales rows if you have it
+  condition_meta?: ConditionMeta | null;
+
+  // Legacy / older:
+  condition_json?: Record<string, any> | null;
 };
 
 function formatMoneyCAD(n: number | null) {
@@ -17,7 +25,31 @@ function formatMoneyCAD(n: number | null) {
   return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD" }).format(Number(n));
 }
 
-export default function SalesHistoryTab({ catalogItemId }: { catalogItemId: string }) {
+function safeJsonKey(v: any) {
+  try {
+    return JSON.stringify(v ?? null) ?? "null";
+  } catch {
+    return "null";
+  }
+}
+
+function metaKey(m?: ConditionMeta | null) {
+  if (!m) return "null";
+  const state = String((m as any).state ?? "");
+  const grade = String((m as any).grade ?? "");
+  const flags = Array.isArray((m as any).flags) ? (m as any).flags.map(String).sort() : [];
+  return safeJsonKey({ state, grade, flags });
+}
+
+export default function SalesHistoryTab({
+  catalogItemId,
+  selectedConditionMeta,
+}: {
+  catalogItemId: string;
+
+  // NEW: current selection from the item page (Path 2)
+  selectedConditionMeta?: ConditionMeta | null;
+}) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [rows, setRows] = useState<SaleRow[]>([]);
@@ -30,7 +62,7 @@ export default function SalesHistoryTab({ catalogItemId }: { catalogItemId: stri
       setErr(null);
       try {
         const data = await fetchItemSalesHistory(catalogItemId);
-        if (!cancelled) setRows(data);
+        if (!cancelled) setRows((data ?? []) as SaleRow[]);
       } catch (e: any) {
         if (!cancelled) setErr(e?.message ?? "Failed to load sales history.");
       } finally {
@@ -44,12 +76,35 @@ export default function SalesHistoryTab({ catalogItemId }: { catalogItemId: stri
     };
   }, [catalogItemId]);
 
+  // ✅ Filter rows by selectedConditionMeta when present.
+  // - If you haven't started storing condition_meta on sales yet, we show ALL rows.
+  const filteredRows = useMemo(() => {
+    const wantKey = metaKey(selectedConditionMeta ?? null);
+    if (wantKey === "null") return rows;
+
+    const anyHasMeta = rows.some((r) => !!r.condition_meta);
+    if (!anyHasMeta) return rows;
+
+    return rows.filter((r) => metaKey(r.condition_meta ?? null) === wantKey);
+  }, [rows, selectedConditionMeta]);
+
   const avg = useMemo(() => {
-    const prices = rows.map((r) => r.price_cad).filter((x): x is number => typeof x === "number" && Number.isFinite(x));
+    const prices = filteredRows
+      .map((r) => r.price_cad)
+      .filter((x): x is number => typeof x === "number" && Number.isFinite(x));
     if (prices.length === 0) return null;
     const sum = prices.reduce((s, n) => s + n, 0);
     return sum / prices.length;
-  }, [rows]);
+  }, [filteredRows]);
+
+  const filterChip = useMemo(() => {
+    if (!selectedConditionMeta) return null;
+    const s = String((selectedConditionMeta as any).state ?? "").replace(/_/g, " ");
+    const g = String((selectedConditionMeta as any).grade ?? "");
+    const flags = Array.isArray((selectedConditionMeta as any).flags) ? (selectedConditionMeta as any).flags : [];
+    const f = flags.length ? ` • ${flags.length} flags` : "";
+    return `${s}${g ? ` • ${g}` : ""}${f}`;
+  }, [selectedConditionMeta]);
 
   return (
     <div>
@@ -57,9 +112,21 @@ export default function SalesHistoryTab({ catalogItemId }: { catalogItemId: stri
         <div>
           <div className="text-lg font-semibold">Sales History</div>
           <div className="text-sm text-gray-500">
-            {avg ? <>Average: <span className="font-medium text-gray-800">{formatMoneyCAD(avg)}</span></> : "No sales yet."}
+            {avg ? (
+              <>
+                Average: <span className="font-medium text-gray-800">{formatMoneyCAD(avg)}</span>
+              </>
+            ) : (
+              "No sales yet."
+            )}
           </div>
         </div>
+
+        {filterChip ? (
+          <div className="rounded-full border bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-700">
+            Filter: {filterChip}
+          </div>
+        ) : null}
       </div>
 
       {err && <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{err}</div>}
@@ -70,9 +137,9 @@ export default function SalesHistoryTab({ catalogItemId }: { catalogItemId: stri
           <div className="h-14 rounded-2xl bg-gray-100" />
           <div className="h-14 rounded-2xl bg-gray-100" />
         </div>
-      ) : rows.length === 0 ? (
+      ) : filteredRows.length === 0 ? (
         <div className="mt-4 rounded-2xl border bg-gray-50 p-4 text-sm text-gray-600">
-          Nothing recorded yet. When you start importing / scraping sold comps, they’ll show here.
+          No comps for this condition filter yet.
         </div>
       ) : (
         <div className="mt-4 overflow-hidden rounded-2xl border">
@@ -83,12 +150,12 @@ export default function SalesHistoryTab({ catalogItemId }: { catalogItemId: stri
             <div className="text-right">Link</div>
           </div>
 
-          {rows.map((r, idx) => (
+          {filteredRows.map((r, idx) => (
             <div
               key={r.id}
               className={[
                 "grid grid-cols-[120px_120px_1fr_90px] gap-0 px-4 py-3 bg-white text-sm",
-                idx !== rows.length - 1 ? "border-b" : "",
+                idx !== filteredRows.length - 1 ? "border-b" : "",
               ].join(" ")}
             >
               <div className="text-gray-700">{new Date(r.sold_at).toLocaleDateString()}</div>
