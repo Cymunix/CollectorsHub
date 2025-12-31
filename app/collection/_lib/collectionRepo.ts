@@ -9,6 +9,7 @@ import type {
   CatalogMinifigRow,
 } from "./types";
 import { clamp1to10 } from "./formatters";
+import type { ConditionMeta } from "@/lib/pricingEngine";
 
 const TABLE_COPIES = "user_collection_items";
 const TABLE_CATALOG = "catalog_items";
@@ -68,7 +69,6 @@ function parseGradedFromRow(row: any): ConditionInfo | null {
           ? data.gradeLabel
           : "";
 
-    // We keep the old ConditionInfo shape: company + grade string
     const gradeText =
       labelRaw.trim().length
         ? labelRaw.trim()
@@ -119,26 +119,98 @@ function legacyBuildingBlocksToTier10(condition_json: any): number | null {
   return clamp1to10(avg);
 }
 
+function normalizeMetaFromRow(row: any): ConditionMeta | null {
+  // Prefer explicit columns if you added them
+  const state = row?.condition_state ?? null;
+  const grade = row?.condition_grade ?? null;
+  const flags = row?.condition_flags ?? null;
+
+  const hasCols = state || grade || flags;
+  if (hasCols) {
+    return {
+      state: String(state || "open_complete") as any,
+      grade: String(grade || "good") as any,
+      flags: Array.isArray(flags) ? flags.map(String) : [],
+    };
+  }
+
+  // Otherwise try condition_json.data.condition_meta or condition_meta
+  const obj = tryParseJSON(row?.condition_json);
+  const data = obj?.data ?? obj ?? null;
+
+  const m = data?.condition_meta ?? data?.conditionMeta ?? null;
+  if (m && typeof m === "object") {
+    return {
+      state: String((m as any).state || "open_complete") as any,
+      grade: String((m as any).grade || "good") as any,
+      flags: Array.isArray((m as any).flags) ? (m as any).flags.map(String) : [],
+    };
+  }
+
+  // If you store meta at top-level data (Path 2 simplified)
+  if (data?.state || data?.grade || data?.flags) {
+    return {
+      state: String(data?.state || "open_complete") as any,
+      grade: String(data?.grade || "good") as any,
+      flags: Array.isArray(data?.flags) ? data.flags.map(String) : [],
+    };
+  }
+
+  return null;
+}
+
 /**
- * Main mapping: use condition_score (0–100) if present, otherwise fallback to parsing JSON.
- * Output: ConditionInfo uses 1–10 for display.
+ * Main mapping for Collection cards:
+ * - Prefer REAL WORLD ConditionMeta if present -> show tier from meta (simple mapping)
+ * - Otherwise use condition_score (0–100) -> tier
+ * - Otherwise fallbacks.
  */
+function metaToTier10(meta: ConditionMeta): number {
+  // This is a DISPLAY mapping only. Pricing uses meta elsewhere.
+  const state = String((meta as any).state ?? "");
+  const grade = String((meta as any).grade ?? "");
+
+  // Base by grade
+  const baseByGrade: Record<string, number> = {
+    mint: 10,
+    excellent: 9,
+    good: 8,
+    fair: 6,
+    poor: 4,
+  };
+
+  let t = baseByGrade[grade] ?? 8;
+
+  // State nudges (sealed is more “presentation” than score; keep small)
+  if (state === "sealed") t = Math.min(10, t + 1);
+  if (state === "open_incomplete") t = Math.max(1, t - 1);
+  if (state === "loose") t = Math.max(1, t - 1);
+
+  return clamp1to10(t);
+}
+
 function mapConditionFromRow(row: any): ConditionInfo {
   // 1) graded (new schema or legacy columns)
   const gradedInfo = parseGradedFromRow(row);
   if (gradedInfo) return gradedInfo;
 
-  // 2) preferred: condition_score (0–100) column
+  // 2) Path 2: meta if present (columns or json)
+  const meta = normalizeMetaFromRow(row);
+  if (meta) {
+    return { mode: "raw", raw: { score: metaToTier10(meta) } };
+  }
+
+  // 3) preferred: condition_score (0–100) column
   const score100 = row?.condition_score ?? row?.conditionScore ?? null;
   if (score100 !== null && score100 !== undefined && score100 !== "") {
     return { mode: "raw", raw: { score: score100ToTier10(score100, 8) } };
   }
 
-  // 3) legacy building_blocks JSON fallback
+  // 4) legacy building_blocks JSON fallback
   const bbTier = legacyBuildingBlocksToTier10(row?.condition_json);
   if (bbTier != null) return { mode: "raw", raw: { score: bbTier } };
 
-  // 4) direct JSON fallback (old shapes)
+  // 5) direct JSON fallback (old shapes)
   const obj = tryParseJSON(row?.condition_json);
   const direct =
     obj?.score ??
@@ -193,34 +265,40 @@ function computeForSale(rows: any[]): boolean | null {
 
 /* -------------------- safe selects -------------------- */
 
-/**
- * We try the newest schema first (condition_score present),
- * then fall back to older selects.
- */
 async function safeSelectCopies() {
-  // New schema: includes condition_score
+  // Newer schema: condition_meta columns + condition_score may or may not exist.
   const res1 = await supabase
     .from(TABLE_COPIES)
-    .select("id,catalog_item_id,created_at,quantity,condition_json,condition_score,for_sale,graded,grade")
+    .select(
+      "id,catalog_item_id,created_at,quantity,condition_json,condition_score,condition_state,condition_grade,condition_flags,for_sale,graded,grade"
+    )
     .order("created_at", { ascending: false });
 
   if (!res1.error) return res1;
 
-  // Old schema without condition_score
+  // Schema without meta columns
   const res2 = await supabase
     .from(TABLE_COPIES)
-    .select("id,catalog_item_id,created_at,quantity,condition_json,for_sale,graded,grade")
+    .select("id,catalog_item_id,created_at,quantity,condition_json,condition_score,for_sale,graded,grade")
     .order("created_at", { ascending: false });
 
   if (!res2.error) return res2;
 
-  // Oldest schema (no for_sale/graded/grade)
+  // Old schema without condition_score
   const res3 = await supabase
+    .from(TABLE_COPIES)
+    .select("id,catalog_item_id,created_at,quantity,condition_json,for_sale,graded,grade")
+    .order("created_at", { ascending: false });
+
+  if (!res3.error) return res3;
+
+  // Oldest schema (no for_sale/graded/grade)
+  const res4 = await supabase
     .from(TABLE_COPIES)
     .select("id,catalog_item_id,created_at,quantity,condition_json")
     .order("created_at", { ascending: false });
 
-  return res3;
+  return res4;
 }
 
 async function safeSelectCatalog(catalogItemIds: string[]) {
@@ -282,7 +360,6 @@ export async function loadCollectionCards(): Promise<CollectionCardModel[]> {
   });
 
   // 4) pull minifigs from user_collection_item_minifigs
-  // Only included=true count towards “owned minifigs”.
   const ucimRes = await supabase
     .from(TABLE_UCIM)
     .select("id,user_collection_item_id,minifig_id,included,included_qty,created_at")
@@ -330,7 +407,7 @@ export async function loadCollectionCards(): Promise<CollectionCardModel[]> {
       return {
         entity: "minifig",
         catalogItemId: mid,
-        href: `/minifigs/${mid}`, // change if route differs
+        href: `/minifigs/${mid}`,
         name: displayName,
         photoUrl: mf?.image_url ?? null,
         copiesCount: minifigQty.get(mid) ?? 0,
