@@ -8,8 +8,9 @@ import type { ConditionMeta } from "@/lib/pricingEngine";
 
 type UserShape = { userId: string };
 
-type ConditionState = "sealed" | "open_complete" | "open_incomplete" | "loose";
-type ConditionGrade = "mint" | "excellent" | "good" | "fair" | "poor";
+// legacy UI concepts (dropdown mapping only)
+type LegacyState = "sealed" | "open_complete" | "open_incomplete" | "loose";
+type LegacyGrade = "mint" | "excellent" | "good" | "fair" | "poor";
 
 function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
@@ -26,33 +27,85 @@ function safeJsonParse(v: any): any | null {
   }
 }
 
+function uniq(flags: string[]) {
+  return Array.from(new Set((flags || []).map(String).filter(Boolean)));
+}
+
+/**
+ * Convert legacy (state/grade) flags -> new status.
+ * We keep grade/state in flags for now:
+ *   - "state:open_complete"
+ *   - "grade:good"
+ */
+function statusFromFlags(flags: string[]): ConditionMeta["status"] {
+  const f = (flags ?? []).map((x) => String(x).toLowerCase());
+
+  if (f.includes("for_parts") || f.includes("status:for_parts")) return "for_parts";
+  if (f.some((x) => x.startsWith("graded:")) || f.includes("status:graded")) return "graded";
+  if (f.includes("sealed") || f.includes("status:sealed") || f.includes("state:sealed")) return "sealed";
+
+  // if old state implies incomplete
+  if (f.includes("state:open_incomplete") || f.includes("state:loose")) return "incomplete";
+
+  return "complete";
+}
+
 function normalizeConditionMeta(v: any): ConditionMeta {
-  const obj = safeJsonParse(v) ?? v;
+  const obj = safeJsonParse(v) ?? v ?? {};
 
-  const stateRaw = String(obj?.state ?? "open_complete").trim();
-  const gradeRaw = String(obj?.grade ?? "good").trim();
+  // Accept BOTH shapes:
+  // - new: { status, flags }
+  // - old: { state, grade, flags }
+  const statusRaw = typeof obj?.status === "string" ? obj.status : null;
+
   const flagsRaw = obj?.flags;
+  const flagsBase = Array.isArray(flagsRaw) ? flagsRaw.map((x: any) => String(x)).filter(Boolean) : [];
 
-  const state: ConditionState =
-    stateRaw === "sealed" || stateRaw === "open_complete" || stateRaw === "open_incomplete" || stateRaw === "loose"
-      ? (stateRaw as ConditionState)
-      : "open_complete";
+  // legacy inputs (if present)
+  const legacyStateRaw = String(obj?.state ?? "").trim();
+  const legacyGradeRaw = String(obj?.grade ?? "").trim();
 
-  const grade: ConditionGrade =
-    gradeRaw === "mint" || gradeRaw === "excellent" || gradeRaw === "good" || gradeRaw === "fair" || gradeRaw === "poor"
-      ? (gradeRaw as ConditionGrade)
-      : "good";
+  const legacyState: LegacyState | null =
+    legacyStateRaw === "sealed" ||
+    legacyStateRaw === "open_complete" ||
+    legacyStateRaw === "open_incomplete" ||
+    legacyStateRaw === "loose"
+      ? (legacyStateRaw as LegacyState)
+      : null;
 
-  const flags = Array.isArray(flagsRaw) ? flagsRaw.map((x: any) => String(x)).filter(Boolean) : [];
+  const legacyGrade: LegacyGrade | null =
+    legacyGradeRaw === "mint" ||
+    legacyGradeRaw === "excellent" ||
+    legacyGradeRaw === "good" ||
+    legacyGradeRaw === "fair" ||
+    legacyGradeRaw === "poor"
+      ? (legacyGradeRaw as LegacyGrade)
+      : null;
 
-  return { state, grade, flags };
+  const mergedFlags = uniq([
+    ...flagsBase,
+    ...(legacyState ? [`state:${legacyState}`] : []),
+    ...(legacyGrade ? [`grade:${legacyGrade}`] : []),
+  ]);
+
+  const status: ConditionMeta["status"] =
+    statusRaw === "sealed" || statusRaw === "complete" || statusRaw === "incomplete" || statusRaw === "for_parts" || statusRaw === "graded"
+      ? (statusRaw as ConditionMeta["status"])
+      : statusFromFlags(mergedFlags);
+
+  return { status, flags: mergedFlags };
 }
 
 /**
  * Display-only mapping (1–10) from meta.
- * This is just to keep the old UI (dropdown) simple.
+ * We now read "grade:*" and "state:*" flags.
  */
 function metaToTier10(meta: ConditionMeta): number {
+  const flags = (meta?.flags ?? []).map((x) => String(x).toLowerCase());
+
+  const grade = flags.find((f) => f.startsWith("grade:"))?.split(":")[1] ?? "";
+  const state = flags.find((f) => f.startsWith("state:"))?.split(":")[1] ?? "";
+
   const baseByGrade: Record<string, number> = {
     mint: 10,
     excellent: 9,
@@ -61,27 +114,27 @@ function metaToTier10(meta: ConditionMeta): number {
     poor: 4,
   };
 
-  let t = baseByGrade[String(meta?.grade ?? "")] ?? 8;
+  let t = baseByGrade[grade] ?? 8;
 
-  if (meta?.state === "sealed") t = Math.min(10, t + 1);
-  if (meta?.state === "open_incomplete") t = Math.max(1, t - 1);
-  if (meta?.state === "loose") t = Math.max(1, t - 1);
+  if (state === "sealed") t = Math.min(10, t + 1);
+  if (state === "open_incomplete") t = Math.max(1, t - 1);
+  if (state === "loose") t = Math.max(1, t - 1);
 
   return clamp(Math.round(t), 1, 10);
 }
 
 /**
  * Tier10 -> meta fallback (when only old column exists)
+ * We keep grade as flag, and keep a default state flag.
  */
 function tier10ToMeta(tier10: number): ConditionMeta {
   const t = clamp(Math.round(Number(tier10) || 8), 1, 10);
 
-  // Keep this conservative: default to open_complete
-  // Only grade changes with tier.
-  const grade: ConditionGrade =
+  const grade: LegacyGrade =
     t >= 10 ? "mint" : t >= 9 ? "excellent" : t >= 7 ? "good" : t >= 5 ? "fair" : "poor";
 
-  return { state: "open_complete", grade, flags: [] };
+  const flags = uniq([`state:open_complete`, `grade:${grade}`]);
+  return { status: statusFromFlags(flags), flags };
 }
 
 export default function PreferencesTab({ user }: { user: UserShape }) {
@@ -105,10 +158,9 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
   const [pushWishlistAlerts, setPushWishlistAlerts] = useState(false);
 
   // PATH 2 default condition (stored as meta JSON)
-  const [defaultConditionMeta, setDefaultConditionMeta] = useState<ConditionMeta>({
-    state: "open_complete",
-    grade: "good",
-    flags: [],
+  const [defaultConditionMeta, setDefaultConditionMeta] = useState<ConditionMeta>(() => {
+    const flags = uniq(["state:open_complete", "grade:good"]);
+    return { status: statusFromFlags(flags), flags };
   });
 
   // Keep the old UI: 1–10 dropdown
@@ -125,7 +177,6 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
       setLoading(true);
       setStatus(null);
 
-      // Try new column first; fallback to old.
       const res1 = await supabase
         .from("profiles")
         .select(
@@ -178,7 +229,6 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
       setPushNewFollowers(!!data?.push_new_followers);
       setPushWishlistAlerts(!!data?.push_wishlist_alerts);
 
-      // Preferred: meta
       if (data?.default_condition_meta) {
         setDefaultConditionMeta(normalizeConditionMeta(data.default_condition_meta));
       } else {
@@ -235,7 +285,7 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
         push_new_followers: pushNewFollowers,
         push_wishlist_alerts: pushWishlistAlerts,
 
-        // ✅ PATH 2: store meta JSON, not score
+        // ✅ store new meta
         default_condition_meta: defaultConditionMeta,
 
         default_quantity: defaultQuantity,
@@ -257,6 +307,11 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
   if (loading) {
     return <div className="mt-10 text-sm text-[#6B7280] dark:text-[#9CA3AF]">Loading preferences…</div>;
   }
+
+  // helper to read current legacy flags for display
+  const flagsLower = (defaultConditionMeta.flags ?? []).map((x) => String(x).toLowerCase());
+  const displayState = flagsLower.find((f) => f.startsWith("state:"))?.split(":")[1] ?? "open_complete";
+  const displayGrade = flagsLower.find((f) => f.startsWith("grade:"))?.split(":")[1] ?? "good";
 
   return (
     <section className="space-y-6">
@@ -343,14 +398,16 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
                 value={defaultConditionTier10}
                 onChange={(e) => {
                   const tier = clamp(Math.round(Number(e.target.value) || 8), 1, 10);
-                  // keep UI simple: selecting tier updates meta grade (and keeps state)
-                  const grade: ConditionGrade =
+                  const grade: LegacyGrade =
                     tier >= 10 ? "mint" : tier >= 9 ? "excellent" : tier >= 7 ? "good" : tier >= 5 ? "fair" : "poor";
-                  setDefaultConditionMeta((m) => ({
-                    state: (m?.state ?? "open_complete") as ConditionState,
-                    grade,
-                    flags: Array.isArray(m?.flags) ? m.flags : [],
-                  }));
+
+                  setDefaultConditionMeta((m) => {
+                    const existingFlags = Array.isArray(m?.flags) ? m.flags : [];
+                    const withoutGrade = existingFlags.filter((f) => !String(f).toLowerCase().startsWith("grade:"));
+
+                    const nextFlags = uniq([...withoutGrade, `grade:${grade}`, `state:${displayState}`]);
+                    return { status: statusFromFlags(nextFlags), flags: nextFlags };
+                  });
                 }}
                 className="w-full rounded-lg border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#020617] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#2563EB]"
               >
@@ -362,8 +419,8 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
               </select>
 
               <div className="mt-2 text-[11px] text-[#6B7280] dark:text-[#9CA3AF]">
-                Stored as meta: <span className="font-semibold">{defaultConditionMeta.state}</span> •{" "}
-                <span className="font-semibold">{defaultConditionMeta.grade}</span>
+                Stored as meta: <span className="font-semibold">{defaultConditionMeta.status}</span> •{" "}
+                <span className="font-semibold">{displayGrade}</span>
               </div>
             </div>
 
@@ -417,42 +474,22 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
 
           <div className="space-y-2 text-sm text-[#111827] dark:text-[#E5E7EB]">
             <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={emailPromotional}
-                onChange={(e) => setEmailPromotional(e.target.checked)}
-                className="h-4 w-4 rounded border-[#D1D5DB]"
-              />
+              <input type="checkbox" checked={emailPromotional} onChange={(e) => setEmailPromotional(e.target.checked)} className="h-4 w-4 rounded border-[#D1D5DB]" />
               <span>Promotional Emails</span>
             </label>
 
             <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={emailMarketNews}
-                onChange={(e) => setEmailMarketNews(e.target.checked)}
-                className="h-4 w-4 rounded border-[#D1D5DB]"
-              />
+              <input type="checkbox" checked={emailMarketNews} onChange={(e) => setEmailMarketNews(e.target.checked)} className="h-4 w-4 rounded border-[#D1D5DB]" />
               <span>Market Newsletters</span>
             </label>
 
             <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={emailSecurityAlerts}
-                onChange={(e) => setEmailSecurityAlerts(e.target.checked)}
-                className="h-4 w-4 rounded border-[#D1D5DB]"
-              />
+              <input type="checkbox" checked={emailSecurityAlerts} onChange={(e) => setEmailSecurityAlerts(e.target.checked)} className="h-4 w-4 rounded border-[#D1D5DB]" />
               <span>Security Alerts</span>
             </label>
 
             <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={emailWishlistAlerts}
-                onChange={(e) => setEmailWishlistAlerts(e.target.checked)}
-                className="h-4 w-4 rounded border-[#D1D5DB]"
-              />
+              <input type="checkbox" checked={emailWishlistAlerts} onChange={(e) => setEmailWishlistAlerts(e.target.checked)} className="h-4 w-4 rounded border-[#D1D5DB]" />
               <span>Wishlist Alerts</span>
             </label>
           </div>
@@ -465,42 +502,22 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
 
           <div className="space-y-2 text-sm text-[#111827] dark:text-[#E5E7EB]">
             <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={pushPriceDrops}
-                onChange={(e) => setPushPriceDrops(e.target.checked)}
-                className="h-4 w-4 rounded border-[#D1D5DB]"
-              />
+              <input type="checkbox" checked={pushPriceDrops} onChange={(e) => setPushPriceDrops(e.target.checked)} className="h-4 w-4 rounded border-[#D1D5DB]" />
               <span>Price Drops</span>
             </label>
 
             <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={pushTradeOffers}
-                onChange={(e) => setPushTradeOffers(e.target.checked)}
-                className="h-4 w-4 rounded border-[#D1D5DB]"
-              />
+              <input type="checkbox" checked={pushTradeOffers} onChange={(e) => setPushTradeOffers(e.target.checked)} className="h-4 w-4 rounded border-[#D1D5DB]" />
               <span>Trade Offers</span>
             </label>
 
             <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={pushNewFollowers}
-                onChange={(e) => setPushNewFollowers(e.target.checked)}
-                className="h-4 w-4 rounded border-[#D1D5DB]"
-              />
+              <input type="checkbox" checked={pushNewFollowers} onChange={(e) => setPushNewFollowers(e.target.checked)} className="h-4 w-4 rounded border-[#D1D5DB]" />
               <span>New Followers</span>
             </label>
 
             <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={pushWishlistAlerts}
-                onChange={(e) => setPushWishlistAlerts(e.target.checked)}
-                className="h-4 w-4 rounded border-[#D1D5DB]"
-              />
+              <input type="checkbox" checked={pushWishlistAlerts} onChange={(e) => setPushWishlistAlerts(e.target.checked)} className="h-4 w-4 rounded border-[#D1D5DB]" />
               <span>Wishlist Alerts</span>
             </label>
           </div>
