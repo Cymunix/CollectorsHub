@@ -1,31 +1,87 @@
 // app/settings/tabs/PreferencesTab.tsx
 "use client";
 
-import React, { FormEvent, useEffect, useState } from "react";
+import React, { FormEvent, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useTheme } from "@/lib/theme";
+import type { ConditionMeta } from "@/lib/pricingEngine";
 
 type UserShape = { userId: string };
 
-// UI = tier10 (1–10). DB = score100 (0–100).
-function clampTier10(n: any, fallback = 8) {
-  const x = Number(n);
-  if (!Number.isFinite(x)) return fallback;
-  return Math.max(1, Math.min(10, Math.round(x)));
+type ConditionState = "sealed" | "open_complete" | "open_incomplete" | "loose";
+type ConditionGrade = "mint" | "excellent" | "good" | "fair" | "poor";
+
+function clamp(n: number, lo: number, hi: number) {
+  return Math.max(lo, Math.min(hi, n));
 }
 
-function clampScore100(n: any, fallback = 80) {
-  const x = Number(n);
-  if (!Number.isFinite(x)) return fallback;
-  return Math.max(0, Math.min(100, Math.round(x)));
+function safeJsonParse(v: any): any | null {
+  if (!v) return null;
+  if (typeof v === "object") return v;
+  if (typeof v !== "string") return null;
+  try {
+    return JSON.parse(v);
+  } catch {
+    return null;
+  }
 }
 
-function tier10ToScore100(tier10: number) {
-  return clampScore100(tier10 * 10, 80);
+function normalizeConditionMeta(v: any): ConditionMeta {
+  const obj = safeJsonParse(v) ?? v;
+
+  const stateRaw = String(obj?.state ?? "open_complete").trim();
+  const gradeRaw = String(obj?.grade ?? "good").trim();
+  const flagsRaw = obj?.flags;
+
+  const state: ConditionState =
+    stateRaw === "sealed" || stateRaw === "open_complete" || stateRaw === "open_incomplete" || stateRaw === "loose"
+      ? (stateRaw as ConditionState)
+      : "open_complete";
+
+  const grade: ConditionGrade =
+    gradeRaw === "mint" || gradeRaw === "excellent" || gradeRaw === "good" || gradeRaw === "fair" || gradeRaw === "poor"
+      ? (gradeRaw as ConditionGrade)
+      : "good";
+
+  const flags = Array.isArray(flagsRaw) ? flagsRaw.map((x: any) => String(x)).filter(Boolean) : [];
+
+  return { state, grade, flags };
 }
 
-function score100ToTier10(score100: number) {
-  return clampTier10(Math.round(score100 / 10), 8);
+/**
+ * Display-only mapping (1–10) from meta.
+ * This is just to keep the old UI (dropdown) simple.
+ */
+function metaToTier10(meta: ConditionMeta): number {
+  const baseByGrade: Record<string, number> = {
+    mint: 10,
+    excellent: 9,
+    good: 8,
+    fair: 6,
+    poor: 4,
+  };
+
+  let t = baseByGrade[String(meta?.grade ?? "")] ?? 8;
+
+  if (meta?.state === "sealed") t = Math.min(10, t + 1);
+  if (meta?.state === "open_incomplete") t = Math.max(1, t - 1);
+  if (meta?.state === "loose") t = Math.max(1, t - 1);
+
+  return clamp(Math.round(t), 1, 10);
+}
+
+/**
+ * Tier10 -> meta fallback (when only old column exists)
+ */
+function tier10ToMeta(tier10: number): ConditionMeta {
+  const t = clamp(Math.round(Number(tier10) || 8), 1, 10);
+
+  // Keep this conservative: default to open_complete
+  // Only grade changes with tier.
+  const grade: ConditionGrade =
+    t >= 10 ? "mint" : t >= 9 ? "excellent" : t >= 7 ? "good" : t >= 5 ? "fair" : "poor";
+
+  return { state: "open_complete", grade, flags: [] };
 }
 
 export default function PreferencesTab({ user }: { user: UserShape }) {
@@ -48,9 +104,15 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
   const [pushNewFollowers, setPushNewFollowers] = useState(false);
   const [pushWishlistAlerts, setPushWishlistAlerts] = useState(false);
 
-  // RAW-only quick add defaults (graded is NEVER defaulted)
-  // UI shows 1–10, DB stores 0–100 in default_condition_score.
-  const [defaultConditionTier10, setDefaultConditionTier10] = useState<number>(8);
+  // PATH 2 default condition (stored as meta JSON)
+  const [defaultConditionMeta, setDefaultConditionMeta] = useState<ConditionMeta>({
+    state: "open_complete",
+    grade: "good",
+    flags: [],
+  });
+
+  // Keep the old UI: 1–10 dropdown
+  const defaultConditionTier10 = useMemo(() => metaToTier10(defaultConditionMeta), [defaultConditionMeta]);
 
   const [defaultQuantity, setDefaultQuantity] = useState<number>(1);
   const [defaultWishlistPriority, setDefaultWishlistPriority] = useState<"low" | "medium" | "high">("medium");
@@ -63,7 +125,8 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
       setLoading(true);
       setStatus(null);
 
-      const { data, error } = await supabase
+      // Try new column first; fallback to old.
+      const res1 = await supabase
         .from("profiles")
         .select(
           `
@@ -77,7 +140,7 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
           push_trade_offers,
           push_new_followers,
           push_wishlist_alerts,
-          default_condition_score,
+          default_condition_meta,
           default_quantity,
           default_wishlist_priority,
           default_collection_visibility
@@ -88,12 +151,14 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
 
       if (cancelled) return;
 
-      if (error) {
-        console.error("Preferences load error:", error);
+      if (res1.error) {
+        console.error("Preferences load error:", res1.error);
         setStatus("Error: Could not load preferences.");
         setLoading(false);
         return;
       }
+
+      const data: any = res1.data ?? {};
 
       const dbTheme = (data?.theme as string | null) ?? "light";
       const normalizedTheme: "light" | "dark" = dbTheme === "dark" ? "dark" : "light";
@@ -113,12 +178,25 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
       setPushNewFollowers(!!data?.push_new_followers);
       setPushWishlistAlerts(!!data?.push_wishlist_alerts);
 
-      // ✅ default_condition_score in DB is now score100 (0–100)
-      const dcs100 = clampScore100(data?.default_condition_score, 80);
-      setDefaultConditionTier10(score100ToTier10(dcs100));
+      // Preferred: meta
+      if (data?.default_condition_meta) {
+        setDefaultConditionMeta(normalizeConditionMeta(data.default_condition_meta));
+      } else {
+        // Fallback: old numeric tier
+        const res2 = await supabase
+          .from("profiles")
+          .select("default_condition_score")
+          .eq("id", user.userId)
+          .maybeSingle();
+
+        if (!res2.error) {
+          const t = clamp(Math.round(Number((res2.data as any)?.default_condition_score) || 8), 1, 10);
+          setDefaultConditionMeta(tier10ToMeta(t));
+        }
+      }
 
       const dq = Number(data?.default_quantity);
-      setDefaultQuantity(Number.isFinite(dq) ? Math.min(999, Math.max(1, dq)) : 1);
+      setDefaultQuantity(Number.isFinite(dq) ? clamp(Math.round(dq), 1, 999) : 1);
 
       const pr = (data?.default_wishlist_priority as string | null) ?? "medium";
       setDefaultWishlistPriority(pr === "low" || pr === "high" ? pr : "medium");
@@ -141,8 +219,6 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
     setSaving(true);
     setStatus(null);
 
-    const score100 = tier10ToScore100(clampTier10(defaultConditionTier10, 8));
-
     const { error } = await supabase
       .from("profiles")
       .update({
@@ -159,8 +235,9 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
         push_new_followers: pushNewFollowers,
         push_wishlist_alerts: pushWishlistAlerts,
 
-        // ✅ store 0–100 in DB
-        default_condition_score: score100,
+        // ✅ PATH 2: store meta JSON, not score
+        default_condition_meta: defaultConditionMeta,
+
         default_quantity: defaultQuantity,
         default_wishlist_priority: defaultWishlistPriority,
         default_collection_visibility: defaultCollectionVisibility,
@@ -250,7 +327,7 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
           </div>
         </div>
 
-        {/* Quick Add Defaults (RAW only) */}
+        {/* Quick Add Defaults */}
         <div className="rounded-2xl bg-white dark:bg-[#020617] border border-[#E5E9F2] dark:border-[#1F2937] p-6 shadow-sm">
           <h2 className="text-sm font-semibold text-[#0F172A] dark:text-white mb-2">Quick Add Defaults</h2>
           <p className="text-xs text-[#6B7280] dark:text-[#9CA3AF] mb-4">
@@ -264,7 +341,17 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
               </label>
               <select
                 value={defaultConditionTier10}
-                onChange={(e) => setDefaultConditionTier10(clampTier10(e.target.value, 8))}
+                onChange={(e) => {
+                  const tier = clamp(Math.round(Number(e.target.value) || 8), 1, 10);
+                  // keep UI simple: selecting tier updates meta grade (and keeps state)
+                  const grade: ConditionGrade =
+                    tier >= 10 ? "mint" : tier >= 9 ? "excellent" : tier >= 7 ? "good" : tier >= 5 ? "fair" : "poor";
+                  setDefaultConditionMeta((m) => ({
+                    state: (m?.state ?? "open_complete") as ConditionState,
+                    grade,
+                    flags: Array.isArray(m?.flags) ? m.flags : [],
+                  }));
+                }}
                 className="w-full rounded-lg border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#020617] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#2563EB]"
               >
                 {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
@@ -273,8 +360,10 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
                   </option>
                 ))}
               </select>
+
               <div className="mt-2 text-[11px] text-[#6B7280] dark:text-[#9CA3AF]">
-                Stored as <span className="font-semibold">0–100</span> internally ({tier10ToScore100(defaultConditionTier10)}).
+                Stored as meta: <span className="font-semibold">{defaultConditionMeta.state}</span> •{" "}
+                <span className="font-semibold">{defaultConditionMeta.grade}</span>
               </div>
             </div>
 
@@ -285,7 +374,7 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
                 min={1}
                 max={999}
                 value={defaultQuantity}
-                onChange={(e) => setDefaultQuantity(Math.max(1, Math.min(999, Number(e.target.value) || 1)))}
+                onChange={(e) => setDefaultQuantity(clamp(Number(e.target.value) || 1, 1, 999))}
                 className="w-full rounded-lg border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#020617] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#2563EB]"
               />
             </div>
