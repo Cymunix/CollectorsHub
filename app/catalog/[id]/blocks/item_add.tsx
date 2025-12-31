@@ -3,20 +3,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-
-/* =========================
-   Condition Meta (REAL WORLD)
-   ========================= */
-
-type ConditionState = "sealed" | "open_complete" | "open_incomplete" | "loose";
-type ConditionGrade = "mint" | "excellent" | "good" | "fair" | "poor";
-type ConditionFlag = string;
-
-type ConditionMeta = {
-  state: ConditionState;
-  grade: ConditionGrade;
-  flags: ConditionFlag[];
-};
+import type { ConditionMeta } from "@/lib/pricingEngine";
 
 /* =========================
    UI Buttons
@@ -138,7 +125,7 @@ export default function ItemAddActions({
   // Existing detailed condition blob (LEGO, minifigs, etc.)
   conditionValues: Record<string, any>;
 
-  // NEW: real-world condition
+  // NEW: real-world condition meta
   conditionMeta?: ConditionMeta;
 
   seedMinifigs?: { minifig_id: string; instance_key?: string }[];
@@ -173,16 +160,29 @@ export default function ItemAddActions({
     };
   }, [userId, catalogItemId]);
 
+  // ✅ Detect LEGO Set mode from the *new* condition JSON shape (back-compat friendly)
   const isBuildingBlocksSet = useMemo(() => {
-    const t = String(conditionValues?.building_blocks?.type ?? "").toLowerCase().trim();
+    const v = conditionValues ?? {};
+    const data = (v as any)?.data ?? {};
+    const t =
+      String(data?.type ?? "")
+        .toLowerCase()
+        .trim() ||
+      String((v as any)?.building_blocks?.type ?? "")
+        .toLowerCase()
+        .trim();
     return t.includes("set");
   }, [conditionValues]);
 
-  const resolvedCondition = {
-    state: conditionMeta?.state ?? "open_complete",
-    grade: conditionMeta?.grade ?? "good",
-    flags: conditionMeta?.flags ?? [],
-  };
+  // ✅ Default meta if nothing provided yet (keeps DB rows valid)
+  const resolvedMeta: ConditionMeta = useMemo(
+    () => ({
+      state: conditionMeta?.state ?? "open_complete",
+      grade: conditionMeta?.grade ?? "good",
+      flags: Array.isArray(conditionMeta?.flags) ? conditionMeta!.flags : [],
+    }),
+    [conditionMeta]
+  );
 
   const handleAddToCollection = async () => {
     setBanner(null);
@@ -204,9 +204,7 @@ export default function ItemAddActions({
             {
               user_id: userId,
               catalog_item_id: catalogItemId,
-              condition_state: resolvedCondition.state,
-              condition_grade: resolvedCondition.grade,
-              condition_flags: resolvedCondition.flags,
+              condition_meta: resolvedMeta, // ✅ single meta column (Path 2)
               condition_json: conditionValues,
             },
           ])
@@ -218,8 +216,12 @@ export default function ItemAddActions({
         const userCollectionItemId = ins.data?.id as string | undefined;
         if (!userCollectionItemId) throw new Error("Failed to create collection copy.");
 
-        // 2) Aggregate minifigs
-        const rawRows = (conditionValues as any)?.building_blocks?.minifigs;
+        // 2) Aggregate UI selections (new JSON shape)
+        const rawRows =
+          (conditionValues as any)?.data?.minifigs ??
+          (conditionValues as any)?.building_blocks?.minifigs ??
+          [];
+
         const pickedById = new Map<string, { included_qty: number; notes: string | null }>();
 
         if (Array.isArray(rawRows)) {
@@ -228,17 +230,24 @@ export default function ItemAddActions({
               m?.minifig_id ??
                 m?.minifigId ??
                 m?.minifig?.id ??
+                m?.minifig?.minifig_id ??
                 m?.id ??
                 m?.instance_key
             );
             if (!id) continue;
 
-            const checked = !!m?.included || !!m?.checked || !!m?.selected;
+            const checked = !!m?.included || !!m?.checked || !!m?.selected || !!m?.isChecked;
             if (!checked) continue;
 
-            const qty = toNonNegInt(
-              m?.included_qty ?? m?.includedQty ?? m?.qty ?? m?.quantity ?? 1
-            );
+            const hasQtyProp =
+              Object.prototype.hasOwnProperty.call(m, "included_qty") ||
+              Object.prototype.hasOwnProperty.call(m, "includedQty") ||
+              Object.prototype.hasOwnProperty.call(m, "qty") ||
+              Object.prototype.hasOwnProperty.call(m, "quantity") ||
+              Object.prototype.hasOwnProperty.call(m, "count");
+
+            const rawQty = m?.included_qty ?? m?.includedQty ?? m?.qty ?? m?.quantity ?? m?.count;
+            const qty = hasQtyProp ? toNonNegInt(rawQty) : 1;
 
             const prev = pickedById.get(id);
             pickedById.set(id, {
@@ -248,8 +257,10 @@ export default function ItemAddActions({
           }
         }
 
+        // 3) Normalize seed list from page.tsx (bbMinifigs)
         const seededIds = pickSeedMinifigIds(seedMinifigs);
 
+        // 4) Build ONE row per (user_collection_item_id, minifig_id)
         const rows = seededIds.map((minifigId) => {
           const picked = pickedById.get(minifigId);
           return {
@@ -261,6 +272,7 @@ export default function ItemAddActions({
           };
         });
 
+        // 5) Single upsert
         const up = await supabase
           .from("user_collection_item_minifigs")
           .upsert(rows, { onConflict: "user_collection_item_id,minifig_id" });
@@ -278,9 +290,7 @@ export default function ItemAddActions({
           {
             user_id: userId,
             catalog_item_id: catalogItemId,
-            condition_state: resolvedCondition.state,
-            condition_grade: resolvedCondition.grade,
-            condition_flags: resolvedCondition.flags,
+            condition_meta: resolvedMeta, // ✅ single meta column (Path 2)
             condition_json: conditionValues,
           },
         ])
