@@ -7,6 +7,27 @@ import { useTheme } from "@/lib/theme";
 
 type UserShape = { userId: string };
 
+// UI = tier10 (1–10). DB = score100 (0–100).
+function clampTier10(n: any, fallback = 8) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return fallback;
+  return Math.max(1, Math.min(10, Math.round(x)));
+}
+
+function clampScore100(n: any, fallback = 80) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return fallback;
+  return Math.max(0, Math.min(100, Math.round(x)));
+}
+
+function tier10ToScore100(tier10: number) {
+  return clampScore100(tier10 * 10, 80);
+}
+
+function score100ToTier10(score100: number) {
+  return clampTier10(Math.round(score100 / 10), 8);
+}
+
 export default function PreferencesTab({ user }: { user: UserShape }) {
   const { setTheme: setAppTheme } = useTheme();
 
@@ -14,9 +35,7 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
-  const [themePreference, setThemePreference] = useState<"light" | "dark">(
-    "light"
-  );
+  const [themePreference, setThemePreference] = useState<"light" | "dark">("light");
   const [currency, setCurrency] = useState<"CAD" | "USD">("CAD");
 
   const [emailPromotional, setEmailPromotional] = useState(false);
@@ -30,14 +49,12 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
   const [pushWishlistAlerts, setPushWishlistAlerts] = useState(false);
 
   // RAW-only quick add defaults (graded is NEVER defaulted)
-  const [defaultConditionScore, setDefaultConditionScore] = useState<number>(8);
+  // UI shows 1–10, DB stores 0–100 in default_condition_score.
+  const [defaultConditionTier10, setDefaultConditionTier10] = useState<number>(8);
+
   const [defaultQuantity, setDefaultQuantity] = useState<number>(1);
-  const [defaultWishlistPriority, setDefaultWishlistPriority] = useState<
-    "low" | "medium" | "high"
-  >("medium");
-  const [defaultCollectionVisibility, setDefaultCollectionVisibility] = useState<
-    "private" | "public"
-  >("private");
+  const [defaultWishlistPriority, setDefaultWishlistPriority] = useState<"low" | "medium" | "high">("medium");
+  const [defaultCollectionVisibility, setDefaultCollectionVisibility] = useState<"private" | "public">("private");
 
   useEffect(() => {
     let cancelled = false;
@@ -79,8 +96,7 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
       }
 
       const dbTheme = (data?.theme as string | null) ?? "light";
-      const normalizedTheme: "light" | "dark" =
-        dbTheme === "dark" ? "dark" : "light";
+      const normalizedTheme: "light" | "dark" = dbTheme === "dark" ? "dark" : "light";
       setThemePreference(normalizedTheme);
       setAppTheme(normalizedTheme);
 
@@ -97,23 +113,17 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
       setPushNewFollowers(!!data?.push_new_followers);
       setPushWishlistAlerts(!!data?.push_wishlist_alerts);
 
-      const dcs = Number(data?.default_condition_score);
-      setDefaultConditionScore(
-        Number.isFinite(dcs) ? Math.min(10, Math.max(1, dcs)) : 8
-      );
+      // ✅ default_condition_score in DB is now score100 (0–100)
+      const dcs100 = clampScore100(data?.default_condition_score, 80);
+      setDefaultConditionTier10(score100ToTier10(dcs100));
 
       const dq = Number(data?.default_quantity);
-      setDefaultQuantity(
-        Number.isFinite(dq) ? Math.min(999, Math.max(1, dq)) : 1
-      );
+      setDefaultQuantity(Number.isFinite(dq) ? Math.min(999, Math.max(1, dq)) : 1);
 
       const pr = (data?.default_wishlist_priority as string | null) ?? "medium";
-      setDefaultWishlistPriority(
-        pr === "low" || pr === "high" ? pr : "medium"
-      );
+      setDefaultWishlistPriority(pr === "low" || pr === "high" ? pr : "medium");
 
-      const vis =
-        (data?.default_collection_visibility as string | null) ?? "private";
+      const vis = (data?.default_collection_visibility as string | null) ?? "private";
       setDefaultCollectionVisibility(vis === "public" ? "public" : "private");
 
       setLoading(false);
@@ -131,6 +141,8 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
     setSaving(true);
     setStatus(null);
 
+    const score100 = tier10ToScore100(clampTier10(defaultConditionTier10, 8));
+
     const { error } = await supabase
       .from("profiles")
       .update({
@@ -147,8 +159,8 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
         push_new_followers: pushNewFollowers,
         push_wishlist_alerts: pushWishlistAlerts,
 
-        // RAW-only defaults
-        default_condition_score: defaultConditionScore,
+        // ✅ store 0–100 in DB
+        default_condition_score: score100,
         default_quantity: defaultQuantity,
         default_wishlist_priority: defaultWishlistPriority,
         default_collection_visibility: defaultCollectionVisibility,
@@ -166,11 +178,7 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
   };
 
   if (loading) {
-    return (
-      <div className="mt-10 text-sm text-[#6B7280] dark:text-[#9CA3AF]">
-        Loading preferences…
-      </div>
-    );
+    return <div className="mt-10 text-sm text-[#6B7280] dark:text-[#9CA3AF]">Loading preferences…</div>;
   }
 
   return (
@@ -178,12 +186,8 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
       <form onSubmit={save} className="space-y-6 max-w-3xl">
         {/* Theme */}
         <div className="rounded-2xl bg-white dark:bg-[#020617] border border-[#E5E9F2] dark:border-[#1F2937] p-6 shadow-sm">
-          <h2 className="text-sm font-semibold text-[#0F172A] dark:text-white mb-2">
-            Theme
-          </h2>
-          <p className="text-xs text-[#6B7280] dark:text-[#9CA3AF] mb-4">
-            Choose how CollectorsHub looks on your device.
-          </p>
+          <h2 className="text-sm font-semibold text-[#0F172A] dark:text-white mb-2">Theme</h2>
+          <p className="text-xs text-[#6B7280] dark:text-[#9CA3AF] mb-4">Choose how CollectorsHub looks on your device.</p>
           <div className="flex gap-3">
             <button
               type="button"
@@ -218,12 +222,8 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
 
         {/* Currency */}
         <div className="rounded-2xl bg-white dark:bg-[#020617] border border-[#E5E9F2] dark:border-[#1F2937] p-6 shadow-sm">
-          <h2 className="text-sm font-semibold text-[#0F172A] dark:text-white mb-2">
-            Currency
-          </h2>
-          <p className="text-xs text-[#6B7280] dark:text-[#9CA3AF] mb-4">
-            Set your preferred currency for prices and totals.
-          </p>
+          <h2 className="text-sm font-semibold text-[#0F172A] dark:text-white mb-2">Currency</h2>
+          <p className="text-xs text-[#6B7280] dark:text-[#9CA3AF] mb-4">Set your preferred currency for prices and totals.</p>
           <div className="flex gap-3">
             <button
               type="button"
@@ -252,9 +252,7 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
 
         {/* Quick Add Defaults (RAW only) */}
         <div className="rounded-2xl bg-white dark:bg-[#020617] border border-[#E5E9F2] dark:border-[#1F2937] p-6 shadow-sm">
-          <h2 className="text-sm font-semibold text-[#0F172A] dark:text-white mb-2">
-            Quick Add Defaults
-          </h2>
+          <h2 className="text-sm font-semibold text-[#0F172A] dark:text-white mb-2">Quick Add Defaults</h2>
           <p className="text-xs text-[#6B7280] dark:text-[#9CA3AF] mb-4">
             These defaults apply to raw items only. Graded is never auto-selected.
           </p>
@@ -262,11 +260,11 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-[#4B5563] dark:text-[#D1D5DB] mb-1">
-                Default Condition Score (1–10)
+                Default Condition (1–10)
               </label>
               <select
-                value={defaultConditionScore}
-                onChange={(e) => setDefaultConditionScore(Number(e.target.value))}
+                value={defaultConditionTier10}
+                onChange={(e) => setDefaultConditionTier10(clampTier10(e.target.value, 8))}
                 className="w-full rounded-lg border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#020617] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#2563EB]"
               >
                 {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
@@ -275,22 +273,19 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
                   </option>
                 ))}
               </select>
+              <div className="mt-2 text-[11px] text-[#6B7280] dark:text-[#9CA3AF]">
+                Stored as <span className="font-semibold">0–100</span> internally ({tier10ToScore100(defaultConditionTier10)}).
+              </div>
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-[#4B5563] dark:text-[#D1D5DB] mb-1">
-                Default Quantity
-              </label>
+              <label className="block text-xs font-medium text-[#4B5563] dark:text-[#D1D5DB] mb-1">Default Quantity</label>
               <input
                 type="number"
                 min={1}
                 max={999}
                 value={defaultQuantity}
-                onChange={(e) =>
-                  setDefaultQuantity(
-                    Math.max(1, Math.min(999, Number(e.target.value) || 1))
-                  )
-                }
+                onChange={(e) => setDefaultQuantity(Math.max(1, Math.min(999, Number(e.target.value) || 1)))}
                 className="w-full rounded-lg border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#020617] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#2563EB]"
               />
             </div>
@@ -301,9 +296,7 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
               </label>
               <select
                 value={defaultWishlistPriority}
-                onChange={(e) =>
-                  setDefaultWishlistPriority(e.target.value as any)
-                }
+                onChange={(e) => setDefaultWishlistPriority(e.target.value as any)}
                 className="w-full rounded-lg border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#020617] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#2563EB]"
               >
                 <option value="low">Low</option>
@@ -318,9 +311,7 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
               </label>
               <select
                 value={defaultCollectionVisibility}
-                onChange={(e) =>
-                  setDefaultCollectionVisibility(e.target.value as any)
-                }
+                onChange={(e) => setDefaultCollectionVisibility(e.target.value as any)}
                 className="w-full rounded-lg border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#020617] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#2563EB]"
               >
                 <option value="private">Private</option>
@@ -332,12 +323,8 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
 
         {/* Email Preferences */}
         <div className="rounded-2xl bg-white dark:bg-[#020617] border border-[#E5E9F2] dark:border-[#1F2937] p-6 shadow-sm">
-          <h2 className="text-sm font-semibold text-[#0F172A] dark:text-white mb-2">
-            Email Preferences
-          </h2>
-          <p className="text-xs text-[#6B7280] dark:text-[#9CA3AF] mb-4">
-            Choose which emails you want to receive.
-          </p>
+          <h2 className="text-sm font-semibold text-[#0F172A] dark:text-white mb-2">Email Preferences</h2>
+          <p className="text-xs text-[#6B7280] dark:text-[#9CA3AF] mb-4">Choose which emails you want to receive.</p>
 
           <div className="space-y-2 text-sm text-[#111827] dark:text-[#E5E7EB]">
             <label className="flex items-center gap-2">
@@ -384,12 +371,8 @@ export default function PreferencesTab({ user }: { user: UserShape }) {
 
         {/* Push Notifications */}
         <div className="rounded-2xl bg-white dark:bg-[#020617] border border-[#E5E9F2] dark:border-[#1F2937] p-6 shadow-sm">
-          <h2 className="text-sm font-semibold text-[#0F172A] dark:text-white mb-2">
-            Push Notifications
-          </h2>
-          <p className="text-xs text-[#6B7280] dark:text-[#9CA3AF] mb-4">
-            Control push notifications.
-          </p>
+          <h2 className="text-sm font-semibold text-[#0F172A] dark:text-white mb-2">Push Notifications</h2>
+          <p className="text-xs text-[#6B7280] dark:text-[#9CA3AF] mb-4">Control push notifications.</p>
 
           <div className="space-y-2 text-sm text-[#111827] dark:text-[#E5E7EB]">
             <label className="flex items-center gap-2">
