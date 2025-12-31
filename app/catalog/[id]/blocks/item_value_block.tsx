@@ -1,20 +1,16 @@
+// app/catalog/[id]/blocks/item_value_block.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { getFairValue } from "@/lib/pricingEngine";
+import type { ConditionMeta } from "@/lib/pricingEngine";
 
 function money(value: number | string | null | undefined, currency: string = "CAD") {
   if (value === null || value === undefined || value === "") return "—";
   const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
   if (!Number.isFinite(n)) return "—";
   return new Intl.NumberFormat("en-CA", { style: "currency", currency, maximumFractionDigits: 2 }).format(n);
-}
-
-function clampScore100(n: any, fallback = 80) {
-  const x = Number(n);
-  if (!Number.isFinite(x)) return fallback;
-  return Math.max(0, Math.min(100, Math.round(x)));
 }
 
 function normalizeFairValueResult(raw: any): { value: number | null; confidence: "estimated" | "exact" | "unknown"; reason: string | null } {
@@ -58,16 +54,19 @@ function Chip({
       ? "border-amber-300/30 bg-amber-300/10 text-amber-100"
       : "border-white/15 bg-white/5 text-white/80";
   return (
-    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold ${cls}`} title={title}>
+    <span
+      className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold ${cls}`}
+      title={title}
+    >
       {children}
     </span>
   );
 }
 
 /**
- * ✅ NEW condition system support:
+ * ✅ condition_json support:
  * conditionValues = { v, item_type, mode, data:{...} }
- * But we also accept legacy keys while migrating.
+ * Also accepts legacy keys while migrating.
  */
 function extractGrading(conditionValues: Record<string, any>) {
   const cv = conditionValues ?? {};
@@ -104,14 +103,14 @@ export default function ItemValueBlock({
   isBuildingBlocks,
   isGradableCategory,
   conditionValues,
-  conditionScore, // ✅ this is NOW 0–100
+  conditionMeta,
 }: {
   catalogItemId: string;
   categoryName: string | null;
   isBuildingBlocks: boolean;
   isGradableCategory: boolean;
   conditionValues: Record<string, any>;
-  conditionScore: number; // 0–100
+  conditionMeta?: ConditionMeta;
 }) {
   const [marketCurrent, setMarketCurrent] = useState<number | null>(null);
   const [marketAllTimeHigh, setMarketAllTimeHigh] = useState<number | null>(null);
@@ -192,29 +191,23 @@ export default function ItemValueBlock({
       return { value: null, confidence: "unknown" as const, reason: null as string | null };
     }
 
-    // ✅ IMPORTANT: pricing engine now expects 0–100
-    const score100 = clampScore100(conditionScore, 80);
-
     const raw = getFairValue({
       baseMarketPrice,
       category: categoryName ?? "",
-      conditionScore: score100,
+      conditionMeta: conditionMeta ?? null, // ✅ Path 2: meta-driven pricing
       gradingCompany: isGradableCategory && grading.isGraded ? grading.gradingCompany : null,
       gradeValue: isGradableCategory && grading.isGraded ? grading.gradeValue : null,
       gradeLabel: isGradableCategory && grading.isGraded ? grading.gradeLabel : null,
     });
 
-    // Your engine currently returns number only → we treat that as exact.
-    // If later you return objects, normalizeFairValueResult handles it.
     return normalizeFairValueResult(raw);
-  }, [baseMarketPrice, categoryName, conditionScore, grading, isGradableCategory]);
+  }, [baseMarketPrice, categoryName, conditionMeta, grading, isGradableCategory]);
 
   const displayedCurrentValue = itemFair.value ?? marketCurrent ?? null;
 
   const showEstimatedNote = itemFair.confidence === "estimated";
   const estimatedTooltip = itemFair.reason?.trim()?.length ? itemFair.reason : "Adjusted from recent sales using condition modeling.";
 
-  // ✅ Show grade label if graded
   const gradeChip = useMemo(() => {
     if (!isGradableCategory) return null;
     if (!grading.isGraded) return null;
@@ -244,10 +237,7 @@ export default function ItemValueBlock({
 
           <div className="shrink-0 text-right space-y-2">
             {marketLastUpdated ? <Chip tone="neutral">{`Updated ${marketLastUpdated}`}</Chip> : <Chip tone="neutral">No recent sales</Chip>}
-
             {gradeChip ? <Chip tone="neutral">{String(gradeChip)}</Chip> : null}
-
-            {/* optional: show lego tag, purely informational */}
             {isBuildingBlocks ? <Chip tone="neutral">LEGO</Chip> : null}
           </div>
         </div>
