@@ -6,6 +6,7 @@ export type DealBadge = {
   ratio: number;
 };
 
+// Same curve as before, but now we derive tier10 from score100
 const CONDITION_MULTIPLIERS: Record<number, number> = {
   10: 1.2,
   9: 1.1,
@@ -19,10 +20,21 @@ const CONDITION_MULTIPLIERS: Record<number, number> = {
   1: 0.15,
 };
 
-function clampScore(score: any): number {
-  const n = Number(score);
+function clampTier10(tier: any): number {
+  const n = Number(tier);
   if (!Number.isFinite(n)) return 8;
   return Math.max(1, Math.min(10, n));
+}
+
+function clampScore100(score100: any): number {
+  const n = Number(score100);
+  if (!Number.isFinite(n)) return 80;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+function score100ToTier10(score100: any): number {
+  const s = clampScore100(score100);
+  return clampTier10(Math.round(s / 10));
 }
 
 function norm(s: any): string {
@@ -40,7 +52,6 @@ function normalizeCategory(category: any): string {
   if (c.includes("comic")) return "Comics";
   if (c.includes("toy")) return "Toys";
 
-  // Default bucket (LEGO/Mega Bloks/Movies/Music/Video Games/etc.)
   return "Other";
 }
 
@@ -48,7 +59,6 @@ function normalizeGradingCompany(gradingCompany: any, gradeLabel: any): string {
   const gc = norm(gradingCompany);
   const gl = norm(gradeLabel);
 
-  // Treat any "black label" as BGS Black Label
   if (gc.includes("black") || gl.includes("black")) return "BGS Black Label";
 
   if (gc.includes("psa")) return "PSA";
@@ -63,41 +73,76 @@ function normalizeGradingCompany(gradingCompany: any, gradeLabel: any): string {
   return "";
 }
 
-export function getConditionLabel(score: any): string {
-  const s = clampScore(score);
+/**
+ * ✅ Labels are now based on tier10 (1–10), derived from score100.
+ * We keep the names you already use.
+ */
+export function getConditionLabel(tierOrScore: any): string {
+  // Accept either tier10 or score100
+  const n = Number(tierOrScore);
+  const tier10 = n > 10 ? score100ToTier10(n) : clampTier10(n);
 
-  if (s >= 9.75) return "Gem Mint";
-  if (s >= 9.25) return "Mint";
-  if (s >= 8.5) return "Near Mint";
-  if (s >= 7.5) return "Excellent";
-  if (s >= 6.5) return "Very Good";
-  if (s >= 5.5) return "Good";
-  if (s >= 4.5) return "Fair";
-  if (s >= 3.5) return "Poor";
-  if (s >= 2.5) return "Very Poor";
-  if (s >= 1.5) return "Damaged";
+  if (tier10 >= 10) return "Near Mint";
+  if (tier10 === 9) return "Excellent";
+  if (tier10 === 8) return "Very Good";
+  if (tier10 === 7) return "Good";
+  if (tier10 === 6) return "Fair";
+  if (tier10 === 5) return "Poor";
+  if (tier10 === 4) return "Very Poor";
+  if (tier10 === 3) return "Damaged";
+  if (tier10 === 2) return "For Parts";
   return "For Parts";
 }
 
-export function getConditionMultiplier(score: any): number {
-  const s = clampScore(score);
+/**
+ * ✅ Multiplier takes score100 now (0–100).
+ */
+export function getConditionMultiplier(score100: any): number {
+  const tier10 = score100ToTier10(score100);
 
-  const lo = Math.floor(s);
-  const hi = Math.ceil(s);
+  const lo = Math.floor(tier10);
+  const hi = Math.ceil(tier10);
 
   const loM = CONDITION_MULTIPLIERS[lo] ?? 1.0;
   const hiM = CONDITION_MULTIPLIERS[hi] ?? 1.0;
 
   if (lo === hi) return loM;
 
-  const t = (s - lo) / (hi - lo);
+  const t = (tier10 - lo) / (hi - lo);
   return loM + (hiM - loM) * t;
+}
+
+/**
+ * ✅ Reads grading info from BOTH new schema (cj.data.*) and legacy keys.
+ */
+function extractGradingFromConditionJson(conditionJson: any): {
+  gradingCompany: string | null;
+  gradeLabel: string | null;
+} {
+  const cj = conditionJson ?? {};
+  const data = cj?.data ?? cj;
+
+  const gradingCompany =
+    typeof data?.grading_company === "string"
+      ? data.grading_company
+      : typeof data?.gradingCompany === "string"
+        ? data.gradingCompany
+        : null;
+
+  const gradeLabel =
+    typeof data?.grade_label === "string"
+      ? data.grade_label
+      : typeof data?.gradeLabel === "string"
+        ? data.gradeLabel
+        : null;
+
+  return { gradingCompany, gradeLabel };
 }
 
 export function getGradingPremium({
   category,
   gradingCompany,
-  gradeValue, // kept for signature; not used in fallback table
+  gradeValue, // kept for signature
   gradeLabel,
 }: {
   category: string;
@@ -108,7 +153,6 @@ export function getGradingPremium({
   const cat = normalizeCategory(category);
   const company = normalizeGradingCompany(gradingCompany, gradeLabel);
 
-  // Not graded / unknown grader
   if (!company) return 1.0;
 
   if (cat === "Sports Cards") {
@@ -149,10 +193,12 @@ export function getGradingPremium({
     return table[company] ?? 1.0;
   }
 
-  // LEGO / Mega Bloks / Movies / Music / Video Games / anything else
   return 1.0;
 }
 
+/**
+ * ✅ conditionScore is NOW 0–100
+ */
 export function getFairValue({
   baseMarketPrice,
   category,
@@ -163,7 +209,7 @@ export function getFairValue({
 }: {
   baseMarketPrice: number;
   category: string;
-  conditionScore: number;
+  conditionScore: number; // 0–100
   gradingCompany?: string | null;
   gradeValue?: number | string | null;
   gradeLabel?: string | null;
