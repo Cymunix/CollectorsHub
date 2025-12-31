@@ -47,13 +47,14 @@ function normalizeVisibility(vRaw: any): CollectionVisibility {
 function normalizeConditionMeta(v: any): ConditionMeta {
   const obj = safeJsonParse(v) ?? v;
 
-  const stateRaw = String(obj?.state ?? "open_complete").trim();
+  // accept both keys; we store as "status" going forward
+  const statusRaw = String(obj?.status ?? obj?.state ?? "open_complete").trim();
   const gradeRaw = String(obj?.grade ?? "good").trim();
   const flagsRaw = obj?.flags;
 
-  const state =
-    stateRaw === "sealed" || stateRaw === "open_complete" || stateRaw === "open_incomplete" || stateRaw === "loose"
-      ? stateRaw
+  const status =
+    statusRaw === "sealed" || statusRaw === "open_complete" || statusRaw === "open_incomplete" || statusRaw === "loose"
+      ? statusRaw
       : "open_complete";
 
   const grade =
@@ -63,7 +64,8 @@ function normalizeConditionMeta(v: any): ConditionMeta {
 
   const flags = Array.isArray(flagsRaw) ? flagsRaw.map((x: any) => String(x)).filter(Boolean) : [];
 
-  return { state, grade, flags };
+  // ✅ ConditionMeta no longer has `state`
+  return { status, grade, flags } as any;
 }
 
 /**
@@ -79,11 +81,13 @@ function metaToTier10(meta: ConditionMeta): number {
     poor: 4,
   };
 
-  let t = baseByGrade[String(meta?.grade ?? "")] ?? 8;
+  let t = baseByGrade[String((meta as any)?.grade ?? "")] ?? 8;
 
-  if (meta?.state === "sealed") t = Math.min(10, t + 1);
-  if (meta?.state === "open_incomplete") t = Math.max(1, t - 1);
-  if (meta?.state === "loose") t = Math.max(1, t - 1);
+  const status = String((meta as any)?.status ?? (meta as any)?.state ?? "");
+
+  if (status === "sealed") t = Math.min(10, t + 1);
+  if (status === "open_incomplete") t = Math.max(1, t - 1);
+  if (status === "loose") t = Math.max(1, t - 1);
 
   return clamp(Math.round(t), 1, 10);
 }
@@ -96,10 +100,10 @@ export function useQuickAddPreference() {
 
   // ✅ NEW: real-world default condition meta (Path 2)
   const [defaultConditionMeta, setDefaultConditionMeta] = useState<ConditionMeta>({
-    state: "open_complete",
+    status: "open_complete",
     grade: "good",
     flags: [],
-  });
+  } as any);
 
   // ✅ Convenience outputs for legacy UI pieces that still want numbers
   const [defaultConditionTier10, setDefaultConditionTier10] = useState<number>(8);
@@ -114,7 +118,12 @@ export function useQuickAddPreference() {
 
     const applyFallback = () => {
       setValue("collection");
-      const meta: ConditionMeta = { state: "open_complete", grade: "good", flags: [] };
+      const meta: ConditionMeta = {
+        status: "open_complete",
+        grade: "good",
+        flags: [],
+      } as any;
+
       setDefaultConditionMeta(meta);
       setDefaultConditionTier10(metaToTier10(meta));
       setDefaultQuantity(1);
@@ -166,7 +175,12 @@ export function useQuickAddPreference() {
           const dcsRaw = Number((res.data as any)?.default_condition_score);
           const tier10 = Number.isFinite(dcsRaw) ? clamp(Math.round(dcsRaw), 1, 10) : 8;
 
-          const fallbackMeta: ConditionMeta = { state: "open_complete", grade: "good", flags: [] };
+          const fallbackMeta: ConditionMeta = {
+            status: "open_complete",
+            grade: "good",
+            flags: [],
+          } as any;
+
           setDefaultConditionMeta(fallbackMeta);
           setDefaultConditionTier10(tier10);
         }
