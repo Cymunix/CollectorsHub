@@ -1,8 +1,16 @@
+// app/catalog/[id]/tabs/item_listings.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { getConditionLabel, getDealBadge, getFairValue, type DealBadge } from "@/lib/pricingEngine";
+import {
+  getConditionLabel,
+  getDealBadge,
+  getFairValue,
+  tier10ToGrade,
+  type DealBadge,
+  type ConditionMeta,
+} from "@/lib/pricingEngine";
 
 type MarketplaceListing = {
   id: string;
@@ -58,24 +66,6 @@ function clampScore(n: any, fallback = 8) {
   return Math.max(1, Math.min(10, x));
 }
 
-function normalizeFairValueResult(raw: any): { value: number | null; confidence: "estimated" | "exact" | "unknown"; reason: string | null } {
-  if (typeof raw === "number" && Number.isFinite(raw)) return { value: raw, confidence: "exact", reason: null };
-  if (raw && typeof raw === "object") {
-    const v =
-      typeof raw.value === "number"
-        ? raw.value
-        : typeof raw.fairValue === "number"
-        ? raw.fairValue
-        : typeof raw.price === "number"
-        ? raw.price
-        : null;
-    const conf = raw.confidence === "estimated" || raw.confidence === "exact" ? raw.confidence : "unknown";
-    const reason = typeof raw.reason === "string" && raw.reason.trim().length ? raw.reason : null;
-    return { value: v !== null && Number.isFinite(v) ? v : null, confidence: conf, reason };
-  }
-  return { value: null, confidence: "unknown", reason: null };
-}
-
 function prettyConditionFromJson(condition_json: Record<string, any> | null | undefined) {
   if (!condition_json) return null;
   const keys = Object.keys(condition_json).filter((k) => !!condition_json[k]);
@@ -110,18 +100,28 @@ function prettyConditionFromJson(condition_json: Record<string, any> | null | un
 function DealBadgePill({ badge }: { badge: DealBadge }) {
   const tooltip = "Compared to recent condition-adjusted market value.";
 
-  const stylesByColor: Record<DealBadge["color"], string> = {
-    green: "border-emerald-200 bg-emerald-50 text-emerald-700",
-    blue: "border-blue-200 bg-blue-50 text-blue-700",
-    red: "border-red-200 bg-red-50 text-red-700",
+  const stylesByBadge: Record<DealBadge, string> = {
+    great: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    good: "border-blue-200 bg-blue-50 text-blue-700",
+    fair: "border-slate-200 bg-slate-50 text-slate-700",
+    overpriced: "border-red-200 bg-red-50 text-red-700",
+    unknown: "border-slate-200 bg-white text-slate-600",
+  };
+
+  const labelByBadge: Record<DealBadge, string> = {
+    great: "Great deal",
+    good: "Good deal",
+    fair: "Fair",
+    overpriced: "Overpriced",
+    unknown: "Unknown",
   };
 
   return (
     <span
       title={tooltip}
-      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${stylesByColor[badge.color]}`}
+      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${stylesByBadge[badge]}`}
     >
-      {badge.label}
+      {labelByBadge[badge]}
     </span>
   );
 }
@@ -132,7 +132,9 @@ function MiniTab({ active, onClick, children }: { active: boolean; onClick: () =
       type="button"
       onClick={onClick}
       className={`rounded-full px-3 py-1.5 text-[11px] font-semibold border transition ${
-        active ? "bg-[#0F172A] text-white border-[#0F172A]" : "bg-white text-[#0F172A] border-[#E5E9F2] hover:bg-[#F8FAFC]"
+        active
+          ? "bg-[#0F172A] text-white border-[#0F172A]"
+          : "bg-white text-[#0F172A] border-[#E5E9F2] hover:bg-[#F8FAFC]"
       }`}
     >
       {children}
@@ -231,13 +233,15 @@ export default function ItemListingsTab({
     try {
       let q = supabase
         .from("marketplace_listings")
-        .select("id,created_at,seller_user_id,catalog_item_id,user_collection_item_id,title,description,price_cad,photo_url,condition_json,status")
+        .select(
+          "id,created_at,seller_user_id,catalog_item_id,user_collection_item_id,title,description,price_cad,photo_url,condition_json,status"
+        )
         .eq("catalog_item_id", catalogItemId)
         .eq("status", "active");
 
       if (sort === "newest") q = q.order("created_at", { ascending: false });
       if (sort === "price_asc") q = q.order("price_cad", { ascending: true, nullsFirst: false });
-      if (sort === "price_desc") q = q.order("price_cad", { ascending: false, nullsFirst: false }); // ✅ nulls last
+      if (sort === "price_desc") q = q.order("price_cad", { ascending: false, nullsFirst: false });
 
       const res = await q.limit(50);
       if (res.error) throw res.error;
@@ -271,17 +275,10 @@ export default function ItemListingsTab({
     return prettyConditionFromJson(cj) ?? "—";
   };
 
-  const listingPricingInputs = (l: MarketplaceListing) => {
+  const listingScore10 = (l: MarketplaceListing) => {
     const cj = l.condition_json || {};
     const scoreRaw = cj.conditionScore ?? cj.condition_score;
-    const conditionScoreForListing = scoreRaw !== undefined && scoreRaw !== null && scoreRaw !== "" ? clampScore(scoreRaw, 8) : 8;
-
-    return {
-      conditionScore: conditionScoreForListing,
-      gradingCompany: typeof cj.gradingCompany === "string" ? cj.gradingCompany : null,
-      gradeValue: cj.gradeValue !== undefined && cj.gradeValue !== null && cj.gradeValue !== "" ? Number(cj.gradeValue) : null,
-      gradeLabel: typeof cj.gradeLabel === "string" ? cj.gradeLabel : null,
-    };
+    return scoreRaw !== undefined && scoreRaw !== null && scoreRaw !== "" ? clampScore(scoreRaw, 8) : 8;
   };
 
   const handleBuyNow = (l: MarketplaceListing) => {
@@ -368,24 +365,11 @@ export default function ItemListingsTab({
             ) : (
               <div className="space-y-3">
                 {listings.map((l) => {
-                  const { conditionScore: lScore, gradingCompany, gradeValue, gradeLabel } = listingPricingInputs(l);
+                  const lScore = listingScore10(l);
 
-                  // ✅ Normalize inputs so helpers never receive nulls for required fields
-                  const safeBase = typeof baseMarketPrice === "number" && Number.isFinite(baseMarketPrice) ? baseMarketPrice : 0;
-                  const safeCategory = typeof categoryName === "string" && categoryName.trim().length ? categoryName : "unknown";
+                  const safeBase =
+                    typeof baseMarketPrice === "number" && Number.isFinite(baseMarketPrice) ? baseMarketPrice : 0;
 
-                  const fairRaw = getFairValue({
-                    baseMarketPrice: safeBase,
-                    category: safeCategory,
-                    conditionScore: lScore,
-                    gradingCompany,
-                    gradeValue,
-                    gradeLabel,
-                  });
-
-                  const fair = normalizeFairValueResult(fairRaw);
-
-                  // ✅ Only call getDealBadge if both numbers exist
                   const listingPrice =
                     typeof l.price_cad === "number"
                       ? l.price_cad
@@ -393,14 +377,24 @@ export default function ItemListingsTab({
                       ? NaN
                       : Number(l.price_cad);
 
-                  const fairValue = typeof fair.value === "number" && Number.isFinite(fair.value) ? fair.value : NaN;
+                  // Build ConditionMeta from score (simple, consistent)
+                  const conditionMeta: ConditionMeta = {
+                    state: "open_complete",
+                    grade: tier10ToGrade(lScore),
+                    flags: [],
+                  };
 
-                  const badge =
+                  // New engine expects baseValueCad + conditionMeta
+                  const fairValueNum = getFairValue({
+                    baseValueCad: safeBase,
+                    conditionMeta,
+                  });
+
+                  const fairValue = typeof fairValueNum === "number" && Number.isFinite(fairValueNum) ? fairValueNum : NaN;
+
+                  const badge: DealBadge | null =
                     Number.isFinite(listingPrice) && Number.isFinite(fairValue)
-                      ? getDealBadge({
-                          listingPrice,
-                          fairValue,
-                        })
+                      ? getDealBadge(listingPrice, fairValue)
                       : null;
 
                   return (
@@ -409,11 +403,7 @@ export default function ItemListingsTab({
                         <div className="h-14 w-14 rounded-lg border border-[#E5E9F2] bg-[#F8FAFC] overflow-hidden flex items-center justify-center shrink-0">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           {l.photo_url ? (
-                            <img
-                              src={l.photo_url}
-                              alt={safeText(l.title ?? itemName)}
-                              className="h-full w-full object-cover"
-                            />
+                            <img src={l.photo_url} alt={safeText(l.title ?? itemName)} className="h-full w-full object-cover" />
                           ) : (
                             <div className="text-[10px] text-[#94A3B8]">No photo</div>
                           )}
@@ -422,12 +412,21 @@ export default function ItemListingsTab({
                         <div className="min-w-0 flex-1">
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
-                              <div className="text-sm font-semibold text-[#0F172A] truncate">{safeText(l.title ?? itemName)}</div>
+                              <div className="text-sm font-semibold text-[#0F172A] truncate">
+                                {safeText(l.title ?? itemName)}
+                              </div>
 
                               <div className="mt-1 flex items-center gap-2">
                                 <div className="text-[11px] text-[#64748B]">Condition • {listingConditionText(l)}</div>
                                 {badge ? <DealBadgePill badge={badge} /> : null}
                               </div>
+
+                              {/* Optional: show fair value */}
+                              {Number.isFinite(fairValue) && fairValue > 0 ? (
+                                <div className="mt-0.5 text-[11px] text-[#94A3B8]">
+                                  Fair value: {money(fairValue)} {safeBase > 0 ? "" : "(no market data)"}
+                                </div>
+                              ) : null}
                             </div>
 
                             <div className="text-sm font-bold text-[#0F172A] shrink-0">{money(l.price_cad)}</div>
