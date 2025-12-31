@@ -72,7 +72,9 @@ export function deriveConditionMeta(conditionJson: any): ConditionMeta {
 
   const cj = conditionJson ?? {};
   const data = cj?.data ?? {};
-  const itemType = String(cj?.item_type ?? data?.item_type ?? "").toLowerCase().trim();
+  const itemType = String(cj?.item_type ?? data?.item_type ?? "")
+    .toLowerCase()
+    .trim();
   const mode = String(cj?.mode ?? "").toLowerCase().trim();
 
   // universal: explicit "for parts" in any legacy blob
@@ -129,7 +131,8 @@ export function deriveConditionMeta(conditionJson: any): ConditionMeta {
     if (data?.instructions?.included === false) flags.push("instructions_missing");
     if (!!data?.stickers?.applied) flags.push("stickers_applied");
     if (!!data?.yellowing) flags.push("yellowing");
-    if (typeof data?.discoloration_tier === "number" && data.discoloration_tier <= 5) flags.push("discoloration");
+    if (typeof data?.discoloration_tier === "number" && data.discoloration_tier <= 5)
+      flags.push("discoloration");
 
     const status: ConditionStatus = piecesComplete && !anyMissingMinifigs ? "complete" : "incomplete";
     return { status, flags: uniq(flags) };
@@ -188,11 +191,14 @@ export function getFairValue(args: {
   // Prefer new meta
   const meta: ConditionMeta =
     args.conditionMeta && args.conditionMeta.status
-      ? { status: args.conditionMeta.status, flags: Array.isArray(args.conditionMeta.flags) ? args.conditionMeta.flags : [] }
+      ? {
+          status: args.conditionMeta.status,
+          flags: Array.isArray(args.conditionMeta.flags) ? args.conditionMeta.flags : [],
+        }
       : // fallback: infer "graded" if old callers pass gradingCompany/gradeValue
-        args.gradingCompany || args.gradeValue != null
-        ? { status: "graded", flags: uniq([`graded:${String(args.gradingCompany ?? "").toUpperCase()}`]) }
-        : { status: "complete", flags: [] };
+      args.gradingCompany || args.gradeValue != null
+      ? { status: "graded", flags: uniq([`graded:${String(args.gradingCompany ?? "").toUpperCase()}`]) }
+      : { status: "complete", flags: [] };
 
   let multiplier = 1;
 
@@ -227,6 +233,36 @@ export function getFairValue(args: {
   }
 
   return round2(base * multiplier);
+}
+
+/* =========================================================
+   Back-compat label helpers (for old UI imports)
+   ========================================================= */
+
+export function statusLabel(s: ConditionStatus | null | undefined): string {
+  switch (s) {
+    case "sealed":
+      return "Sealed";
+    case "complete":
+      return "Complete";
+    case "incomplete":
+      return "Incomplete";
+    case "for_parts":
+      return "For parts";
+    case "graded":
+      return "Graded";
+    default:
+      return "Unknown";
+  }
+}
+
+export function flagLabel(flag: string | null | undefined): string {
+  const f = String(flag ?? "").trim();
+  if (!f) return "";
+  return f
+    .replace(/^graded:/i, "Graded: ")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 /* =========================================================
