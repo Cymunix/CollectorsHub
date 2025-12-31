@@ -20,6 +20,8 @@ import ItemVariantsTab from "./tabs/item_variants";
 import ItemReviewsTab from "./tabs/item_reviews";
 import ItemSalesHistoryTab from "./tabs/item_sales_history";
 
+import type { ConditionMeta } from "@/lib/pricingEngine";
+
 type TabKey = "Item Information" | "variants" | "reviews" | "sales_history" | "listings";
 
 type CatalogItem = {
@@ -62,10 +64,9 @@ function safeText(v: any) {
 }
 
 // Renders stars based on avg. Always returns 5 glyphs.
-// Uses ★ for filled and ☆ for empty. No half-star; we round to nearest 0.1 for text.
 function Stars({ avg }: { avg: number }) {
   const clamped = Math.max(0, Math.min(5, avg));
-  const filled = Math.round(clamped); // visual: nearest whole star
+  const filled = Math.round(clamped);
   const empty = 5 - filled;
 
   return (
@@ -134,12 +135,12 @@ export default function Page({ params }: { params: { id: string } }) {
   const [franchise, setFranchise] = useState<Franchise | null>(null);
 
   // Reviews summary for stars beside name
-  const [reviewAvg, setReviewAvg] = useState<number>(0); // 0 when none
+  const [reviewAvg, setReviewAvg] = useState<number>(0);
   const [reviewCount, setReviewCount] = useState<number>(0);
 
-  // Shared condition state
+  // ✅ Path 2: Shared condition state (meta-first)
   const [conditionValues, setConditionValues] = useState<Record<string, any>>({});
-  const [conditionScore, setConditionScore] = useState<number>(8);
+  const [conditionMeta, setConditionMeta] = useState<ConditionMeta | null>(null);
 
   // Building Blocks extras
   const [bbIsSet, setBbIsSet] = useState<boolean>(false);
@@ -480,7 +481,6 @@ export default function Page({ params }: { params: { id: string } }) {
   const displayName = loadingHeader ? "Loading..." : safeText(isMinifigPage ? minifigItem?.name : item?.name);
 
   // ✅ IMPORTANT: Decide BB mode WITHOUT relying on bbIsSet
-  // If it’s not a minifig, treat it as a SET.
   const bbMode: "set" | "minifig" = isBuildingBlocks && (isMinifigPage || bbIsMinifig) ? "minifig" : "set";
 
   return (
@@ -565,7 +565,7 @@ export default function Page({ params }: { params: { id: string } }) {
                 isBuildingBlocks={isBuildingBlocks}
                 isGradableCategory={isGradableCategory}
                 conditionValues={conditionValues}
-                conditionScore={conditionScore}
+                conditionMeta={conditionMeta ?? undefined}
               />
 
               {isBuildingBlocks ? (
@@ -574,10 +574,10 @@ export default function Page({ params }: { params: { id: string } }) {
                   catalogItemId={catalogItemId}
                   expectedMinifigs={bbMode === "set" ? bbMinifigs : []}
                   conditionValues={conditionValues}
-                  conditionScore={conditionScore}
-                  onChange={(nextValues, nextScore) => {
+                  conditionMeta={conditionMeta ?? undefined}
+                  onChange={(nextValues, nextMeta) => {
                     setConditionValues(nextValues);
-                    setConditionScore(nextScore);
+                    setConditionMeta(nextMeta);
                   }}
                 />
               ) : (
@@ -587,10 +587,10 @@ export default function Page({ params }: { params: { id: string } }) {
                   isBuildingBlocks={isBuildingBlocks}
                   isGradableCategory={isGradableCategory}
                   conditionValues={conditionValues}
-                  conditionScore={conditionScore}
-                  onChange={(nextValues, nextScore) => {
+                  conditionMeta={conditionMeta ?? undefined}
+                  onChange={(nextValues, nextMeta) => {
                     setConditionValues(nextValues);
-                    setConditionScore(nextScore);
+                    setConditionMeta(nextMeta);
                   }}
                 />
               )}
@@ -603,7 +603,7 @@ export default function Page({ params }: { params: { id: string } }) {
                 userId={userId}
                 onRequireAuth={() => setAuthOpen(true)}
                 conditionValues={conditionValues}
-                seedMinifigs={bbMode === "set" ? bbMinifigs : []} // ✅ seed from bbMinifigs, not conditionValues
+                seedMinifigs={bbMode === "set" ? bbMinifigs : []}
               />
             </div>
           </div>
@@ -633,10 +633,7 @@ export default function Page({ params }: { params: { id: string } }) {
             {tab === "variants" ? <ItemVariantsTab catalogItemId={catalogItemId} /> : null}
             {tab === "reviews" ? <ItemReviewsTab catalogItemId={catalogItemId} /> : null}
             {tab === "sales_history" ? (
-              <ItemSalesHistoryTab
-  catalogItemId={catalogItemId}
-  selectedConditionJson={conditionValues}
-/>
+              <ItemSalesHistoryTab catalogItemId={catalogItemId} selectedConditionJson={conditionValues} />
             ) : null}
             {tab === "listings" ? (
               <ItemListingsTab
@@ -653,4 +650,3 @@ export default function Page({ params }: { params: { id: string } }) {
     </main>
   );
 }
-
