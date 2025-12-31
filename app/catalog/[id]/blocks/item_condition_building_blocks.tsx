@@ -16,6 +16,10 @@ type Minifig = {
   image_url: string | null;
 };
 
+type ConditionState = "sealed" | "open_complete" | "open_incomplete" | "loose";
+type ConditionGrade = "mint" | "excellent" | "good" | "fair" | "poor";
+type ConditionMeta = { state: ConditionState; grade: ConditionGrade; flags: string[] };
+
 type Props = {
   mode: "set" | "minifig";
   catalogItemId: string;
@@ -24,11 +28,11 @@ type Props = {
   // IMPORTANT: this is now condition_json (not random booleans)
   conditionValues: Record<string, any>;
 
-  // IMPORTANT: this is now 0–100
-  conditionScore: number;
+  // NEW: real-world condition meta
+  conditionMeta?: ConditionMeta;
 
-  // IMPORTANT: nextScore is 0–100
-  onChange: (nextValues: Record<string, any>, nextScore: number) => void;
+  // NEW: return json + meta (no score)
+  onChange: (nextValues: Record<string, any>, nextMeta: ConditionMeta) => void;
 };
 
 function clampTier10(n: any, fallback = 8) {
@@ -88,6 +92,19 @@ function getIncludedCount(
 
 function deriveTierFromScore100(score100: number) {
   return clampTier10(Math.round(score100 / 10), 8);
+}
+
+function gradeFromTier10(tier10: number): ConditionGrade {
+  const t = clampTier10(tier10, 8);
+  if (t >= 9) return "mint";
+  if (t >= 8) return "excellent";
+  if (t >= 6) return "good";
+  if (t >= 4) return "fair";
+  return "poor";
+}
+
+function uniqFlags(flags: string[]) {
+  return Array.from(new Set(flags.filter(Boolean)));
 }
 
 /**
@@ -179,7 +196,6 @@ function computeMinifigScore100(bb: any) {
 }
 
 function buildLegoConditionJson(mode: "set" | "minifig", bb: any) {
-  // Determine state string
   const state = bb.sealed
     ? "sealed"
     : bb.piecesComplete !== false
@@ -225,12 +241,73 @@ function buildLegoConditionJson(mode: "set" | "minifig", bb: any) {
   };
 }
 
+function computeLegoMeta(mode: "set" | "minifig", bb: any, expectedMinifigs: Minifig[], tier10: number): ConditionMeta {
+  const flags: string[] = [];
+
+  let state: ConditionState = "open_complete";
+
+  if (mode === "minifig") {
+    state = "loose";
+  } else {
+    // set
+    if (!!bb.sealed) {
+      state = "sealed";
+      // sealed: only packaging matters, still useful flags
+      flags.push("sealed");
+    } else {
+      const piecesComplete = bb.piecesComplete !== false;
+
+      const rows: Array<{ instance_key?: string; minifig_id?: string; id?: string; included: boolean }> = Array.isArray(bb.minifigs)
+        ? bb.minifigs
+        : [];
+
+      const expected = expectedMinifigs ?? [];
+      const included = expected.length > 0 ? getIncludedCount(rows, expected) : 0;
+      const missing = expected.length > 0 ? Math.max(0, expected.length - included) : 0;
+
+      const hasBox = !!bb.box?.included;
+      const hasInstructions = !!bb.instructions?.included;
+
+      if (!piecesComplete) flags.push("pieces_incomplete");
+      if (!hasBox) flags.push("box_missing");
+      if (!hasInstructions) flags.push("instructions_missing");
+
+      if (!!bb.stickersApplied) flags.push("stickers_applied");
+      if (!!bb.yellowing) flags.push("yellowing");
+
+      const discolorTier = clampTier10(bb.discoloration ?? 8, 8);
+      if (discolorTier <= 5) flags.push("discoloration");
+
+      if (missing > 0) flags.push(`minifigs_missing:${missing}`);
+
+      // define "complete" in real-world terms:
+      // pieces complete + no expected missing minifigs (if expected list exists)
+      const minifigsOk = expected.length === 0 ? true : missing === 0;
+      state = piecesComplete && minifigsOk ? "open_complete" : "open_incomplete";
+    }
+  }
+
+  // minifig flags
+  if (mode === "minifig") {
+    if (bb.hasAccessories === false) flags.push("accessories_missing");
+    if (!!bb.cracks) flags.push("cracks");
+    if (!!bb.looseJoints) flags.push("loose_joints");
+    if (!!bb.biteMarks) flags.push("bite_marks");
+    if (!!bb.yellowing) flags.push("yellowing");
+    if (!!bb.grime) flags.push("grime");
+  }
+
+  const grade = gradeFromTier10(tier10);
+
+  return { state, grade, flags: uniqFlags(flags) };
+}
+
 export default function ItemConditionBuildingBlocks({
   mode,
   catalogItemId,
   expectedMinifigs = [],
   conditionValues,
-  conditionScore,
+  conditionMeta,
   onChange,
 }: Props) {
   // Normalize input (condition_json) into an internal "bb" state shape the UI expects.
@@ -271,7 +348,7 @@ export default function ItemConditionBuildingBlocks({
     };
 
     return { bb: normalizedBB };
-  }, [conditionValues, conditionScore, mode]);
+  }, [conditionValues, mode]);
 
   const bb = root.bb;
 
@@ -314,14 +391,18 @@ export default function ItemConditionBuildingBlocks({
       .filter(Boolean) as Array<{ instance_key: string; included: boolean }>;
 
     const nextBB = { ...bb, type: "set", minifigs: nextMinifigs };
+
     const nextJson = buildLegoConditionJson("set", {
       ...nextBB,
       stickers: { applied: nextBB.stickersApplied, tier: nextBB.stickerQuality },
       discoloration_tier: nextBB.discoloration,
     });
-    const nextScore100 = computeLegoScore100(nextBB, expectedMinifigs);
 
-    onChange(nextJson, nextScore100);
+    const score100 = computeLegoScore100(nextBB, expectedMinifigs);
+    const tier10 = deriveTierFromScore100(score100);
+    const nextMeta = computeLegoMeta("set", nextBB, expectedMinifigs, tier10);
+
+    onChange(nextJson, nextMeta);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, catalogItemId, expectedMinifigs]);
 
@@ -354,6 +435,10 @@ export default function ItemConditionBuildingBlocks({
 
   const tier10 = useMemo(() => deriveTierFromScore100(score100), [score100]);
 
+  const meta = useMemo(() => {
+    return computeLegoMeta(mode, bb, expectedMinifigs, tier10);
+  }, [mode, bb, expectedMinifigs, tier10]);
+
   const push = (nextBB: any) => {
     const nextJson = buildLegoConditionJson(mode, {
       ...nextBB,
@@ -361,8 +446,12 @@ export default function ItemConditionBuildingBlocks({
       discoloration_tier: nextBB.discoloration,
     });
 
-    const nextScore100 = mode === "set" ? computeLegoScore100(nextBB, expectedMinifigs) : computeMinifigScore100(nextBB);
-    onChange(nextJson, nextScore100);
+    const nextScore100 =
+      mode === "set" ? computeLegoScore100(nextBB, expectedMinifigs) : computeMinifigScore100(nextBB);
+    const nextTier10 = deriveTierFromScore100(nextScore100);
+    const nextMeta = computeLegoMeta(mode, nextBB, expectedMinifigs, nextTier10);
+
+    onChange(nextJson, nextMeta);
   };
 
   const setBB = (patch: Partial<typeof bb>) => {
@@ -410,7 +499,7 @@ export default function ItemConditionBuildingBlocks({
 
         <div className="flex items-center gap-2 shrink-0">
           <Badge>
-            {tier10}/10 • {score100}/100 — {getConditionLabel(tier10)}
+            {tier10}/10 • {score100}/100 — {getConditionLabel(tier10)} • {meta.state} / {meta.grade}
           </Badge>
         </div>
       </div>
@@ -452,7 +541,9 @@ export default function ItemConditionBuildingBlocks({
                       </option>
                     ))}
                   </select>
-                  <span className="text-[11px] font-semibold text-[#0F172A]">{getConditionLabel(clampTier10(bb.box?.tier ?? 8, 8))}</span>
+                  <span className="text-[11px] font-semibold text-[#0F172A]">
+                    {getConditionLabel(clampTier10(bb.box?.tier ?? 8, 8))}
+                  </span>
                 </div>
               </div>
 
@@ -481,7 +572,9 @@ export default function ItemConditionBuildingBlocks({
                       </option>
                     ))}
                   </select>
-                  <span className="text-[11px] font-semibold text-[#0F172A]">{getConditionLabel(clampTier10(bb.instructions?.tier ?? 8, 8))}</span>
+                  <span className="text-[11px] font-semibold text-[#0F172A]">
+                    {getConditionLabel(clampTier10(bb.instructions?.tier ?? 8, 8))}
+                  </span>
                 </div>
               </div>
             </div>
@@ -524,7 +617,9 @@ export default function ItemConditionBuildingBlocks({
                       </option>
                     ))}
                   </select>
-                  <span className="text-[11px] font-semibold text-[#0F172A]">{getConditionLabel(clampTier10(bb.stickerQuality ?? 8, 8))}</span>
+                  <span className="text-[11px] font-semibold text-[#0F172A]">
+                    {getConditionLabel(clampTier10(bb.stickerQuality ?? 8, 8))}
+                  </span>
                 </div>
               </div>
 
@@ -543,11 +638,18 @@ export default function ItemConditionBuildingBlocks({
                       </option>
                     ))}
                   </select>
-                  <span className="text-[11px] font-semibold text-[#0F172A]">{getConditionLabel(clampTier10(bb.discoloration ?? 8, 8))}</span>
+                  <span className="text-[11px] font-semibold text-[#0F172A]">
+                    {getConditionLabel(clampTier10(bb.discoloration ?? 8, 8))}
+                  </span>
                 </div>
 
                 <label className="mt-2 flex items-center gap-2 text-[12px] font-semibold text-[#0F172A]">
-                  <input type="checkbox" checked={!!bb.yellowing} onChange={(e) => setBB({ yellowing: e.target.checked })} disabled={!!bb.sealed} />
+                  <input
+                    type="checkbox"
+                    checked={!!bb.yellowing}
+                    onChange={(e) => setBB({ yellowing: e.target.checked })}
+                    disabled={!!bb.sealed}
+                  />
                   Visible yellowing present
                 </label>
               </div>
@@ -561,7 +663,11 @@ export default function ItemConditionBuildingBlocks({
 
             <label className="flex items-center justify-between rounded-2xl border border-[#E5E9F2] bg-white p-3">
               <span className="text-xs font-semibold text-[#0F172A]">Accessories included</span>
-              <input type="checkbox" checked={bb.hasAccessories !== false} onChange={(e) => setBB({ hasAccessories: e.target.checked })} />
+              <input
+                type="checkbox"
+                checked={bb.hasAccessories !== false}
+                onChange={(e) => setBB({ hasAccessories: e.target.checked })}
+              />
             </label>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -572,7 +678,11 @@ export default function ItemConditionBuildingBlocks({
 
               <label className="flex items-center justify-between rounded-2xl border border-[#E5E9F2] bg-white p-3">
                 <span className="text-xs font-semibold text-[#0F172A]">Loose joints</span>
-                <input type="checkbox" checked={!!bb.looseJoints} onChange={(e) => setBB({ looseJoints: e.target.checked })} />
+                <input
+                  type="checkbox"
+                  checked={!!bb.looseJoints}
+                  onChange={(e) => setBB({ looseJoints: e.target.checked })}
+                />
               </label>
 
               <label className="flex items-center justify-between rounded-2xl border border-[#E5E9F2] bg-white p-3">
@@ -582,7 +692,11 @@ export default function ItemConditionBuildingBlocks({
 
               <label className="flex items-center justify-between rounded-2xl border border-[#E5E9F2] bg-white p-3">
                 <span className="text-xs font-semibold text-[#0F172A]">Yellowing</span>
-                <input type="checkbox" checked={!!bb.yellowing} onChange={(e) => setBB({ yellowing: e.target.checked })} />
+                <input
+                  type="checkbox"
+                  checked={!!bb.yellowing}
+                  onChange={(e) => setBB({ yellowing: e.target.checked })}
+                />
               </label>
 
               <label className="flex items-center justify-between rounded-2xl border border-[#E5E9F2] bg-white p-3">
@@ -591,7 +705,7 @@ export default function ItemConditionBuildingBlocks({
               </label>
             </div>
 
-            <div className="text-[11px] text-[#6B7280]">Score is calculated automatically from the selected issues.</div>
+            <div className="text-[11px] text-[#6B7280]">Condition meta is derived automatically from the selected issues.</div>
           </div>
         ) : null}
       </div>
