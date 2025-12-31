@@ -1,13 +1,13 @@
+// app/catalog/[id]/blocks/item_condition_building_blocks.tsx
 "use client";
 
 import React, { useEffect, useMemo } from "react";
+import type { ConditionMeta, ConditionStatus } from "@/lib/pricingEngine";
 
 /**
- * ✅ NEW META MODEL (no numbers)
- * This is what we store + send upstream.
+ * Building Blocks / LEGO condition selector
+ * Uses the canonical ConditionMeta + ConditionStatus from pricingEngine.
  */
-type ConditionStatus = "sealed" | "complete" | "incomplete" | "for_parts";
-type ConditionMeta = { status: ConditionStatus; flags: string[] };
 
 type Minifig = {
   minifig_id?: string;
@@ -23,7 +23,7 @@ type Props = {
   catalogItemId: string;
   expectedMinifigs?: Minifig[];
   conditionValues: Record<string, any>;
-  conditionMeta?: ConditionMeta;
+  conditionMeta?: ConditionMeta; // optional, not required for compute (kept for API symmetry)
   onChange: (nextValues: Record<string, any>, nextMeta: ConditionMeta) => void;
 };
 
@@ -77,11 +77,13 @@ function Pill({
   );
 }
 
-function statusLabel(s: ConditionStatus) {
+function statusLabel(s: ConditionStatus | null | undefined) {
   if (s === "sealed") return "New & Sealed";
   if (s === "complete") return "Complete";
   if (s === "incomplete") return "Incomplete";
-  return "For Parts";
+  if (s === "for_parts") return "For Parts";
+  if (s === "graded") return "Graded";
+  return "Unknown";
 }
 
 function flagLabel(flag: string) {
@@ -176,10 +178,10 @@ function computeLegoMeta(mode: "set" | "minifig", bb: any, expectedMinifigs: Min
   if (partialSeal) flags.push("partial_seal");
   if (sealed) flags.push("sealed");
 
-  // missing minifigs only matters when not sealed-ish (but you can still *select* them)
+  // missing minifigs only matters when not sealed-ish (but you can still select them)
   const rows: Array<{ instance_key?: string; included: boolean }> = Array.isArray(bb.minifigs) ? bb.minifigs : [];
   const expected = expectedMinifigs ?? [];
-  const included = expected.length > 0 ? getIncludedCount(rows, expected) : 0;
+  const included = expected.length > 0 ? getIncludedCount(rows as any, expected) : 0;
   const missing = expected.length > 0 ? Math.max(0, expected.length - included) : 0;
 
   if (!sealed && !partialSeal && missing > 0) flags.push(`minifigs_missing:${missing}`);
@@ -196,7 +198,7 @@ function computeLegoMeta(mode: "set" | "minifig", bb: any, expectedMinifigs: Min
 
 /**
  * ✅ Storage format: condition_json v3
- * Numbers are gone. This is exactly what the user chose.
+ * This mirrors what the user chose.
  */
 function buildLegoConditionJson(mode: "set" | "minifig", bb: any, meta: ConditionMeta) {
   return {
@@ -237,7 +239,7 @@ export default function ItemConditionBuildingBlocks({
   catalogItemId,
   expectedMinifigs = [],
   conditionValues,
-  conditionMeta,
+  conditionMeta, // kept for API symmetry; not required for compute
   onChange,
 }: Props) {
   const root = useMemo(() => {
@@ -372,7 +374,12 @@ export default function ItemConditionBuildingBlocks({
         <div className="flex items-center gap-2 shrink-0">
           <Badge>
             {statusLabel(meta.status)}
-            {meta.flags.length ? ` • ${meta.flags.slice(0, 3).map(flagLabel).join(" • ")}${meta.flags.length > 3 ? "…" : ""}` : ""}
+            {meta.flags.length
+              ? ` • ${meta.flags
+                  .slice(0, 3)
+                  .map(flagLabel)
+                  .join(" • ")}${meta.flags.length > 3 ? "…" : ""}`
+              : ""}
           </Badge>
         </div>
       </div>
@@ -382,16 +389,25 @@ export default function ItemConditionBuildingBlocks({
         <div className="text-xs font-semibold text-[#0F172A] mb-2">Overall status</div>
         <div className="flex flex-wrap gap-2">
           {mode === "set" ? (
-            <Pill active={meta.status === "sealed"} onClick={() => setBB({ sealed: true, partialSeal: false, forParts: false })}>
+            <Pill
+              active={meta.status === "sealed"}
+              onClick={() => setBB({ sealed: true, partialSeal: false, forParts: false })}
+            >
               New & Sealed
             </Pill>
           ) : null}
 
-          <Pill active={meta.status === "complete"} onClick={() => setBB({ sealed: false, partialSeal: false, forParts: false, piecesComplete: true })}>
+          <Pill
+            active={meta.status === "complete"}
+            onClick={() => setBB({ sealed: false, partialSeal: false, forParts: false, piecesComplete: true })}
+          >
             Complete
           </Pill>
 
-          <Pill active={meta.status === "incomplete"} onClick={() => setBB({ sealed: false, partialSeal: false, forParts: false, piecesComplete: false })}>
+          <Pill
+            active={meta.status === "incomplete"}
+            onClick={() => setBB({ sealed: false, partialSeal: false, forParts: false, piecesComplete: false })}
+          >
             Incomplete
           </Pill>
 
@@ -422,7 +438,11 @@ export default function ItemConditionBuildingBlocks({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="flex items-center justify-between rounded-2xl border border-[#E5E9F2] bg-white p-3">
                 <span className="text-xs font-semibold text-[#0F172A]">Box included</span>
-                <input type="checkbox" checked={!!bb.box?.included} onChange={(e) => setBBNested("box", { included: e.target.checked })} />
+                <input
+                  type="checkbox"
+                  checked={!!bb.box?.included}
+                  onChange={(e) => setBBNested("box", { included: e.target.checked })}
+                />
               </label>
 
               <label className="flex items-center justify-between rounded-2xl border border-[#E5E9F2] bg-white p-3">
@@ -438,31 +458,51 @@ export default function ItemConditionBuildingBlocks({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="flex items-center justify-between rounded-2xl border border-[#E5E9F2] bg-white p-3">
                 <span className="text-xs font-semibold text-[#0F172A]">Pieces complete</span>
-                <input type="checkbox" checked={bb.piecesComplete !== false} onChange={(e) => setBB({ piecesComplete: e.target.checked })} disabled={sealedish} />
+                <input
+                  type="checkbox"
+                  checked={bb.piecesComplete !== false}
+                  onChange={(e) => setBB({ piecesComplete: e.target.checked })}
+                  disabled={sealedish}
+                />
               </label>
 
               <label className="flex items-center justify-between rounded-2xl border border-[#E5E9F2] bg-white p-3">
                 <span className="text-xs font-semibold text-[#0F172A]">Stickers applied</span>
-                <input type="checkbox" checked={!!bb.stickersApplied} onChange={(e) => setBB({ stickersApplied: e.target.checked })} disabled={sealedish} />
+                <input
+                  type="checkbox"
+                  checked={!!bb.stickersApplied}
+                  onChange={(e) => setBB({ stickersApplied: e.target.checked })}
+                  disabled={sealedish}
+                />
               </label>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="flex items-center justify-between rounded-2xl border border-[#E5E9F2] bg-white p-3">
                 <span className="text-xs font-semibold text-[#0F172A]">Discoloration</span>
-                <input type="checkbox" checked={!!bb.discoloration} onChange={(e) => setBB({ discoloration: e.target.checked })} disabled={sealedish} />
+                <input
+                  type="checkbox"
+                  checked={!!bb.discoloration}
+                  onChange={(e) => setBB({ discoloration: e.target.checked })}
+                  disabled={sealedish}
+                />
               </label>
 
               <label className="flex items-center justify-between rounded-2xl border border-[#E5E9F2] bg-white p-3">
                 <span className="text-xs font-semibold text-[#0F172A]">Yellowing</span>
-                <input type="checkbox" checked={!!bb.yellowing} onChange={(e) => setBB({ yellowing: e.target.checked })} disabled={sealedish} />
+                <input
+                  type="checkbox"
+                  checked={!!bb.yellowing}
+                  onChange={(e) => setBB({ yellowing: e.target.checked })}
+                  disabled={sealedish}
+                />
               </label>
             </div>
 
             {sealedish ? (
               <div className="text-[11px] text-[#64748B]">
-                Sealed / partial seal: pieces + stickers + discoloration/yellowing are typically unknown — we hide those from affecting status.
-                (You can still track them later if you want.)
+                Sealed / partial seal: pieces + stickers + discoloration/yellowing are typically unknown — we hide those
+                from affecting status. (You can still track them later if you want.)
               </div>
             ) : null}
           </div>
@@ -474,7 +514,11 @@ export default function ItemConditionBuildingBlocks({
 
             <label className="flex items-center justify-between rounded-2xl border border-[#E5E9F2] bg-white p-3">
               <span className="text-xs font-semibold text-[#0F172A]">Accessories included</span>
-              <input type="checkbox" checked={bb.hasAccessories !== false} onChange={(e) => setBB({ hasAccessories: e.target.checked })} />
+              <input
+                type="checkbox"
+                checked={bb.hasAccessories !== false}
+                onChange={(e) => setBB({ hasAccessories: e.target.checked })}
+              />
             </label>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -485,17 +529,29 @@ export default function ItemConditionBuildingBlocks({
 
               <label className="flex items-center justify-between rounded-2xl border border-[#E5E9F2] bg-white p-3">
                 <span className="text-xs font-semibold text-[#0F172A]">Loose joints</span>
-                <input type="checkbox" checked={!!bb.looseJoints} onChange={(e) => setBB({ looseJoints: e.target.checked })} />
+                <input
+                  type="checkbox"
+                  checked={!!bb.looseJoints}
+                  onChange={(e) => setBB({ looseJoints: e.target.checked })}
+                />
               </label>
 
               <label className="flex items-center justify-between rounded-2xl border border-[#E5E9F2] bg-white p-3">
                 <span className="text-xs font-semibold text-[#0F172A]">Bite marks</span>
-                <input type="checkbox" checked={!!bb.biteMarks} onChange={(e) => setBB({ biteMarks: e.target.checked })} />
+                <input
+                  type="checkbox"
+                  checked={!!bb.biteMarks}
+                  onChange={(e) => setBB({ biteMarks: e.target.checked })}
+                />
               </label>
 
               <label className="flex items-center justify-between rounded-2xl border border-[#E5E9F2] bg-white p-3">
                 <span className="text-xs font-semibold text-[#0F172A]">Yellowing</span>
-                <input type="checkbox" checked={!!bb.yellowing} onChange={(e) => setBB({ yellowing: e.target.checked })} />
+                <input
+                  type="checkbox"
+                  checked={!!bb.yellowing}
+                  onChange={(e) => setBB({ yellowing: e.target.checked })}
+                />
               </label>
 
               <label className="flex items-center justify-between rounded-2xl border border-[#E5E9F2] bg-white p-3">
