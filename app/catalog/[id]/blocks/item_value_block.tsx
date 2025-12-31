@@ -13,7 +13,11 @@ function money(value: number | string | null | undefined, currency: string = "CA
   return new Intl.NumberFormat("en-CA", { style: "currency", currency, maximumFractionDigits: 2 }).format(n);
 }
 
-function normalizeFairValueResult(raw: any): { value: number | null; confidence: "estimated" | "exact" | "unknown"; reason: string | null } {
+function normalizeFairValueResult(raw: any): {
+  value: number | null;
+  confidence: "estimated" | "exact" | "unknown";
+  reason: string | null;
+} {
   if (typeof raw === "number" && Number.isFinite(raw)) return { value: raw, confidence: "exact", reason: null };
   if (raw && typeof raw === "object") {
     const v =
@@ -194,7 +198,7 @@ export default function ItemValueBlock({
     const raw = getFairValue({
       baseMarketPrice,
       category: categoryName ?? "",
-      conditionMeta: conditionMeta ?? null, // ✅ Path 2: meta-driven pricing
+      conditionMeta: conditionMeta ?? undefined, // ✅ FIX: undefined (not null)
       gradingCompany: isGradableCategory && grading.isGraded ? grading.gradingCompany : null,
       gradeValue: isGradableCategory && grading.isGraded ? grading.gradeValue : null,
       gradeLabel: isGradableCategory && grading.isGraded ? grading.gradeLabel : null,
@@ -206,7 +210,9 @@ export default function ItemValueBlock({
   const displayedCurrentValue = itemFair.value ?? marketCurrent ?? null;
 
   const showEstimatedNote = itemFair.confidence === "estimated";
-  const estimatedTooltip = itemFair.reason?.trim()?.length ? itemFair.reason : "Adjusted from recent sales using condition modeling.";
+  const estimatedTooltip = itemFair.reason?.trim()?.length
+    ? itemFair.reason
+    : "Adjusted from recent sales using condition modeling.";
 
   const gradeChip = useMemo(() => {
     if (!isGradableCategory) return null;
@@ -236,7 +242,11 @@ export default function ItemValueBlock({
           </div>
 
           <div className="shrink-0 text-right space-y-2">
-            {marketLastUpdated ? <Chip tone="neutral">{`Updated ${marketLastUpdated}`}</Chip> : <Chip tone="neutral">No recent sales</Chip>}
+            {marketLastUpdated ? (
+              <Chip tone="neutral">{`Updated ${marketLastUpdated}`}</Chip>
+            ) : (
+              <Chip tone="neutral">No recent sales</Chip>
+            )}
             {gradeChip ? <Chip tone="neutral">{String(gradeChip)}</Chip> : null}
             {isBuildingBlocks ? <Chip tone="neutral">LEGO</Chip> : null}
           </div>
