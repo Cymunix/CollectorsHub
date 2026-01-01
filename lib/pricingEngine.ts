@@ -60,8 +60,48 @@ export function metaToTier10(meta: any): number {
 }
 
 /* =========================================================
-   NEW: derive ConditionMeta from condition_json (v1/v2)
+   NEW: derive ConditionMeta from condition_json (v1/v2/v3)
    ========================================================= */
+
+function normalizeCompany(raw: any): string {
+  const s = String(raw ?? "").trim().toUpperCase();
+  return s;
+}
+
+function normalizeLabel(raw: any): string {
+  const s = String(raw ?? "").trim().toLowerCase();
+  return s;
+}
+
+function getSubgrades(data: any): Record<string, number> | null {
+  const sg = data?.grading_subgrades;
+  if (!sg || typeof sg !== "object") return null;
+
+  const keys = ["centering", "corners", "edges", "surface"] as const;
+  const out: any = {};
+  let any = false;
+
+  for (const k of keys) {
+    const v = sg[k];
+    const n = v === null || v === undefined || v === "" ? NaN : Number(v);
+    if (Number.isFinite(n)) {
+      out[k] = n;
+      any = true;
+    }
+  }
+
+  return any ? (out as Record<string, number>) : null;
+}
+
+function isAllBgsSubgradesTen(sub: Record<string, number> | null): boolean {
+  if (!sub) return false;
+  return (
+    Number(sub.centering) === 10 &&
+    Number(sub.corners) === 10 &&
+    Number(sub.edges) === 10 &&
+    Number(sub.surface) === 10
+  );
+}
 
 /**
  * Derive a clean ConditionMeta from whatever condition_json shape we have.
@@ -90,7 +130,7 @@ export function deriveConditionMeta(conditionJson: any): ConditionMeta {
     return { status: "for_parts", flags: uniq(flags) };
   }
 
-  // graded (cards, but you said "anything can be graded")
+  // graded (you said "anything can be graded")
   const isGraded =
     !!data?.is_graded ||
     !!data?.graded ||
@@ -98,9 +138,25 @@ export function deriveConditionMeta(conditionJson: any): ConditionMeta {
     (Array.isArray(cj?.meta?.flags) && cj.meta.flags.includes("graded"));
 
   if (isGraded) {
-    const company = String(data?.grading_company ?? data?.gradingCompany ?? "").trim();
-    if (company) flags.push(`graded:${company.toUpperCase()}`);
+    const company = normalizeCompany(data?.grading_company ?? data?.gradingCompany ?? "");
+    const gradeValue = data?.grade_value != null && data?.grade_value !== "" ? Number(data.grade_value) : NaN;
+    const label = normalizeLabel(data?.grading_label ?? data?.grade_label ?? "");
+    const sub = getSubgrades(data);
+
+    if (company) flags.push(`graded:${company}`);
+    if (Number.isFinite(gradeValue)) flags.push(`grade:${gradeValue}`);
+    if (label) flags.push(`label:${label}`);
+
+    // Legacy compatibility
     if (!!data?.is_black_label) flags.push("black_label");
+
+    // Strong signal: BGS Black Label (true black label requires 10 subgrades)
+    if (company === "BGS" && label === "bgs_black_10") {
+      flags.push("bgs:black_label");
+      if (isAllBgsSubgradesTen(sub)) flags.push("bgs:black_label_verified");
+      else flags.push("bgs:black_label_unverified");
+    }
+
     return { status: "graded", flags: uniq(flags) };
   }
 
@@ -131,8 +187,7 @@ export function deriveConditionMeta(conditionJson: any): ConditionMeta {
     if (data?.instructions?.included === false) flags.push("instructions_missing");
     if (!!data?.stickers?.applied) flags.push("stickers_applied");
     if (!!data?.yellowing) flags.push("yellowing");
-    if (typeof data?.discoloration_tier === "number" && data.discoloration_tier <= 5)
-      flags.push("discoloration");
+    if (typeof data?.discoloration_tier === "number" && data.discoloration_tier <= 5) flags.push("discoloration");
 
     const status: ConditionStatus = piecesComplete && !anyMissingMinifigs ? "complete" : "incomplete";
     return { status, flags: uniq(flags) };
@@ -169,11 +224,67 @@ export function getDealBadge(args: { listingPrice: number; fairValue: number }):
   return { label: "Overpriced", color: "red" };
 }
 
+function gradedMultiplier(args: {
+  gradingCompany?: string | null;
+  gradeValue?: number | null;
+  gradeLabel?: string | null;
+  conditionJson?: any;
+}): number {
+  const company = normalizeCompany(args.gradingCompany ?? args.conditionJson?.data?.grading_company);
+  const gv =
+    args.gradeValue != null
+      ? Number(args.gradeValue)
+      : args.conditionJson?.data?.grade_value != null
+      ? Number(args.conditionJson.data.grade_value)
+      : NaN;
+
+  const label = normalizeLabel(args.gradeLabel ?? args.conditionJson?.data?.grading_label);
+  const sub = getSubgrades(args.conditionJson?.data ?? {});
+
+  // baseline premium for "graded"
+  let m = 1.25;
+
+  // company-level nudges (tweak later)
+  if (company === "PSA") m *= 1.05;
+  else if (company === "BGS") m *= 1.08;
+  else if (company === "CGC") m *= 1.03;
+  else if (company === "SGC") m *= 1.02;
+
+  // grade value nudges
+  if (Number.isFinite(gv)) {
+    if (gv >= 9.5) m *= 1.15;
+    else if (gv >= 9) m *= 1.08;
+    else if (gv >= 8) m *= 1.02;
+    else if (gv <= 6) m *= 0.9;
+  }
+
+  // ✅ Beckett label ladder (this is what you asked for)
+  // BGS Black Label 10 should be above BGS 10 and PSA 10.
+  if (company === "BGS") {
+    if (label === "bgs_black_10") {
+      // if verified by subgrades all 10, bigger premium
+      m *= isAllBgsSubgradesTen(sub) ? 2.5 : 2.0;
+    } else if (label === "bgs_gold_10") {
+      m *= 1.6;
+    } else if (Number.isFinite(gv) && gv === 10) {
+      // plain "BGS 10" without label
+      m *= 1.35;
+    }
+  }
+
+  // PSA 10 slight bump (but still under BGS Black)
+  if (company === "PSA" && Number.isFinite(gv) && gv === 10) {
+    m *= 1.3;
+  }
+
+  return m;
+}
+
 /**
  * Fair value: keep it simple and deterministic.
  * - baseMarketPrice is the anchor (sales-derived)
  * - conditionMeta/status can push it around
- * - graded can be handled by a multiplier if you decide later
+ * - graded can be handled by a multiplier
  */
 export function getFairValue(args: {
   baseMarketPrice: number;
@@ -184,6 +295,8 @@ export function getFairValue(args: {
   gradingCompany?: string | null;
   gradeValue?: number | null;
   gradeLabel?: string | null;
+  // Optional: pass condition json if caller has it (v3 has label/subgrades)
+  conditionJson?: any;
 }): number {
   const base = Number(args.baseMarketPrice);
   if (!Number.isFinite(base) || base <= 0) return base;
@@ -197,7 +310,7 @@ export function getFairValue(args: {
         }
       : // fallback: infer "graded" if old callers pass gradingCompany/gradeValue
       args.gradingCompany || args.gradeValue != null
-      ? { status: "graded", flags: uniq([`graded:${String(args.gradingCompany ?? "").toUpperCase()}`]) }
+      ? { status: "graded", flags: uniq([`graded:${normalizeCompany(args.gradingCompany)}`]) }
       : { status: "complete", flags: [] };
 
   let multiplier = 1;
@@ -216,18 +329,12 @@ export function getFairValue(args: {
       multiplier *= 0.35;
       break;
     case "graded": {
-      // conservative default: graded usually commands a premium, but varies wildly
-      // you can tune this per category later.
-      multiplier *= 1.25;
-
-      // optional extra: bump for high numeric grades when present
-      const gv = args.gradeValue != null ? Number(args.gradeValue) : NaN;
-      if (Number.isFinite(gv)) {
-        if (gv >= 9.5) multiplier *= 1.15;
-        else if (gv >= 9) multiplier *= 1.08;
-        else if (gv >= 8) multiplier *= 1.02;
-        else if (gv <= 6) multiplier *= 0.9;
-      }
+      multiplier *= gradedMultiplier({
+        gradingCompany: args.gradingCompany,
+        gradeValue: args.gradeValue,
+        gradeLabel: args.gradeLabel,
+        conditionJson: args.conditionJson,
+      });
       break;
     }
   }
@@ -261,6 +368,8 @@ export function flagLabel(flag: string | null | undefined): string {
   if (!f) return "";
   return f
     .replace(/^graded:/i, "Graded: ")
+    .replace(/^grade:/i, "Grade: ")
+    .replace(/^label:/i, "Label: ")
     .replace(/[_-]+/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
