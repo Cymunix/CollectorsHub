@@ -16,6 +16,9 @@ export type CreateCatalogItemState = {
   catalogUPC: string;
   catalogVersion: string;
 
+  // ✅ NEW
+  productionStatus?: string;
+
   [key: string]: any;
 };
 
@@ -45,6 +48,10 @@ export async function createCatalogItem(itemKind: string, state: CreateCatalogIt
   const subcategory_id = nullableStr(state?.subcategoryId);
   const franchise_id = nullableStr(state?.franchiseId);
 
+  // ✅ NEW
+  // Keep permissive; DB constraint should enforce allowed values if you add it.
+  const production_status = s(state?.productionStatus) || "unknown";
+
   if (!name) throw new Error("createCatalogItem: name is required");
   if (!category_id) throw new Error("createCatalogItem: category_id is required");
 
@@ -60,6 +67,10 @@ export async function createCatalogItem(itemKind: string, state: CreateCatalogIt
       release_year: nullableNum(state?.catalogReleaseYear),
       upc: nullableStr(state?.catalogUPC),
       version: nullableStr(state?.catalogVersion),
+
+      // ✅ NEW
+      production_status,
+
       image_url: null,
     })
     .select("id")
