@@ -13,6 +13,39 @@ function normalizeCert(input: any): string {
   return s.slice(0, 64);
 }
 
+/* ---------------- BGS helpers ---------------- */
+
+type BgsSubgrades = {
+  centering?: number | null;
+  corners?: number | null;
+  edges?: number | null;
+  surface?: number | null;
+};
+
+function readBgsSubgrades(data: any): BgsSubgrades | null {
+  const sg = data?.grading_subgrades;
+  if (!sg || typeof sg !== "object") return null;
+  return {
+    centering: sg.centering ?? null,
+    corners: sg.corners ?? null,
+    edges: sg.edges ?? null,
+    surface: sg.surface ?? null,
+  };
+}
+
+function isBlackLabel10(data: any) {
+  return String(data?.grading_company ?? "").toUpperCase() === "BGS" && data?.grading_label === "bgs_black_10";
+}
+
+function blackLabelMismatch(sub: BgsSubgrades | null) {
+  if (!sub) return true;
+  const vals = [sub.centering, sub.corners, sub.edges, sub.surface];
+  if (vals.some((v) => v == null)) return true;
+  return vals.some((v) => Number(v) !== 10);
+}
+
+/* ---------------- UI ---------------- */
+
 function SectionCard({
   title,
   children,
@@ -204,6 +237,8 @@ function StatusPills({
   );
 }
 
+/* ---------------- logic helpers ---------------- */
+
 function toggleFlag(flags: string[], flag: string, nextOn: boolean) {
   const set = new Set((flags || []).filter(Boolean));
   if (nextOn) set.add(flag);
@@ -242,6 +277,8 @@ function resolveMetaFromInputs(
   };
 }
 
+/* ---------------- component ---------------- */
+
 export default function ItemConditionSelector({
   catalogItemId,
   categoryName,
@@ -279,6 +316,7 @@ export default function ItemConditionSelector({
       const ids = (linkRes.data ?? [])
         .map((r: any) => r.minifig_id)
         .filter(Boolean);
+
       if (!ids.length) {
         setLinkedMinifigs([]);
         return;
@@ -329,6 +367,16 @@ export default function ItemConditionSelector({
 
   const isGraded = !!data?.is_graded;
 
+  const gradeCompany = String(data?.grading_company ?? "").toUpperCase();
+  const gradeValueNum = data?.grade_value == null ? null : Number(data.grade_value);
+  const isBgs = isGraded && gradeCompany === "BGS";
+  const isTen =
+    isBgs && gradeValueNum != null && Number.isFinite(gradeValueNum) && gradeValueNum === 10;
+
+  const bgsSub = readBgsSubgrades(data);
+  const trackingSubgrades = !!bgsSub;
+  const blackMismatch = isBlackLabel10(data) && blackLabelMismatch(bgsSub);
+
   const summary = useMemo(() => {
     const chips: string[] = [];
 
@@ -340,6 +388,11 @@ export default function ItemConditionSelector({
       const c = data?.grading_company ? String(data.grading_company).toUpperCase() : "GRADED";
       const gv = data?.grade_value;
       chips.push(gv != null && Number.isFinite(Number(gv)) ? `${c} ${Number(gv)}` : c);
+
+      // If we have a BGS label, show it as a chip too
+      if (c === "BGS" && typeof data?.grading_label === "string" && data.grading_label) {
+        chips.push(data.grading_label === "bgs_black_10" ? "BLACK LABEL" : "GOLD LABEL");
+      }
     }
 
     return { title: statusLabel(meta.status), chips };
@@ -392,6 +445,8 @@ export default function ItemConditionSelector({
         grading_company: null,
         grade_value: null,
         certification_number: "",
+        grading_label: null,
+        grading_subgrades: null,
       });
       return;
     }
@@ -415,17 +470,56 @@ export default function ItemConditionSelector({
   };
 
   const setGradeCompany = (company: string) => {
+    // If switching away from BGS, wipe BGS-specific fields to avoid stale data
+    const nextCompany = String(company || "").toUpperCase();
+    if (nextCompany !== "BGS") {
+      emit(meta, { is_graded: true, grading_company: company, grading_label: null, grading_subgrades: null });
+      return;
+    }
     emit(meta, { is_graded: true, grading_company: company });
   };
 
   const setGradeValue = (v: string) => {
     const n = v === "" ? null : Number(v);
     const gv = n != null && Number.isFinite(n) ? n : null;
+
+    // If BGS and grade is not 10 anymore, drop the 10-label (black/gold)
+    if (String(data?.grading_company ?? "").toUpperCase() === "BGS" && gv !== 10) {
+      emit(meta, { is_graded: true, grade_value: gv, grading_label: null });
+      return;
+    }
+
     emit(meta, { is_graded: true, grade_value: gv });
   };
 
   const setCert = (v: string) => {
     emit(meta, { certification_number: normalizeCert(v) });
+  };
+
+  const setGradingLabel = (label: string) => {
+    emit(meta, { is_graded: true, grading_label: label || null });
+  };
+
+  const setTrackSubgrades = (on: boolean) => {
+    if (!on) {
+      emit(meta, { grading_subgrades: null });
+      return;
+    }
+
+    const next: BgsSubgrades = isBlackLabel10(data)
+      ? { centering: 10, corners: 10, edges: 10, surface: 10 }
+      : { centering: null, corners: null, edges: null, surface: null };
+
+    emit(meta, { grading_subgrades: next });
+  };
+
+  const setOneSubgrade = (key: keyof BgsSubgrades, v: string) => {
+    const n = v === "" ? null : Number(v);
+    const val = n != null && Number.isFinite(n) ? n : null;
+
+    const current = readBgsSubgrades(data) ?? {};
+    const next = { ...current, [key]: val };
+    emit(meta, { grading_subgrades: next });
   };
 
   // Pick a small, sane default flag set (not exhaustive)
@@ -503,31 +597,101 @@ export default function ItemConditionSelector({
           />
 
           {isGraded ? (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-              <SelectRow
-                label="Company"
-                value={typeof data?.grading_company === "string" ? data.grading_company : ""}
-                options={["PSA", "BGS", "CGC", "SGC", "CBCS", "WATA", "AFA", "UKG", "Other"]}
-                onChange={setGradeCompany}
-              />
-              <NumberRow
-                label="Grade value"
-                value={
-                  data?.grade_value === null || data?.grade_value === undefined ? "" : String(data.grade_value)
-                }
-                min={0}
-                max={10}
-                step={0.5}
-                onChange={setGradeValue}
-              />
-              <TextRow
-                label="Certification #"
-                value={typeof data?.certification_number === "string" ? data.certification_number : ""}
-                placeholder="Optional"
-                onChange={setCert}
-                help={<span>Optional, but recommended.</span>}
-              />
-            </div>
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                <SelectRow
+                  label="Company"
+                  value={typeof data?.grading_company === "string" ? data.grading_company : ""}
+                  options={["PSA", "BGS", "CGC", "SGC", "CBCS", "WATA", "AFA", "UKG", "Other"]}
+                  onChange={setGradeCompany}
+                />
+                <NumberRow
+                  label="Grade value"
+                  value={data?.grade_value === null || data?.grade_value === undefined ? "" : String(data.grade_value)}
+                  min={0}
+                  max={10}
+                  step={0.5}
+                  onChange={setGradeValue}
+                />
+                <TextRow
+                  label="Certification #"
+                  value={typeof data?.certification_number === "string" ? data.certification_number : ""}
+                  placeholder="Optional"
+                  onChange={setCert}
+                  help={<span>Optional, but recommended.</span>}
+                />
+              </div>
+
+              {/* ✅ BGS extras */}
+              {isBgs ? (
+                <div className="mt-2 space-y-2">
+                  {isTen ? (
+                    <SelectRow
+                      label="BGS label"
+                      value={typeof data?.grading_label === "string" ? data.grading_label : ""}
+                      options={["bgs_gold_10", "bgs_black_10"]}
+                      onChange={setGradingLabel}
+                    />
+                  ) : null}
+
+                  <CheckboxRow
+                    label="Track BGS subgrades (Centering / Corners / Edges / Surface)"
+                    checked={trackingSubgrades}
+                    onChange={setTrackSubgrades}
+                    subtext={
+                      <span className="text-[#64748B]">
+                        Optional, but adds credibility and enables Black Label verification.
+                      </span>
+                    }
+                    emphasize={blackMismatch}
+                  />
+
+                  {trackingSubgrades ? (
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                      <NumberRow
+                        label="Centering"
+                        value={bgsSub?.centering == null ? "" : String(bgsSub.centering)}
+                        min={0}
+                        max={10}
+                        step={0.5}
+                        onChange={(v) => setOneSubgrade("centering", v)}
+                      />
+                      <NumberRow
+                        label="Corners"
+                        value={bgsSub?.corners == null ? "" : String(bgsSub.corners)}
+                        min={0}
+                        max={10}
+                        step={0.5}
+                        onChange={(v) => setOneSubgrade("corners", v)}
+                      />
+                      <NumberRow
+                        label="Edges"
+                        value={bgsSub?.edges == null ? "" : String(bgsSub.edges)}
+                        min={0}
+                        max={10}
+                        step={0.5}
+                        onChange={(v) => setOneSubgrade("edges", v)}
+                      />
+                      <NumberRow
+                        label="Surface"
+                        value={bgsSub?.surface == null ? "" : String(bgsSub.surface)}
+                        min={0}
+                        max={10}
+                        step={0.5}
+                        onChange={(v) => setOneSubgrade("surface", v)}
+                      />
+                    </div>
+                  ) : null}
+
+                  {blackMismatch ? (
+                    <div className="rounded-xl border border-[#F59E0B] bg-[#FFFBEB] px-3 py-2 text-xs text-[#92400E]">
+                      <span className="font-semibold">Black Label check:</span> Black Label 10 requires all four
+                      subgrades to be 10.
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </>
           ) : null}
         </div>
 
@@ -541,6 +705,8 @@ export default function ItemConditionSelector({
               data?.grade_value ?? ""
             }`}</span>
           ) : null}
+          {data?.grading_label ? <span className="font-mono">{` • label=${String(data.grading_label)}`}</span> : null}
+          {data?.grading_subgrades ? <span className="font-mono">{` • subgrades=✓`}</span> : null}
         </div>
       </div>
     </SectionCard>
