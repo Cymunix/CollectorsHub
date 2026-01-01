@@ -1,9 +1,9 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabaseClient";
 import { fetchItemReviews, insertItemReview } from "../_lib/queries";
 
-// ✅ derive the row type from the query function (no duplicate type drift)
 type ReviewRow = Awaited<ReturnType<typeof fetchItemReviews>>[number];
 
 function clampRating(n: any) {
@@ -23,12 +23,35 @@ export default function ReviewsTab({ catalogItemId }: { catalogItemId: string })
   const [err, setErr] = useState<string | null>(null);
   const [rows, setRows] = useState<ReviewRow[]>([]);
 
+  const [userId, setUserId] = useState<string | null>(null);
+
   // add form
   const [rating, setRating] = useState<number>(5);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const init = async () => {
+      const { data } = await supabase.auth.getUser();
+      if (!mounted) return;
+      setUserId(data.user?.id ?? null);
+    };
+
+    init();
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUserId(session?.user?.id ?? null);
+    });
+
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
+  }, []);
 
   async function reload() {
     setLoading(true);
@@ -50,13 +73,18 @@ export default function ReviewsTab({ catalogItemId }: { catalogItemId: string })
 
   const avg = useMemo(() => {
     if (rows.length === 0) return null;
-    const sum = rows.reduce((s, r) => s + (Number((r as any).rating) || 0), 0);
+    const sum = rows.reduce((s, r: any) => s + (Number(r.rating) || 0), 0);
     return Math.round((sum / rows.length) * 10) / 10;
   }, [rows]);
 
   async function onSubmit() {
     setErr(null);
     setSavedMsg(null);
+
+    if (!userId) {
+      setErr("You must be logged in to post a review.");
+      return;
+    }
 
     const r = clampRating(rating);
     const t = title.trim();
@@ -70,7 +98,8 @@ export default function ReviewsTab({ catalogItemId }: { catalogItemId: string })
     setSaving(true);
     try {
       await insertItemReview({
-        catalog_item_id: catalogItemId,
+        catalogItemId,
+        userId,
         rating: r,
         title: t || null,
         body: b,
@@ -185,21 +214,19 @@ export default function ReviewsTab({ catalogItemId }: { catalogItemId: string })
           </div>
         ) : (
           <div className="space-y-3">
-            {rows.map((r) => (
-              <div key={(r as any).id} className="rounded-2xl border bg-white p-4">
+            {rows.map((r: any) => (
+              <div key={r.id} className="rounded-2xl border bg-white p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <Stars n={clampRating((r as any).rating)} />
-                    <div className="font-semibold">
-                      {(r as any).title?.trim() ? (r as any).title : "Review"}
-                    </div>
+                    <Stars n={clampRating(r.rating)} />
+                    <div className="font-semibold">{r.title?.trim() ? r.title : "Review"}</div>
                   </div>
                   <div className="text-xs text-gray-500">
-                    {formatDateMaybe((r as any).created_at)}
-                    {(r as any).display_name ? ` • ${(r as any).display_name}` : ""}
+                    {formatDateMaybe(r.created_at)}
+                    {r.display_name ? ` • ${r.display_name}` : ""}
                   </div>
                 </div>
-                {(r as any).body && <div className="mt-2 text-sm text-gray-700 whitespace-pre-wrap">{(r as any).body}</div>}
+                {r.body && <div className="mt-2 text-sm text-gray-700 whitespace-pre-wrap">{r.body}</div>}
               </div>
             ))}
           </div>
