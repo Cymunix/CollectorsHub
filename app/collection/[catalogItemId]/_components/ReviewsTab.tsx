@@ -3,19 +3,19 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { fetchItemReviews, insertItemReview } from "../_lib/queries";
 
-type ReviewRow = {
-  id: string;
-  rating: number;
-  title: string | null;
-  body: string | null;
-  created_at: string;
-  display_name?: string | null;
-};
+// ✅ derive the row type from the query function (no duplicate type drift)
+type ReviewRow = Awaited<ReturnType<typeof fetchItemReviews>>[number];
 
 function clampRating(n: any) {
   const x = Number(n);
   if (!Number.isFinite(x)) return 5;
   return Math.max(1, Math.min(5, Math.round(x)));
+}
+
+function formatDateMaybe(d: string | null | undefined) {
+  if (!d) return "—";
+  const dt = new Date(d);
+  return Number.isNaN(dt.getTime()) ? "—" : dt.toLocaleDateString();
 }
 
 export default function ReviewsTab({ catalogItemId }: { catalogItemId: string }) {
@@ -50,7 +50,7 @@ export default function ReviewsTab({ catalogItemId }: { catalogItemId: string })
 
   const avg = useMemo(() => {
     if (rows.length === 0) return null;
-    const sum = rows.reduce((s, r) => s + (Number(r.rating) || 0), 0);
+    const sum = rows.reduce((s, r) => s + (Number((r as any).rating) || 0), 0);
     return Math.round((sum / rows.length) * 10) / 10;
   }, [rows]);
 
@@ -186,18 +186,20 @@ export default function ReviewsTab({ catalogItemId }: { catalogItemId: string })
         ) : (
           <div className="space-y-3">
             {rows.map((r) => (
-              <div key={r.id} className="rounded-2xl border bg-white p-4">
+              <div key={(r as any).id} className="rounded-2xl border bg-white p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <Stars n={clampRating(r.rating)} />
-                    <div className="font-semibold">{r.title?.trim() ? r.title : "Review"}</div>
+                    <Stars n={clampRating((r as any).rating)} />
+                    <div className="font-semibold">
+                      {(r as any).title?.trim() ? (r as any).title : "Review"}
+                    </div>
                   </div>
                   <div className="text-xs text-gray-500">
-                    {new Date(r.created_at).toLocaleDateString()}
-                    {r.display_name ? ` • ${r.display_name}` : ""}
+                    {formatDateMaybe((r as any).created_at)}
+                    {(r as any).display_name ? ` • ${(r as any).display_name}` : ""}
                   </div>
                 </div>
-                {r.body && <div className="mt-2 text-sm text-gray-700 whitespace-pre-wrap">{r.body}</div>}
+                {(r as any).body && <div className="mt-2 text-sm text-gray-700 whitespace-pre-wrap">{(r as any).body}</div>}
               </div>
             ))}
           </div>
