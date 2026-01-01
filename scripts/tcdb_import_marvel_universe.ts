@@ -1,9 +1,24 @@
+// scripts/tcdb_import_marvel_universe.ts
 import "dotenv/config";
 import pLimit from "p-limit";
 import * as crypto from "crypto";
 import fetch from "node-fetch";
 import * as cheerio from "cheerio";
 import { createClient } from "@supabase/supabase-js";
+
+/**
+ * ENV REQUIRED:
+ *   SUPABASE_URL
+ *   SUPABASE_SERVICE_ROLE_KEY
+ *   TRADING_CARDS_CATEGORY_ID   (UUID)
+ *   MARVEL_FRANCHISE_ID         (UUID)
+ *
+ * ENV OPTIONAL:
+ *   TRADING_CARDS_SUBCATEGORY_ID (UUID)
+ *
+ * Run:
+ *   npx ts-node scripts/tcdb_import_marvel_universe.ts
+ */
 
 type Target = { year: number; subset: string; url: string };
 
@@ -33,9 +48,17 @@ function normSubset(s: string) {
   return normSpace(s);
 }
 
+function sha256(input: string) {
+  return crypto.createHash("sha256").update(input).digest("hex");
+}
+
+/**
+ * Fingerprint is the stable identity for dedupe across imports.
+ * Use fields that won't change (set/year/subset/number).
+ */
 function fingerprintKey(r: Pick<CardRow, "franchise" | "set_name" | "release_year" | "subset" | "card_number">) {
   const key = `${r.franchise}|${r.set_name}|${r.release_year}|${r.subset}|${r.card_number}`.toLowerCase();
-  return crypto.createHash("sha256").update(key).digest("hex");
+  return sha256(key);
 }
 
 async function fetchHtml(url: string) {
@@ -49,10 +72,15 @@ async function fetchHtml(url: string) {
   return await res.text();
 }
 
+/**
+ * Parse a TCDB checklist page into CardRow[].
+ * Heuristic: find a table containing "Card Number" and "Name" (or "Player").
+ */
 function parseChecklistPage(html: string, pageUrl: string, year: number, subsetLabel: string): CardRow[] {
   const $ = cheerio.load(html);
 
   let targetTable: cheerio.Cheerio | null = null;
+
   $("table").each((_, el) => {
     const text = normSpace($(el).text()).toLowerCase();
     if (text.includes("card number") && (text.includes("name") || text.includes("player"))) {
@@ -80,6 +108,7 @@ function parseChecklistPage(html: string, pageUrl: string, year: number, subsetL
     const name = normSpace(idxName >= 0 ? $(cells[idxName]).text() : $(cells[1]).text());
     if (!cardNo || !name) return;
 
+    // Try to grab a card detail link as external_id
     let linkHref: string | null = null;
     $(tr)
       .find("a")
@@ -100,7 +129,10 @@ function parseChecklistPage(html: string, pageUrl: string, year: number, subsetL
       card_name: name,
       external_url: externalUrl,
       external_id: externalId,
-      raw: { source_page: pageUrl, headers },
+      raw: {
+        source_page: pageUrl,
+        headers,
+      },
     });
   });
 
@@ -114,12 +146,19 @@ async function ensureSource(supabase: any) {
   if (error) throw error;
 }
 
+function requireEnv(name: string): string {
+  const v = process.env[name];
+  if (!v || !String(v).trim()) throw new Error(`Missing env var: ${name}`);
+  return String(v).trim();
+}
+
 async function run() {
-  const SUPABASE_URL = process.env.SUPABASE_URL;
-  const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in env");
-  }
+  const SUPABASE_URL = requireEnv("SUPABASE_URL");
+  const SUPABASE_SERVICE_ROLE_KEY = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
+
+  const CATEGORY_ID_TRADING_CARDS = requireEnv("TRADING_CARDS_CATEGORY_ID");
+  const FRANCHISE_ID_MARVEL = requireEnv("MARVEL_FRANCHISE_ID");
+  const SUBCATEGORY_ID_OPTIONAL = (process.env.TRADING_CARDS_SUBCATEGORY_ID || "").trim() || null;
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: { persistSession: false },
@@ -127,10 +166,15 @@ async function run() {
 
   await ensureSource(supabase);
 
-  // 🔥 Paste real TCDB checklist URLs here
+  /**
+   * IMPORTANT:
+   * Paste real TCDB checklist URLs here.
+   * Start with 1 URL, verify "parsed N rows", then add more.
+   */
   const targets: Target[] = [
-    // { year: 1990, subset: "Base", url: "PASTE_TCDB_CHECKLIST_URL_HERE" },
-    // { year: 1990, subset: "Hologram", url: "PASTE_TCDB_HOLOGRAM_URL_HERE" },
+    // Example placeholders — replace with real TCDB checklist URLs:
+    // { year: 1990, subset: "Base", url: "https://www.tcdb.com/Checklist.cfm/sid/XXXX/1990-Marvel-Universe" },
+    // { year: 1990, subset: "Hologram", url: "https://www.tcdb.com/Checklist.cfm/sid/YYYY/1990-Marvel-Universe-Holograms" },
   ];
 
   if (!targets.length) {
@@ -162,31 +206,70 @@ async function run() {
   for (let i = 0; i < unique.length; i += BATCH) {
     const batch = unique.slice(i, i + BATCH);
 
+    // 1) external_items (raw + dedupe)
     const externalRows = batch.map((r) => ({
       source_code: "tcdb",
       external_id: r.external_id,
       external_url: r.external_url,
-      raw_payload: r.raw,
+      raw_payload: {
+        ...r.raw,
+        parsed: {
+          franchise: r.franchise,
+          set_name: r.set_name,
+          release_year: r.release_year,
+          subset: r.subset,
+          card_number: r.card_number,
+          card_name: r.card_name,
+        },
+      },
       fingerprint: fingerprintKey(r),
     }));
 
-    const catalogRows = batch.map((r) => ({
-      franchise: r.franchise,
-      set_name: r.set_name,
-      release_year: r.release_year,
-      subset: r.subset,
-      card_number: r.card_number,
-      card_name: r.card_name,
-      name: `${r.release_year} ${r.set_name} — #${r.card_number} ${r.card_name} (${r.subset})`,
-      kind: "card",
-    }));
+    // 2) catalog_items (THIS is what your app actually uses)
+    const catalogRows = batch.map((r) => {
+      const displayName = `${r.release_year} ${r.set_name} — #${r.card_number} ${r.card_name} (${r.subset})`;
+      const fp = fingerprintKey(r);
 
+      return {
+        category_id: CATEGORY_ID_TRADING_CARDS,
+        subcategory_id: SUBCATEGORY_ID_OPTIONAL,
+        franchise_id: FRANCHISE_ID_MARVEL,
+
+        name: displayName,
+        release_year: r.release_year,
+
+        // Optional: useful for quick filtering without digging into meta
+        version: r.subset,
+
+        kind: "card",
+        production_status: "released",
+
+        meta: {
+          type: "trading_card",
+          set_name: r.set_name,
+          release_year: r.release_year,
+          subset: r.subset,
+          card_number: r.card_number,
+          card_name: r.card_name,
+          manufacturer: "Impel",
+          source: "tcdb",
+          tcdb_external_id: r.external_id,
+          tcdb_url: r.external_url,
+          tcdb_fingerprint: fp,
+        },
+      };
+    });
+
+    // Upsert external rows (dedupe by fingerprint)
     const ex = await supabase.from("external_items").upsert(externalRows, { onConflict: "fingerprint" });
     if (ex.error) throw ex.error;
 
+    // Upsert catalog rows:
+    // NOTE: Your catalog_items needs a UNIQUE index matching this conflict target.
+    // Recommended: (franchise_id, release_year, kind, name)
     const cat = await supabase
       .from("catalog_items")
-      .upsert(catalogRows, { onConflict: "franchise,set_name,release_year,subset,card_number" });
+      .upsert(catalogRows, { onConflict: "franchise_id,release_year,kind,name" });
     if (cat.error) throw cat.error;
 
     console.log(`Upserted batch ${i / BATCH + 1} (${batch.length} rows)`);
