@@ -2,22 +2,26 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { fetchItemSalesHistory } from "../_lib/queries";
-import type { ConditionMeta } from "@/lib/pricingEngine";
+import { fetchItemSalesHistory } from "@/lib/catalog/queries";
 
 type SaleRow = {
   id: string;
-  sold_at: string;
-  price_cad: number | null;
-  source: string | null;
-  url: string | null;
-  condition_note: string | null;
 
-  // NEW (optional while migrating): stored on sales rows if you have it
-  condition_meta?: ConditionMeta | null;
+  // We normalize "sold_at" at runtime (fallback to created_at)
+  sold_at: string;
+
+  price_cad: number | null;
+
+  // Optional metadata if your table has it
+  source?: string | null;
+  url?: string | null;
+  condition_note?: string | null;
 
   // Legacy / older:
   condition_json?: Record<string, any> | null;
+
+  // Some implementations return created_at instead of sold_at
+  created_at?: string | null;
 };
 
 function formatMoneyCAD(n: number | null) {
@@ -25,30 +29,53 @@ function formatMoneyCAD(n: number | null) {
   return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD" }).format(Number(n));
 }
 
-function safeJsonKey(v: any) {
+/**
+ * Stable-ish stringify so {a:1,b:2} and {b:2,a:1} match.
+ * Handles nested objects/arrays.
+ */
+function stableStringify(value: any): string {
+  const seen = new WeakSet();
+
+  const normalize = (v: any): any => {
+    if (v === null || v === undefined) return null;
+    if (typeof v !== "object") return v;
+
+    if (seen.has(v)) return "[Circular]";
+    seen.add(v);
+
+    if (Array.isArray(v)) return v.map(normalize);
+
+    const keys = Object.keys(v).sort();
+    const out: Record<string, any> = {};
+    for (const k of keys) out[k] = normalize(v[k]);
+    return out;
+  };
+
   try {
-    return JSON.stringify(v ?? null) ?? "null";
+    return JSON.stringify(normalize(value));
   } catch {
     return "null";
   }
 }
 
-function metaKey(m?: ConditionMeta | null) {
-  if (!m) return "null";
-  const state = String((m as any).state ?? "");
-  const grade = String((m as any).grade ?? "");
-  const flags = Array.isArray((m as any).flags) ? (m as any).flags.map(String).sort() : [];
-  return safeJsonKey({ state, grade, flags });
+function pickSoldAt(r: any): string {
+  const s = String(r?.sold_at ?? "").trim();
+  if (s) return s;
+
+  const c = String(r?.created_at ?? "").trim();
+  if (c) return c;
+
+  return new Date(0).toISOString();
 }
 
 export default function SalesHistoryTab({
   catalogItemId,
-  selectedConditionMeta,
+  selectedConditionJson,
 }: {
   catalogItemId: string;
 
-  // NEW: current selection from the item page (Path 2)
-  selectedConditionMeta?: ConditionMeta | null;
+  // ✅ matches what the item page passes today
+  selectedConditionJson?: Record<string, any> | null;
 }) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -60,9 +87,24 @@ export default function SalesHistoryTab({
     async function load() {
       setLoading(true);
       setErr(null);
+
       try {
         const data = await fetchItemSalesHistory(catalogItemId);
-        if (!cancelled) setRows((data ?? []) as SaleRow[]);
+
+        // Normalize shape so this component is resilient to whatever
+        // the underlying query returns.
+        const normalized = (data ?? []).map((r: any) => ({
+          id: String(r?.id ?? "").trim(),
+          sold_at: pickSoldAt(r),
+          price_cad: typeof r?.price_cad === "number" ? r.price_cad : r?.price_cad ?? null,
+          source: r?.source ?? null,
+          url: r?.url ?? null,
+          condition_note: r?.condition_note ?? r?.notes ?? null,
+          condition_json: (r?.condition_json ?? null) as any,
+          created_at: r?.created_at ?? null,
+        })) as SaleRow[];
+
+        if (!cancelled) setRows(normalized.filter((r) => !!r.id));
       } catch (e: any) {
         if (!cancelled) setErr(e?.message ?? "Failed to load sales history.");
       } finally {
@@ -76,17 +118,17 @@ export default function SalesHistoryTab({
     };
   }, [catalogItemId]);
 
-  // ✅ Filter rows by selectedConditionMeta when present.
-  // - If you haven't started storing condition_meta on sales yet, we show ALL rows.
+  // Filter rows by selectedConditionJson when present.
+  // If you haven't stored condition_json on sales yet, show ALL.
   const filteredRows = useMemo(() => {
-    const wantKey = metaKey(selectedConditionMeta ?? null);
-    if (wantKey === "null") return rows;
+    const want = stableStringify(selectedConditionJson ?? null);
+    if (want === "null") return rows;
 
-    const anyHasMeta = rows.some((r) => !!r.condition_meta);
-    if (!anyHasMeta) return rows;
+    const anyHasConditionJson = rows.some((r) => r.condition_json && Object.keys(r.condition_json).length > 0);
+    if (!anyHasConditionJson) return rows;
 
-    return rows.filter((r) => metaKey(r.condition_meta ?? null) === wantKey);
-  }, [rows, selectedConditionMeta]);
+    return rows.filter((r) => stableStringify(r.condition_json ?? null) === want);
+  }, [rows, selectedConditionJson]);
 
   const avg = useMemo(() => {
     const prices = filteredRows
@@ -98,13 +140,18 @@ export default function SalesHistoryTab({
   }, [filteredRows]);
 
   const filterChip = useMemo(() => {
-    if (!selectedConditionMeta) return null;
-    const s = String((selectedConditionMeta as any).state ?? "").replace(/_/g, " ");
-    const g = String((selectedConditionMeta as any).grade ?? "");
-    const flags = Array.isArray((selectedConditionMeta as any).flags) ? (selectedConditionMeta as any).flags : [];
+    const v = selectedConditionJson ?? null;
+    if (!v) return null;
+
+    // try to display something human-friendly if possible
+    const state = String((v as any)?.state ?? "").replace(/_/g, " ").trim();
+    const grade = String((v as any)?.grade ?? "").trim();
+    const flags = Array.isArray((v as any)?.flags) ? (v as any).flags : [];
     const f = flags.length ? ` • ${flags.length} flags` : "";
-    return `${s}${g ? ` • ${g}` : ""}${f}`;
-  }, [selectedConditionMeta]);
+
+    if (state || grade || flags.length) return `${state || "Condition"}${grade ? ` • ${grade}` : ""}${f}`;
+    return "Condition filter";
+  }, [selectedConditionJson]);
 
   return (
     <div>
@@ -129,7 +176,9 @@ export default function SalesHistoryTab({
         ) : null}
       </div>
 
-      {err && <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{err}</div>}
+      {err ? (
+        <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{err}</div>
+      ) : null}
 
       {loading ? (
         <div className="mt-4 space-y-2">
