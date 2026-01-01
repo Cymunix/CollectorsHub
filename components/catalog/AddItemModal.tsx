@@ -132,7 +132,7 @@ export default function AddItemModal({
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState<{ type: "error" | "success"; msg: string } | null>(null);
 
-  // ✅ NEW: keep modal open after create so we can attach franchises
+  // ✅ keep modal open after create so we can attach franchises
   const [createdCatalogItemId, setCreatedCatalogItemId] = useState<string | null>(null);
   const [createdDone, setCreatedDone] = useState(false);
 
@@ -172,7 +172,6 @@ export default function AddItemModal({
 
     setBanner(null);
 
-    // ✅ NEW
     setCreatedCatalogItemId(null);
     setCreatedDone(false);
   };
@@ -284,7 +283,7 @@ export default function AddItemModal({
         categoryId: form.categoryId,
         subcategoryId: form.subcategoryId,
 
-        // NOTE: legacy single franchise (can be treated as "primary" later)
+        // legacy single franchise
         franchiseId: form.franchiseId || null,
 
         itemImageFile: form.itemImageFile,
@@ -293,7 +292,6 @@ export default function AddItemModal({
         catalogUPC: form.catalogUPC,
         catalogVersion: form.catalogVersion,
 
-        // ✅ NEW
         productionStatus: form.productionStatus ?? "unknown",
 
         wikiSummary: form.wikiSummary,
@@ -302,8 +300,6 @@ export default function AddItemModal({
         wikiChecklist: form.wikiChecklist,
         wikiSources: form.wikiSources,
 
-        // Keeping this doesn't hurt if createCatalogItem expects it,
-        // but variant grouping is handled AFTER via applyVariantGroupLinks().
         linkedVariants: variants.linkedVariants,
 
         // building blocks
@@ -337,7 +333,7 @@ export default function AddItemModal({
         movieDirectorIds: people.movieDirectorIds,
         movieActorIds: people.movieActorIds,
 
-        // ✅ gaming
+        // gaming
         gamePlatformId: form.gamePlatformId,
         gamePublisherId: form.gamePublisherId,
 
@@ -348,9 +344,24 @@ export default function AddItemModal({
         comicVariant: form.comicVariant,
       });
 
+      // ✅ AUTO-SYNC: legacy franchiseId -> join table as PRIMARY
+      if (form.franchiseId) {
+        const { error: upErr } = await supabase.from("catalog_item_franchises").upsert(
+          [
+            {
+              catalog_item_id: id,
+              franchise_id: form.franchiseId,
+              role: "primary",
+            },
+          ],
+          { onConflict: "catalog_item_id,franchise_id" }
+        );
+        if (upErr) throw upErr;
+      }
+
       await upsertItemDescription(id, form.wikiDescription);
 
-      // ✅ NEW: Variant group linking
+      // Variant group linking
       await applyVariantGroupLinks({
         catalogItemId: id,
         linkedVariants: variants.linkedVariants ?? [],
@@ -372,7 +383,7 @@ export default function AddItemModal({
         }
       }
 
-      // ✅ Bundles: flag + components
+      // Bundles: flag + components
       if (isBundle) {
         const { error: bErr } = await supabase.from("catalog_items").update({ is_bundle: true }).eq("id", id);
         if (bErr) throw bErr;
@@ -390,13 +401,13 @@ export default function AddItemModal({
         }
       }
 
-      // ✅ Keep modal open so franchises can be attached
+      // Keep modal open so franchises can be attached
       setCreatedCatalogItemId(id);
       setCreatedDone(true);
 
       setBanner({
         type: "success",
-        msg: "Item created. Attach franchises (and anything else), then click Finish.",
+        msg: "Item created. Franchise was set as Primary. Add more franchises if needed, then click Finish.",
       });
     } catch (e: any) {
       setBanner({ type: "error", msg: e?.message || "Failed to create item." });
@@ -433,18 +444,15 @@ export default function AddItemModal({
             onCreateFranchise={createFranchise}
           />
 
-          {/* ✅ NEW: Franchise / Crossover editor (many-to-many)
-              Disabled until the item is created (needs an ID) */}
           <div className="mt-4">
             <ItemFranchiseEditor catalogItemId={createdCatalogItemId} disabled={saving} />
           </div>
 
-          {/* ✅ After creation, make it obvious what to do next */}
           {createdDone && createdCatalogItemId ? (
             <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
               <div className="text-sm font-semibold text-[#0F172A]">Next step</div>
               <div className="mt-1 text-xs text-[#64748B]">
-                You’ve created the item. Attach franchises above, then click <b>Finish</b> (top-right action).
+                Franchise is already set as <b>Primary</b>. Add more franchises if needed, then click <b>Finish</b>.
               </div>
               <div className="mt-2 text-[11px] text-[#64748B]">
                 Item ID: <span className="font-mono">{createdCatalogItemId}</span>
@@ -456,7 +464,7 @@ export default function AddItemModal({
 
           <GlobalDetailsSection {...form} />
 
-          {/* ✅ Production Status */}
+          {/* Production Status */}
           <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
             <div className="text-sm font-semibold text-[#0F172A]">Production Status</div>
             <div className="mt-1 text-xs text-[#64748B]">
@@ -479,9 +487,7 @@ export default function AddItemModal({
             </div>
           </div>
 
-          {/* =========================
-              Bundles Section (draft)
-             ========================= */}
+          {/* Bundles Section (draft) */}
           <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -616,7 +622,6 @@ export default function AddItemModal({
             ) : null}
           </div>
 
-          {/* ✅ Gaming kind-specific section: platform + publisher */}
           {form.itemKind === "gaming" ? (
             <GamingSection
               gamePlatforms={meta.gamePlatforms ?? []}
