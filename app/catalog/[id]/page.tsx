@@ -603,6 +603,7 @@ export default function Page({ params }: { params: { id: string } }) {
                 userId={userId}
                 onRequireAuth={() => setAuthOpen(true)}
                 conditionValues={conditionValues}
+                onConditionValuesChange={(next) => setConditionValues(next)}
                 seedMinifigs={bbMode === "set" ? bbMinifigs : []}
               />
             </div>
