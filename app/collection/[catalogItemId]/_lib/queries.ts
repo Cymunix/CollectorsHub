@@ -295,3 +295,73 @@ export async function fetchItemSalesHistory(catalogItemId: string): Promise<Sale
     created_at: asIsoOrEpoch(r?.created_at),
   })) as SaleRow[];
 }
+
+/* ============================================================
+   Variants
+   ============================================================ */
+
+export type VariantRow = {
+  id: string;
+
+  // the other item
+  target_id: string;
+  target_name: string;
+  target_image_url: string | null;
+  target_release_year: number | null;
+  target_version: string | null;
+
+  // link metadata
+  link_type: string;
+  label: string | null;
+  created_at: string; // ✅ normalized
+};
+
+// item -> variants (2-step join, same pattern as bundles)
+export async function fetchItemVariants(catalogItemId: string): Promise<VariantRow[]> {
+  const id = asString(catalogItemId);
+  if (!id) return [];
+
+  // NOTE: This assumes your link table is named `catalog_item_links`
+  // with columns: id, source_id, target_id, link_type, label, created_at
+  const { data: linkRows, error: linkErr } = await supabase
+    .from("catalog_item_links")
+    .select("id,source_id,target_id,link_type,label,created_at")
+    .eq("source_id", id)
+    // if your tab is specifically "Variants", keep this filter:
+    .eq("link_type", "variant")
+    .order("created_at", { ascending: true });
+
+  if (linkErr) throw new Error(linkErr.message);
+
+  const rows = (linkRows ?? []) as any[];
+  if (!rows.length) return [];
+
+  const targetIds = uniqStrings(rows.map((r) => asString(r?.target_id)));
+  if (!targetIds.length) return [];
+
+  const { data: items, error: itemsErr } = await supabase
+    .from("catalog_items")
+    .select("id,name,image_url,release_year,version")
+    .in("id", targetIds);
+
+  if (itemsErr) throw new Error(itemsErr.message);
+
+  const byId = new Map<string, any>((items ?? []).map((it: any) => [asString(it.id), it]));
+
+  return rows.map((r) => {
+    const tid = asString(r?.target_id);
+    const it = byId.get(tid);
+
+    return {
+      id: asString(r?.id),
+      target_id: tid,
+      target_name: asString(it?.name ?? "Unknown"),
+      target_image_url: it?.image_url ?? null,
+      target_release_year: typeof it?.release_year === "number" ? it.release_year : null,
+      target_version: it?.version ?? null,
+      link_type: asString(r?.link_type) || "variant",
+      label: r?.label ?? null,
+      created_at: asIsoOrEpoch(r?.created_at),
+    } as VariantRow;
+  });
+}
