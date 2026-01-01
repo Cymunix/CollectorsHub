@@ -21,8 +21,10 @@ import ItemReviewsTab from "./tabs/item_reviews";
 import ItemSalesHistoryTab from "./tabs/item_sales_history";
 
 import type { ConditionMeta } from "@/lib/pricingEngine";
-import type { BundleComponent } from "@/lib/catalog/types";
 import { fetchBundleComponents, fetchBundlesIncludingItem, type IncludedInBundleLite } from "@/lib/catalog/queries";
+
+// ✅ IMPORTANT: derive state type from the actual function return to avoid cross-module BundleComponent clashes
+type BundleComponentsState = Awaited<ReturnType<typeof fetchBundleComponents>>;
 
 type TabKey =
   | "Item Information"
@@ -196,7 +198,7 @@ export default function Page({ params }: { params: { id: string } }) {
 
   // Bundles
   const [isBundle, setIsBundle] = useState<boolean>(false);
-  const [bundleComponents, setBundleComponents] = useState<BundleComponent[]>([]);
+  const [bundleComponents, setBundleComponents] = useState<BundleComponentsState>([]);
   const [includedInBundles, setIncludedInBundles] = useState<IncludedInBundleLite[]>([]);
   const [bundleErr, setBundleErr] = useState<string | null>(null);
 
@@ -365,7 +367,7 @@ export default function Page({ params }: { params: { id: string } }) {
             setIsBundle(bundleFlag);
 
             const [comps, included] = await Promise.all([
-              bundleFlag ? fetchBundleComponents(it.id) : Promise.resolve([] as BundleComponent[]),
+              bundleFlag ? fetchBundleComponents(it.id) : Promise.resolve([] as BundleComponentsState),
               fetchBundlesIncludingItem(it.id),
             ]);
 
@@ -754,12 +756,12 @@ export default function Page({ params }: { params: { id: string } }) {
                       No components set yet.
                     </div>
                   ) : (
-                    bundleComponents.map((c) => {
+                    bundleComponents.map((c: any) => {
                       const comp = c.component;
                       const compName = safeText(comp?.name);
-                      const subtitle = `Qty: ${c.qty}${
-                        comp?.release_year ? ` • ${comp.release_year}` : ""
-                      }${comp?.version ? ` • ${comp.version}` : ""}`;
+                      const subtitle = `Qty: ${c.qty}${comp?.release_year ? ` • ${comp.release_year}` : ""}${
+                        comp?.version ? ` • ${comp.version}` : ""
+                      }`;
 
                       return (
                         <BundleListCard
@@ -815,7 +817,7 @@ export default function Page({ params }: { params: { id: string } }) {
               <ItemListingsTab
                 catalogItemId={catalogItemId}
                 categoryName={category?.name ?? null}
-                itemName={isMinifigPage ? (minifigItem?.name ?? "Minifig") : (item?.name ?? "Item")}
+                itemName={isMinifigPage ? (minifigItem?.name ?? "Minifig") : item?.name ?? "Item"}
                 userId={userId}
                 onRequireAuth={() => setAuthOpen(true)}
               />
