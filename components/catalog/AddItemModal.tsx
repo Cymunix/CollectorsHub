@@ -9,6 +9,7 @@ import { useCatalogMeta } from "./add-item/hooks/useCatalogMeta";
 import { useAddItemForm } from "./add-item/hooks/useAddItemForm";
 import { useVariantLinks } from "./add-item/hooks/useVariantLinks";
 import { useMinifigs } from "./add-item/hooks/useMinifigs";
+import { usePeoplePicker } from "./add-item/hooks/usePeoplePicker";
 
 import { safeInsertLookup } from "@/lib/catalog/lookups";
 import { createCatalogItem } from "@/lib/catalog/createCatalogItem";
@@ -23,7 +24,7 @@ import GlobalDetailsSection from "./add-item/sections/GlobalDetailsSection";
 import WikiSection from "./add-item/sections/WikiSection";
 import VariantsSection from "./add-item/sections/VariantsSection";
 
-// ✅ render only this kind section (won't break other kinds)
+// kind section you already had
 import GamingSection from "./add-item/sections/kinds/GamingSection";
 
 import CreateMinifigModal from "./add-item/modals/CreateMinifigModal";
@@ -31,7 +32,6 @@ import CreateMinifigModal from "./add-item/modals/CreateMinifigModal";
 import { supabase } from "@/lib/supabaseClient";
 import { replaceBundleComponents } from "@/lib/catalog/queries";
 
-// ✅ NEW: franchises editor (many-to-many)
 import ItemFranchiseEditor from "@/components/catalog/ItemFranchiseEditor";
 
 /* ---------------- types ---------------- */
@@ -105,8 +105,67 @@ function clampQty(v: any) {
   return Math.max(1, Math.floor(n));
 }
 
+async function insertLookupRow<T extends { id: string; name: string }>(
+  table: string,
+  payload: Record<string, any>
+): Promise<T> {
+  const { data, error } = await supabase.from(table).insert(payload).select("*").single();
+  if (error) throw error;
+  return data as T;
+}
+
+function sortByName<T extends { name: string }>(arr: T[]) {
+  return [...arr].sort((a, b) => String(a.name ?? "").localeCompare(String(b.name ?? "")));
+}
+
 function uniqStrings(xs: string[]) {
   return Array.from(new Set(xs.filter(Boolean)));
+}
+
+function toggleId(list: string[], id: string) {
+  const s = new Set(list);
+  if (s.has(id)) s.delete(id);
+  else s.add(id);
+  return Array.from(s);
+}
+
+function SectionShell({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
+      <div className="text-sm font-semibold text-[#0F172A]">{title}</div>
+      {subtitle ? <div className="mt-1 text-xs text-[#64748B]">{subtitle}</div> : null}
+      <div className="mt-3">{children}</div>
+    </div>
+  );
+}
+
+function CreateLinkButton({
+  onClick,
+  disabled,
+  label = "Create",
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  label?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={!!disabled}
+      className="text-xs font-semibold text-[#0F172A] underline disabled:opacity-50"
+    >
+      {label}
+    </button>
+  );
 }
 
 /* ---------------- component ---------------- */
@@ -129,20 +188,17 @@ export default function AddItemModal({
 
   const form = useAddItemForm(meta) as any;
   const variants = useVariantLinks();
+  const people = usePeoplePicker(meta.people);
   const minifigs = useMinifigs(() => form.subcategoryId, () => form.franchiseId);
 
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState<{ type: "error" | "success"; msg: string } | null>(null);
 
-  // ✅ keep modal open after create so we can attach franchises
+  // keep modal open after create so we can attach franchises
   const [createdCatalogItemId, setCreatedCatalogItemId] = useState<string | null>(null);
   const [createdDone, setCreatedDone] = useState(false);
 
-  // ✅ Movie people (simple multi-select UI)
-  const [movieDirectorIds, setMovieDirectorIds] = useState<string[]>([]);
-  const [movieActorIds, setMovieActorIds] = useState<string[]>([]);
-
-  // Bundles (draft)
+  // Bundles
   const [isBundle, setIsBundle] = useState(false);
   const [bundleRows, setBundleRows] = useState<BundleDraftRow[]>([]);
   const [bundleQuery, setBundleQuery] = useState("");
@@ -150,9 +206,11 @@ export default function AddItemModal({
   const [bundleResults, setBundleResults] = useState<CatalogSearchRow[]>([]);
   const [bundleUiErr, setBundleUiErr] = useState<string | null>(null);
 
+  const kind = String(form.itemKind || "building_blocks");
+
   const title = useMemo(() => {
-    const kind = String(form.itemKind || "building_blocks").replace(/_/g, " ");
-    return `Create Catalog Item • ${kind}`;
+    const k = String(form.itemKind || "building_blocks").replace(/_/g, " ");
+    return `Create Catalog Item • ${k}`;
   }, [form.itemKind]);
 
   const safeClose = () => {
@@ -166,8 +224,9 @@ export default function AddItemModal({
 
   const resetAll = () => {
     form.reset?.();
-    variants.resetVariants();
-    minifigs.resetMinifigs();
+    variants.resetVariants?.();
+    minifigs.resetMinifigs?.();
+    people.resetPeople?.();
 
     setIsBundle(false);
     setBundleRows([]);
@@ -175,11 +234,7 @@ export default function AddItemModal({
     setBundleResults([]);
     setBundleUiErr(null);
 
-    setMovieDirectorIds([]);
-    setMovieActorIds([]);
-
     setBanner(null);
-
     setCreatedCatalogItemId(null);
     setCreatedDone(false);
   };
@@ -197,10 +252,78 @@ export default function AddItemModal({
 
     setMeta((m) => ({
       ...m,
-      franchises: [...(m.franchises ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
+      franchises: sortByName([...(m.franchises ?? []), row]),
     }));
 
     form.setFranchiseId?.(row.id);
+  };
+
+  const createBbTheme = async () => {
+    const name = promptName("theme");
+    if (!name) return;
+    if (!form.subcategoryId) {
+      setBanner({ type: "error", msg: "Select a subcategory before creating a theme." });
+      return;
+    }
+    const row = await insertLookupRow<any>("bb_themes", { name, subcategory_id: form.subcategoryId });
+    setMeta((m) => ({ ...m, bbThemes: sortByName([...(m.bbThemes ?? []), row]) }));
+    form.setBbThemeId?.(row.id);
+  };
+
+  const createBbSubtheme = async () => {
+    const name = promptName("subtheme");
+    if (!name) return;
+    if (!form.bbThemeId) {
+      setBanner({ type: "error", msg: "Select a theme before creating a subtheme." });
+      return;
+    }
+    const row = await insertLookupRow<any>("bb_subthemes", { name, theme_id: form.bbThemeId });
+    setMeta((m) => ({ ...m, bbSubthemes: sortByName([...(m.bbSubthemes ?? []), row]) }));
+    form.setBbSubthemeId?.(row.id);
+  };
+
+  const createCardManufacturer = async () => {
+    const name = promptName("card manufacturer");
+    if (!name) return;
+    const row = await insertLookupRow<any>("card_manufacturers", { name });
+    setMeta((m) => ({ ...m, cardManufacturers: sortByName([...(m.cardManufacturers ?? []), row]) }));
+    form.setCardManufacturerId?.(row.id);
+  };
+
+  const createCardSet = async () => {
+    const name = promptName("card set");
+    if (!name) return;
+    if (!form.cardManufacturerId) {
+      setBanner({ type: "error", msg: "Select a card manufacturer before creating a set." });
+      return;
+    }
+    const row = await insertLookupRow<any>("card_sets", { name, manufacturer_id: form.cardManufacturerId });
+    setMeta((m) => ({ ...m, cardSets: sortByName([...(m.cardSets ?? []), row]) }));
+    form.setCardSetId?.(row.id);
+  };
+
+  const createCardType = async () => {
+    const name = promptName("card type");
+    if (!name) return;
+    const row = await insertLookupRow<any>("card_types", { name });
+    setMeta((m) => ({ ...m, cardTypes: sortByName([...(m.cardTypes ?? []), row]) }));
+    form.setCardTypeId?.(row.id);
+  };
+
+  const createMusicArtist = async () => {
+    const name = promptName("artist");
+    if (!name) return;
+    const row = await insertLookupRow<any>("music_artists", { name });
+    setMeta((m) => ({ ...m, musicArtists: sortByName([...(m.musicArtists ?? []), row]) }));
+    form.setMusicArtistId?.(row.id);
+  };
+
+  const createPerson = async () => {
+    const name = promptName("person");
+    if (!name) return null;
+    const row = await insertLookupRow<any>("people", { name });
+    setMeta((m) => ({ ...m, people: sortByName([...(m.people ?? []), row]) }));
+    return row;
   };
 
   /* ---------------- bundle helpers ---------------- */
@@ -286,7 +409,7 @@ export default function AddItemModal({
     const bundleSnapshot = [...bundleRows];
 
     try {
-      const id = await createCatalogItem(form.itemKind, {
+      const id = await createCatalogItem(kind, {
         categoryId: form.categoryId,
         subcategoryId: form.subcategoryId,
 
@@ -337,8 +460,8 @@ export default function AddItemModal({
         toyModelNumber: form.toyModelNumber,
 
         // movies
-        movieDirectorIds: uniqStrings(movieDirectorIds),
-        movieActorIds: uniqStrings(movieActorIds),
+        movieDirectorIds: (people as any).movieDirectorIds,
+        movieActorIds: (people as any).movieActorIds,
 
         // gaming
         gamePlatformId: form.gamePlatformId,
@@ -351,7 +474,7 @@ export default function AddItemModal({
         comicVariant: form.comicVariant,
       });
 
-      // ✅ AUTO-SYNC: legacy franchiseId -> join table as PRIMARY
+      // AUTO-SYNC: legacy franchiseId -> join table as PRIMARY
       if (form.franchiseId) {
         const { error: upErr } = await supabase.from("catalog_item_franchises").upsert(
           [
@@ -368,14 +491,13 @@ export default function AddItemModal({
 
       await upsertItemDescription(id, form.wikiDescription);
 
-      // Variant group linking
       await applyVariantGroupLinks({
         catalogItemId: id,
         linkedVariants: variants.linkedVariants ?? [],
         variantName: form.catalogVersion || variants.variantDefaultLabel || null,
       });
 
-      if (form.itemKind === "building_blocks") {
+      if (kind === "building_blocks") {
         await ensureBuildingBlocksRow(id, {
           themeId: form.bbThemeId!,
           subthemeId: form.bbSubthemeId || null,
@@ -408,13 +530,12 @@ export default function AddItemModal({
         }
       }
 
-      // Keep modal open so franchises can be attached
       setCreatedCatalogItemId(id);
       setCreatedDone(true);
 
       setBanner({
         type: "success",
-        msg: "Item created. Franchise was set as Primary. Add more franchises if needed, then click Finish.",
+        msg: "Item created. Franchise was set as Primary. Add crossovers/franchises if needed, then click Finish.",
       });
     } catch (e: any) {
       setBanner({ type: "error", msg: e?.message || "Failed to create item." });
@@ -423,10 +544,22 @@ export default function AddItemModal({
     }
   };
 
-  /* ---------------- derived ---------------- */
+  /* ---------------- derived filters ---------------- */
 
-  const kind = String(form.itemKind || "");
-  const showBundles = ["building_blocks", "gaming", "toy", "music", "movie", "comic"].includes(kind);
+  const bbThemes = meta.bbThemes ?? [];
+  const bbSubthemes = meta.bbSubthemes ?? [];
+  const filteredSubthemes = useMemo(() => {
+    const themeId = String(form.bbThemeId ?? "");
+    if (!themeId) return bbSubthemes;
+    return bbSubthemes.filter((s: any) => String(s.theme_id) === themeId);
+  }, [bbSubthemes, form.bbThemeId]);
+
+  const cardSets = meta.cardSets ?? [];
+  const filteredCardSets = useMemo(() => {
+    const manId = String(form.cardManufacturerId ?? "");
+    if (!manId) return cardSets;
+    return cardSets.filter((s: any) => String(s.manufacturer_id) === manId);
+  }, [cardSets, form.cardManufacturerId]);
 
   /* ---------------- render ---------------- */
 
@@ -449,7 +582,7 @@ export default function AddItemModal({
             onCreateFranchise={createFranchise}
           />
 
-          {/* ✅ Franchise/Crossover editor should NOT show as disabled pre-create */}
+          {/* Franchise/Crossover editor: only after create */}
           <div className="mt-4">
             {createdCatalogItemId ? (
               <ItemFranchiseEditor catalogItemId={createdCatalogItemId} disabled={saving} />
@@ -479,399 +612,446 @@ export default function AddItemModal({
 
           <GlobalDetailsSection {...form} />
 
-          {/* ✅ Kind-specific sections (these were missing) */}
+          {/* =========================
+              KIND-SPECIFIC FIELDS
+             ========================= */}
 
-          {/* Building Blocks */}
           {kind === "building_blocks" ? (
-            <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
-              <div className="text-sm font-semibold text-[#0F172A]">Building Blocks</div>
-
-              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <SectionShell title="Building Blocks" subtitle="Themes, set details, and minifigs.">
+              <div className="space-y-3">
                 <div>
-                  <div className="text-xs font-semibold text-[#0F172A]">Theme</div>
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-semibold text-[#0F172A]">Theme</div>
+                    <CreateLinkButton onClick={createBbTheme} disabled={saving} />
+                  </div>
                   <select
                     value={form.bbThemeId ?? ""}
-                    onChange={(e) => form.setBbThemeId?.(e.target.value || null)}
+                    onChange={(e) => form.setBbThemeId?.(e.target.value)}
                     disabled={saving}
                     className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
                   >
-                    <option value="">—</option>
-                    {(meta.bbThemes ?? []).map((r: any) => (
-                      <option key={r.id} value={r.id}>
-                        {r.name}
+                    <option value="">Select theme…</option>
+                    {bbThemes.map((t: any) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
                       </option>
                     ))}
                   </select>
                 </div>
 
                 <div>
-                  <div className="text-xs font-semibold text-[#0F172A]">Subtheme</div>
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-semibold text-[#0F172A]">Subtheme</div>
+                    <CreateLinkButton onClick={createBbSubtheme} disabled={saving || !form.bbThemeId} />
+                  </div>
                   <select
                     value={form.bbSubthemeId ?? ""}
-                    onChange={(e) => form.setBbSubthemeId?.(e.target.value || null)}
+                    onChange={(e) => form.setBbSubthemeId?.(e.target.value)}
                     disabled={saving}
                     className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
                   >
-                    <option value="">—</option>
-                    {(meta.bbSubthemes ?? []).map((r: any) => (
-                      <option key={r.id} value={r.id}>
-                        {r.name}
+                    <option value="">Select subtheme…</option>
+                    {filteredSubthemes.map((t: any) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
                       </option>
                     ))}
                   </select>
                 </div>
 
-                <div>
-                  <div className="text-xs font-semibold text-[#0F172A]">Set #</div>
-                  <input
-                    value={form.bbSetNumber ?? ""}
-                    onChange={(e) => form.setBbSetNumber?.(e.target.value)}
-                    disabled={saving}
-                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
-                    placeholder="e.g. 75252"
-                  />
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <div className="text-xs font-semibold text-[#0F172A]">Set Number</div>
+                    <input
+                      value={form.bbSetNumber ?? ""}
+                      onChange={(e) => form.setBbSetNumber?.(e.target.value)}
+                      disabled={saving}
+                      className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+                      placeholder="e.g., 75313"
+                    />
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold text-[#0F172A]">Piece Count</div>
+                    <input
+                      value={form.bbPieceCount ?? ""}
+                      onChange={(e) => form.setBbPieceCount?.(e.target.value)}
+                      disabled={saving}
+                      className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+                      placeholder="e.g., 1022"
+                    />
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold text-[#0F172A]">Retail CAD</div>
+                    <input
+                      value={form.bbRetailCad ?? ""}
+                      onChange={(e) => form.setBbRetailCad?.(e.target.value)}
+                      disabled={saving}
+                      className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+                      placeholder="e.g., 199.99"
+                    />
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold text-[#0F172A]">Retail USD</div>
+                    <input
+                      value={form.bbRetailUsd ?? ""}
+                      onChange={(e) => form.setBbRetailUsd?.(e.target.value)}
+                      disabled={saving}
+                      className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+                      placeholder="e.g., 159.99"
+                    />
+                  </div>
                 </div>
 
-                <div>
-                  <div className="text-xs font-semibold text-[#0F172A]">Piece Count</div>
-                  <input
-                    type="number"
-                    value={form.bbPieceCount ?? ""}
-                    onChange={(e) => form.setBbPieceCount?.(e.target.value === "" ? null : Number(e.target.value))}
-                    disabled={saving}
-                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
-                  />
-                </div>
+                {/* Minifigs flow (this is what you were missing) */}
+                <div className="mt-2 rounded-2xl border border-[#E5E9F2] bg-white p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-semibold text-[#0F172A]">Minifigs</div>
+                    <CreateLinkButton
+                      label="Create Minifig"
+                      onClick={() => (minifigs as any).setMinifigCreateOpen?.(true)}
+                      disabled={saving}
+                    />
+                  </div>
 
-                <div>
-                  <div className="text-xs font-semibold text-[#0F172A]">Retail CAD</div>
-                  <input
-                    type="number"
-                    value={form.bbRetailCad ?? ""}
-                    onChange={(e) => form.setBbRetailCad?.(e.target.value === "" ? null : Number(e.target.value))}
-                    disabled={saving}
-                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
-                  />
-                </div>
+                  <div className="mt-3 flex items-center gap-2">
+                    <input
+                      value={(minifigs as any).minifigQuery ?? ""}
+                      onChange={(e) => (minifigs as any).setMinifigQuery?.(e.target.value)}
+                      placeholder="Search minifigs..."
+                      disabled={saving}
+                      className="w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => (minifigs as any).searchMinifigs?.()}
+                      disabled={saving || !!(minifigs as any).minifigSearching}
+                      className="rounded-xl bg-[#0F172A] px-3 py-2 text-xs font-semibold text-white disabled:bg-gray-200 disabled:text-gray-600"
+                    >
+                      {(minifigs as any).minifigSearching ? "Searching..." : "Search"}
+                    </button>
+                  </div>
 
-                <div>
-                  <div className="text-xs font-semibold text-[#0F172A]">Retail USD</div>
-                  <input
-                    type="number"
-                    value={form.bbRetailUsd ?? ""}
-                    onChange={(e) => form.setBbRetailUsd?.(e.target.value === "" ? null : Number(e.target.value))}
-                    disabled={saving}
-                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
-                  />
+                  <div className="mt-3 space-y-2">
+                    {((minifigs as any).minifigResults ?? []).map((r: any) => (
+                      <div
+                        key={r.id}
+                        className="flex items-center justify-between gap-3 rounded-xl border border-[#E5E9F2] bg-white p-3"
+                      >
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-semibold text-[#0F172A]">{safeText(r.name)}</div>
+                          <div className="text-[11px] text-[#64748B]">{safeText(r.minifig_number)}</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => (minifigs as any).addMinifig?.(r)}
+                          disabled={saving}
+                          className="rounded-lg border px-3 py-1 text-xs font-semibold hover:bg-[#F8FAFC]"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-4">
+                    <div className="text-xs font-semibold text-[#0F172A]">Selected</div>
+                    <div className="mt-2 space-y-2">
+                      {((minifigs as any).selectedMinifigs ?? []).length === 0 ? (
+                        <div className="rounded-xl border bg-[#F8FAFC] p-3 text-xs text-[#64748B]">None selected.</div>
+                      ) : (
+                        ((minifigs as any).selectedMinifigs ?? []).map((m: any) => (
+                          <div
+                            key={m.instance_key ?? m.id}
+                            className="flex items-center justify-between gap-3 rounded-xl border border-[#E5E9F2] bg-white p-3"
+                          >
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-semibold text-[#0F172A]">{safeText(m.name)}</div>
+                              <div className="text-[11px] text-[#64748B]">{safeText(m.minifig_number)}</div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="number"
+                                min={1}
+                                value={m.qty ?? 1}
+                                onChange={(e) => (minifigs as any).updateMinifigQty?.(m, e.target.value)}
+                                disabled={saving}
+                                className="w-20 rounded-lg border border-[#E5E9F2] px-2 py-1 text-sm"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => (minifigs as any).removeMinifig?.(m)}
+                                disabled={saving}
+                                className="rounded-lg border px-2 py-1 text-xs font-semibold hover:bg-[#F8FAFC]"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
-
-              <div className="mt-3 text-[11px] text-[#64748B]">
-                Minifigs are handled by the existing minifigs UI/modal in this flow.
-              </div>
-            </div>
+            </SectionShell>
           ) : null}
 
-          {/* Cards */}
           {kind === "trading_card" || kind === "sports_card" ? (
-            <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
-              <div className="text-sm font-semibold text-[#0F172A]">Card Details</div>
-
-              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <SectionShell title="Cards" subtitle="Manufacturer, set, and type. (This is why you saw “nothing” before.)">
+              <div className="space-y-3">
                 <div>
-                  <div className="text-xs font-semibold text-[#0F172A]">Manufacturer</div>
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-semibold text-[#0F172A]">Manufacturer</div>
+                    <CreateLinkButton onClick={createCardManufacturer} disabled={saving} />
+                  </div>
                   <select
                     value={form.cardManufacturerId ?? ""}
-                    onChange={(e) => form.setCardManufacturerId?.(e.target.value || null)}
+                    onChange={(e) => form.setCardManufacturerId?.(e.target.value)}
                     disabled={saving}
                     className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
                   >
-                    <option value="">—</option>
-                    {(meta.cardManufacturers ?? []).map((r: any) => (
-                      <option key={r.id} value={r.id}>
-                        {r.name}
+                    <option value="">Select manufacturer…</option>
+                    {(meta.cardManufacturers ?? []).map((x: any) => (
+                      <option key={x.id} value={x.id}>
+                        {x.name}
                       </option>
                     ))}
                   </select>
                 </div>
 
                 <div>
-                  <div className="text-xs font-semibold text-[#0F172A]">Set</div>
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-semibold text-[#0F172A]">Set</div>
+                    <CreateLinkButton onClick={createCardSet} disabled={saving || !form.cardManufacturerId} />
+                  </div>
                   <select
                     value={form.cardSetId ?? ""}
-                    onChange={(e) => form.setCardSetId?.(e.target.value || null)}
+                    onChange={(e) => form.setCardSetId?.(e.target.value)}
                     disabled={saving}
                     className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
                   >
-                    <option value="">—</option>
-                    {(meta.cardSets ?? []).map((r: any) => (
-                      <option key={r.id} value={r.id}>
-                        {r.name}
+                    <option value="">Select set…</option>
+                    {filteredCardSets.map((x: any) => (
+                      <option key={x.id} value={x.id}>
+                        {x.name}
                       </option>
                     ))}
                   </select>
                 </div>
 
                 <div>
-                  <div className="text-xs font-semibold text-[#0F172A]">Type</div>
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-semibold text-[#0F172A]">Type</div>
+                    <CreateLinkButton onClick={createCardType} disabled={saving} />
+                  </div>
                   <select
                     value={form.cardTypeId ?? ""}
-                    onChange={(e) => form.setCardTypeId?.(e.target.value || null)}
+                    onChange={(e) => form.setCardTypeId?.(e.target.value)}
                     disabled={saving}
                     className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
                   >
-                    <option value="">—</option>
-                    {(meta.cardTypes ?? []).map((r: any) => (
-                      <option key={r.id} value={r.id}>
-                        {r.name}
+                    <option value="">Select type…</option>
+                    {(meta.cardTypes ?? []).map((x: any) => (
+                      <option key={x.id} value={x.id}>
+                        {x.name}
                       </option>
                     ))}
                   </select>
                 </div>
 
-                <div>
-                  <div className="text-xs font-semibold text-[#0F172A]">Card #</div>
-                  <input
-                    value={form.cardNumber ?? ""}
-                    onChange={(e) => form.setCardNumber?.(e.target.value)}
-                    disabled={saving}
-                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
-                    placeholder="e.g. XH-3"
-                  />
-                </div>
-
-                <div>
-                  <div className="text-xs font-semibold text-[#0F172A]">Card Year</div>
-                  <input
-                    type="number"
-                    value={form.cardYear ?? ""}
-                    onChange={(e) => form.setCardYear?.(e.target.value === "" ? null : Number(e.target.value))}
-                    disabled={saving}
-                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
-                    placeholder="e.g. 1992"
-                  />
-                </div>
-
-                <div>
-                  <div className="text-xs font-semibold text-[#0F172A]">Rarity (custom)</div>
-                  <input
-                    value={form.cardRarityCustom ?? ""}
-                    onChange={(e) => form.setCardRarityCustom?.(e.target.value)}
-                    disabled={saving}
-                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
-                    placeholder="e.g. Hologram / SP / Insert"
-                  />
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <div className="text-xs font-semibold text-[#0F172A]">Card Number</div>
+                    <input
+                      value={form.cardNumber ?? ""}
+                      onChange={(e) => form.setCardNumber?.(e.target.value)}
+                      disabled={saving}
+                      className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+                      placeholder="e.g., XH-3"
+                    />
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold text-[#0F172A]">Card Year</div>
+                    <input
+                      value={form.cardYear ?? ""}
+                      onChange={(e) => form.setCardYear?.(e.target.value)}
+                      disabled={saving}
+                      className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+                      placeholder="e.g., 1992"
+                    />
+                  </div>
                 </div>
               </div>
-            </div>
+            </SectionShell>
           ) : null}
 
-          {/* Music */}
           {kind === "music" ? (
-            <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
-              <div className="text-sm font-semibold text-[#0F172A]">Music</div>
-
-              <div className="mt-3">
-                <div className="text-xs font-semibold text-[#0F172A]">Artist</div>
+            <SectionShell title="Music" subtitle="Artist selection + create artist.">
+              <div>
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-semibold text-[#0F172A]">Artist</div>
+                  <CreateLinkButton onClick={createMusicArtist} disabled={saving} />
+                </div>
                 <select
                   value={form.musicArtistId ?? ""}
-                  onChange={(e) => form.setMusicArtistId?.(e.target.value || null)}
+                  onChange={(e) => form.setMusicArtistId?.(e.target.value)}
                   disabled={saving}
                   className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
                 >
-                  <option value="">—</option>
-                  {(meta.musicArtists ?? []).map((r: any) => (
-                    <option key={r.id} value={r.id}>
-                      {r.name}
+                  <option value="">Select artist…</option>
+                  {(meta.musicArtists ?? []).map((x: any) => (
+                    <option key={x.id} value={x.id}>
+                      {x.name}
                     </option>
                   ))}
                 </select>
               </div>
-            </div>
+            </SectionShell>
           ) : null}
 
-          {/* Movie */}
           {kind === "movie" ? (
-            <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
-              <div className="text-sm font-semibold text-[#0F172A]">Movie</div>
-              <div className="mt-1 text-xs text-[#64748B]">Directors and actors (multi-select).</div>
-
-              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-                <div>
-                  <div className="text-xs font-semibold text-[#0F172A]">Directors</div>
-                  <select
-                    multiple
-                    value={movieDirectorIds}
-                    onChange={(e) => {
-                      const selected = Array.from(e.target.selectedOptions).map((o) => o.value);
-                      setMovieDirectorIds(selected);
+            <SectionShell title="Movie" subtitle="Directors & actors come from the People lookup.">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-semibold text-[#0F172A]">People</div>
+                  <CreateLinkButton
+                    label="Create Person"
+                    onClick={async () => {
+                      const p = await createPerson();
+                      if (!p) return;
+                      // no auto-add; user can pick below
                     }}
                     disabled={saving}
-                    className="mt-1 h-40 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
-                  >
-                    {(meta.people ?? []).map((p: any) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </div>
 
-                <div>
-                  <div className="text-xs font-semibold text-[#0F172A]">Actors</div>
-                  <select
-                    multiple
-                    value={movieActorIds}
-                    onChange={(e) => {
-                      const selected = Array.from(e.target.selectedOptions).map((o) => o.value);
-                      setMovieActorIds(selected);
-                    }}
-                    disabled={saving}
-                    className="mt-1 h-40 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
-                  >
-                    {(meta.people ?? []).map((p: any) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-semibold text-[#0F172A]">Directors</div>
+                      <CreateLinkButton
+                        label="Create + Add"
+                        onClick={async () => {
+                          const p = await createPerson();
+                          if (!p) return;
+                          const prev = (people as any).movieDirectorIds ?? [];
+                          (people as any).setMovieDirectorIds?.(uniqStrings([...prev, p.id]));
+                        }}
+                        disabled={saving}
+                      />
+                    </div>
+                    <div className="mt-2 max-h-48 overflow-auto rounded-xl border border-[#E5E9F2] p-2">
+                      {(meta.people ?? []).map((p: any) => {
+                        const ids: string[] = (people as any).movieDirectorIds ?? [];
+                        const checked = ids.includes(p.id);
+                        return (
+                          <label key={p.id} className="flex items-center gap-2 py-1 text-sm">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() =>
+                                (people as any).setMovieDirectorIds?.(toggleId(ids, String(p.id)))
+                              }
+                              disabled={saving}
+                            />
+                            <span className="truncate">{p.name}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-semibold text-[#0F172A]">Actors</div>
+                      <CreateLinkButton
+                        label="Create + Add"
+                        onClick={async () => {
+                          const p = await createPerson();
+                          if (!p) return;
+                          const prev = (people as any).movieActorIds ?? [];
+                          (people as any).setMovieActorIds?.(uniqStrings([...prev, p.id]));
+                        }}
+                        disabled={saving}
+                      />
+                    </div>
+                    <div className="mt-2 max-h-48 overflow-auto rounded-xl border border-[#E5E9F2] p-2">
+                      {(meta.people ?? []).map((p: any) => {
+                        const ids: string[] = (people as any).movieActorIds ?? [];
+                        const checked = ids.includes(p.id);
+                        return (
+                          <label key={p.id} className="flex items-center gap-2 py-1 text-sm">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => (people as any).setMovieActorIds?.(toggleId(ids, String(p.id)))}
+                              disabled={saving}
+                            />
+                            <span className="truncate">{p.name}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
               </div>
-
-              <div className="mt-2 text-[11px] text-[#64748B]">
-                Tip: hold Ctrl (Windows) / Cmd (Mac) to select multiple.
-              </div>
-            </div>
+            </SectionShell>
           ) : null}
 
-          {/* Comic */}
           {kind === "comic" ? (
-            <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
-              <div className="text-sm font-semibold text-[#0F172A]">Comic</div>
-
-              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <SectionShell title="Comics" subtitle="Publisher and issue details.">
+              <div className="space-y-3">
                 <div>
                   <div className="text-xs font-semibold text-[#0F172A]">Publisher</div>
                   <select
                     value={form.comicPublisherId ?? ""}
-                    onChange={(e) => form.setComicPublisherId?.(e.target.value || null)}
+                    onChange={(e) => form.setComicPublisherId?.(e.target.value)}
                     disabled={saving}
                     className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
                   >
-                    <option value="">—</option>
-                    {(meta.comicPublishers ?? []).map((r: any) => (
-                      <option key={r.id} value={r.id}>
-                        {r.name}
+                    <option value="">Select publisher…</option>
+                    {(meta.comicPublishers ?? []).map((x: any) => (
+                      <option key={x.id} value={x.id}>
+                        {x.name}
                       </option>
                     ))}
                   </select>
                 </div>
 
-                <div>
-                  <div className="text-xs font-semibold text-[#0F172A]">Series</div>
-                  <input
-                    value={form.comicSeries ?? ""}
-                    onChange={(e) => form.setComicSeries?.(e.target.value)}
-                    disabled={saving}
-                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
-                    placeholder="e.g. Amazing Spider-Man"
-                  />
-                </div>
-
-                <div>
-                  <div className="text-xs font-semibold text-[#0F172A]">Issue #</div>
-                  <input
-                    value={form.comicIssueNumber ?? ""}
-                    onChange={(e) => form.setComicIssueNumber?.(e.target.value)}
-                    disabled={saving}
-                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
-                    placeholder="e.g. 300"
-                  />
-                </div>
-
-                <div>
-                  <div className="text-xs font-semibold text-[#0F172A]">Variant</div>
-                  <input
-                    value={form.comicVariant ?? ""}
-                    onChange={(e) => form.setComicVariant?.(e.target.value)}
-                    disabled={saving}
-                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
-                    placeholder="e.g. 1:25 / Newsstand / Foil"
-                  />
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div>
+                    <div className="text-xs font-semibold text-[#0F172A]">Series</div>
+                    <input
+                      value={form.comicSeries ?? ""}
+                      onChange={(e) => form.setComicSeries?.(e.target.value)}
+                      disabled={saving}
+                      className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+                      placeholder="e.g., Amazing Spider-Man"
+                    />
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold text-[#0F172A]">Issue #</div>
+                    <input
+                      value={form.comicIssueNumber ?? ""}
+                      onChange={(e) => form.setComicIssueNumber?.(e.target.value)}
+                      disabled={saving}
+                      className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+                      placeholder="e.g., 129"
+                    />
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold text-[#0F172A]">Variant</div>
+                    <input
+                      value={form.comicVariant ?? ""}
+                      onChange={(e) => form.setComicVariant?.(e.target.value)}
+                      disabled={saving}
+                      className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+                      placeholder="e.g., Cover B"
+                    />
+                  </div>
                 </div>
               </div>
-            </div>
-          ) : null}
-
-          {/* Toy */}
-          {kind === "toy" ? (
-            <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
-              <div className="text-sm font-semibold text-[#0F172A]">Toy</div>
-
-              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-                <div>
-                  <div className="text-xs font-semibold text-[#0F172A]">Manufacturer</div>
-                  <select
-                    value={form.toyManufacturerId ?? ""}
-                    onChange={(e) => form.setToyManufacturerId?.(e.target.value || null)}
-                    disabled={saving}
-                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
-                  >
-                    <option value="">—</option>
-                    {(meta.toyManufacturers ?? []).map((r: any) => (
-                      <option key={r.id} value={r.id}>
-                        {r.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <div className="text-xs font-semibold text-[#0F172A]">Brand</div>
-                  <select
-                    value={form.toyBrandId ?? ""}
-                    onChange={(e) => form.setToyBrandId?.(e.target.value || null)}
-                    disabled={saving}
-                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
-                  >
-                    <option value="">—</option>
-                    {(meta.toyBrands ?? []).map((r: any) => (
-                      <option key={r.id} value={r.id}>
-                        {r.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <div className="text-xs font-semibold text-[#0F172A]">Line</div>
-                  <select
-                    value={form.toyLineId ?? ""}
-                    onChange={(e) => form.setToyLineId?.(e.target.value || null)}
-                    disabled={saving}
-                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
-                  >
-                    <option value="">—</option>
-                    {(meta.toyLines ?? []).map((r: any) => (
-                      <option key={r.id} value={r.id}>
-                        {r.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <div className="text-xs font-semibold text-[#0F172A]">Model #</div>
-                  <input
-                    value={form.toyModelNumber ?? ""}
-                    onChange={(e) => form.setToyModelNumber?.(e.target.value)}
-                    disabled={saving}
-                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
-                    placeholder="Optional"
-                  />
-                </div>
-              </div>
-            </div>
+            </SectionShell>
           ) : null}
 
           {/* Production Status */}
@@ -897,146 +1077,142 @@ export default function AddItemModal({
             </div>
           </div>
 
-          {/* Bundles Section (only for allowed kinds) */}
-          {showBundles ? (
-            <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm font-semibold text-[#0F172A]">Bundle</div>
-                  <div className="text-xs text-[#64748B]">Mark this item as a bundle and define what it includes.</div>
-                </div>
-
-                <label className="inline-flex items-center gap-2 text-xs font-semibold text-[#0F172A]">
-                  <input
-                    type="checkbox"
-                    checked={isBundle}
-                    onChange={(e) => setIsBundle(!!e.target.checked)}
-                    disabled={saving}
-                    className="h-4 w-4"
-                  />
-                  This item is a bundle
-                </label>
+          {/* Bundle */}
+          <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-[#0F172A]">Bundle</div>
+                <div className="text-xs text-[#64748B]">Mark this item as a bundle and define what it includes.</div>
               </div>
 
-              {isBundle ? (
-                <div className="mt-4">
-                  {bundleUiErr ? (
-                    <div className="mb-3 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800">
-                      {bundleUiErr}
+              <label className="inline-flex items-center gap-2 text-xs font-semibold text-[#0F172A]">
+                <input
+                  type="checkbox"
+                  checked={isBundle}
+                  onChange={(e) => setIsBundle(!!e.target.checked)}
+                  disabled={saving}
+                  className="h-4 w-4"
+                />
+                This item is a bundle
+              </label>
+            </div>
+
+            {isBundle ? (
+              <div className="mt-4">
+                {bundleUiErr ? (
+                  <div className="mb-3 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800">
+                    {bundleUiErr}
+                  </div>
+                ) : null}
+
+                <div className="text-xs font-semibold text-[#0F172A]">Included items</div>
+
+                <div className="mt-2 space-y-2">
+                  {bundleRows.length === 0 ? (
+                    <div className="rounded-xl border bg-[#F8FAFC] p-3 text-xs text-[#64748B]">
+                      No components added yet.
                     </div>
-                  ) : null}
+                  ) : (
+                    bundleRows.map((r) => (
+                      <div
+                        key={r.component_item_id}
+                        className="flex items-center justify-between gap-3 rounded-xl border border-[#E5E9F2] bg-white p-3"
+                      >
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-semibold text-[#0F172A]">{safeText(r.name)}</div>
+                          <div className="text-[11px] text-[#64748B]">{r.component_item_id}</div>
+                        </div>
 
-                  <div className="text-xs font-semibold text-[#0F172A]">Included items</div>
-
-                  <div className="mt-2 space-y-2">
-                    {bundleRows.length === 0 ? (
-                      <div className="rounded-xl border bg-[#F8FAFC] p-3 text-xs text-[#64748B]">
-                        No components added yet.
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            min={1}
+                            value={r.qty}
+                            onChange={(e) => setBundleQty(r.component_item_id, e.target.value)}
+                            disabled={saving}
+                            className="w-20 rounded-lg border border-[#E5E9F2] px-2 py-1 text-sm"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => removeBundleComponent(r.component_item_id)}
+                            disabled={saving}
+                            className={`rounded-lg border px-2 py-1 text-xs font-semibold ${
+                              saving
+                                ? "bg-gray-100 text-gray-500 cursor-not-allowed"
+                                : "bg-white text-[#0F172A] hover:bg-[#F8FAFC]"
+                            }`}
+                          >
+                            Remove
+                          </button>
+                        </div>
                       </div>
-                    ) : (
-                      bundleRows.map((r) => (
+                    ))
+                  )}
+                </div>
+
+                <div className="mt-4 border-t border-[#E5E9F2] pt-4">
+                  <div className="text-xs font-semibold text-[#0F172A]">Add components</div>
+
+                  <div className="mt-2 flex items-center gap-2">
+                    <input
+                      value={bundleQuery}
+                      onChange={(e) => setBundleQuery(e.target.value)}
+                      placeholder="Search catalog items..."
+                      className="w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+                      disabled={saving}
+                    />
+                    <button
+                      type="button"
+                      onClick={searchBundleComponents}
+                      disabled={saving || bundleSearching || String(bundleQuery).trim().length < 2}
+                      className={`rounded-xl px-3 py-2 text-xs font-semibold shadow-sm transition ${
+                        saving || bundleSearching || String(bundleQuery).trim().length < 2
+                          ? "bg-gray-200 text-gray-600 cursor-not-allowed"
+                          : "bg-[#0F172A] text-white"
+                      }`}
+                    >
+                      {bundleSearching ? "Searching..." : "Search"}
+                    </button>
+                  </div>
+
+                  <div className="mt-3 space-y-2">
+                    {bundleResults.map((r) => {
+                      const already = bundleIds.has(r.id);
+                      const subtitle = `${r.release_year ?? "—"}${r.version ? ` • ${r.version}` : ""}`;
+                      return (
                         <div
-                          key={r.component_item_id}
+                          key={r.id}
                           className="flex items-center justify-between gap-3 rounded-xl border border-[#E5E9F2] bg-white p-3"
                         >
                           <div className="min-w-0">
                             <div className="truncate text-sm font-semibold text-[#0F172A]">{safeText(r.name)}</div>
-                            <div className="text-[11px] text-[#64748B]">{r.component_item_id}</div>
+                            <div className="text-[11px] text-[#64748B] truncate">{subtitle}</div>
                           </div>
 
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="number"
-                              min={1}
-                              value={r.qty}
-                              onChange={(e) => setBundleQty(r.component_item_id, e.target.value)}
-                              disabled={saving}
-                              className="w-20 rounded-lg border border-[#E5E9F2] px-2 py-1 text-sm"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => removeBundleComponent(r.component_item_id)}
-                              disabled={saving}
-                              className={`rounded-lg border px-2 py-1 text-xs font-semibold ${
-                                saving
-                                  ? "bg-gray-100 text-gray-500 cursor-not-allowed"
-                                  : "bg-white text-[#0F172A] hover:bg-[#F8FAFC]"
-                              }`}
-                            >
-                              Remove
-                            </button>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-
-                  <div className="mt-4 border-t border-[#E5E9F2] pt-4">
-                    <div className="text-xs font-semibold text-[#0F172A]">Add components</div>
-
-                    <div className="mt-2 flex items-center gap-2">
-                      <input
-                        value={bundleQuery}
-                        onChange={(e) => setBundleQuery(e.target.value)}
-                        placeholder="Search catalog items..."
-                        className="w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
-                        disabled={saving}
-                      />
-                      <button
-                        type="button"
-                        onClick={searchBundleComponents}
-                        disabled={saving || bundleSearching || String(bundleQuery).trim().length < 2}
-                        className={`rounded-xl px-3 py-2 text-xs font-semibold shadow-sm transition ${
-                          saving || bundleSearching || String(bundleQuery).trim().length < 2
-                            ? "bg-gray-200 text-gray-600 cursor-not-allowed"
-                            : "bg-[#0F172A] text-white"
-                        }`}
-                      >
-                        {bundleSearching ? "Searching..." : "Search"}
-                      </button>
-                    </div>
-
-                    <div className="mt-3 space-y-2">
-                      {bundleResults.map((r) => {
-                        const already = bundleIds.has(r.id);
-                        const subtitle = `${r.release_year ?? "—"}${r.version ? ` • ${r.version}` : ""}`;
-                        return (
-                          <div
-                            key={r.id}
-                            className="flex items-center justify-between gap-3 rounded-xl border border-[#E5E9F2] bg-white p-3"
+                          <button
+                            type="button"
+                            onClick={() => addBundleComponent(r)}
+                            disabled={saving || already}
+                            className={`rounded-lg px-3 py-1 text-xs font-semibold ${
+                              saving || already
+                                ? "bg-gray-200 text-gray-600 cursor-not-allowed"
+                                : "bg-white border text-[#0F172A] hover:bg-[#F8FAFC]"
+                            }`}
                           >
-                            <div className="min-w-0">
-                              <div className="truncate text-sm font-semibold text-[#0F172A]">{safeText(r.name)}</div>
-                              <div className="text-[11px] text-[#64748B] truncate">{subtitle}</div>
-                            </div>
-
-                            <button
-                              type="button"
-                              onClick={() => addBundleComponent(r)}
-                              disabled={saving || already}
-                              className={`rounded-lg px-3 py-1 text-xs font-semibold ${
-                                saving || already
-                                  ? "bg-gray-200 text-gray-600 cursor-not-allowed"
-                                  : "bg-white border text-[#0F172A] hover:bg-[#F8FAFC]"
-                              }`}
-                            >
-                              {already ? "Added" : "Add"}
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    <div className="mt-3 text-[11px] text-[#64748B]">
-                      Components are saved after the item is created.
-                    </div>
+                            {already ? "Added" : "Add"}
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
 
-          {/* Gaming kind-specific section: platform + publisher */}
+                  <div className="mt-3 text-[11px] text-[#64748B]">Components are saved after the item is created.</div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          {/* Gaming section stays as-is */}
           {kind === "gaming" ? (
             <GamingSection
               gamePlatforms={meta.gamePlatforms ?? []}
@@ -1049,13 +1225,13 @@ export default function AddItemModal({
               onPlatformCreated={(row) =>
                 setMeta((m) => ({
                   ...m,
-                  gamePlatforms: [...(m.gamePlatforms ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
+                  gamePlatforms: sortByName([...(m.gamePlatforms ?? []), row]),
                 }))
               }
               onPublisherCreated={(row) =>
                 setMeta((m) => ({
                   ...m,
-                  gamePublishers: [...(m.gamePublishers ?? []), row].sort((a, b) => a.name.localeCompare(b.name)),
+                  gamePublishers: sortByName([...(m.gamePublishers ?? []), row]),
                 }))
               }
             />
@@ -1083,16 +1259,16 @@ export default function AddItemModal({
       </AddItemModalShell>
 
       <CreateMinifigModal
-        open={minifigs.minifigCreateOpen}
-        creating={minifigs.creatingMinifig}
-        onClose={() => minifigs.setMinifigCreateOpen(false)}
-        newMinifigNumber={minifigs.newMinifigNumber}
-        setNewMinifigNumber={minifigs.setNewMinifigNumber}
-        newMinifigName={minifigs.newMinifigName}
-        setNewMinifigName={minifigs.setNewMinifigName}
-        newMinifigImagePreview={minifigs.newMinifigImagePreview}
-        onPickImage={minifigs.pickNewMinifigImage}
-        onCreate={minifigs.createMinifigWithImage}
+        open={(minifigs as any).minifigCreateOpen}
+        creating={(minifigs as any).creatingMinifig}
+        onClose={() => (minifigs as any).setMinifigCreateOpen?.(false)}
+        newMinifigNumber={(minifigs as any).newMinifigNumber}
+        setNewMinifigNumber={(minifigs as any).setNewMinifigNumber}
+        newMinifigName={(minifigs as any).newMinifigName}
+        setNewMinifigName={(minifigs as any).setNewMinifigName}
+        newMinifigImagePreview={(minifigs as any).newMinifigImagePreview}
+        onPickImage={(minifigs as any).pickNewMinifigImage}
+        onCreate={(minifigs as any).createMinifigWithImage}
       />
     </>
   );
