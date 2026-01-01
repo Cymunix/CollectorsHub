@@ -1,3 +1,4 @@
+// hooks/catalog/useCatalogCards.ts
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -82,14 +83,15 @@ export function useCatalogCards({ categories, subcategories, franchises }: UseCa
 
     try {
       // 1) Base items (✅ INCLUDE image_url because some installs use catalog_items.image_url directly)
+      // ✅ INCLUDE is_bundle for bundle UI badges + tabs.
       const { data: baseItems, error: baseErr } = await supabase
         .from("catalog_items")
-        .select("id,name,image_url,release_year,version,upc,created_at,category_id,subcategory_id,franchise_id")
+        .select("id,name,image_url,release_year,version,upc,created_at,category_id,subcategory_id,franchise_id,is_bundle")
         .order("created_at", { ascending: false });
 
       if (baseErr) throw baseErr;
 
-      const rows = (baseItems ?? []) as (CatalogItemRow & { image_url?: string | null })[];
+      const rows = (baseItems ?? []) as (CatalogItemRow & { image_url?: string | null; is_bundle?: boolean | null })[];
       const ids = rows.map((r) => r.id);
 
       // 2) Photos table (optional). If empty or table missing, we fall back to catalog_items.image_url
@@ -238,6 +240,9 @@ export function useCatalogCards({ categories, subcategories, franchises }: UseCa
           version: r.version ?? null,
           created_at: r.created_at ?? null,
 
+          // Bundles
+          is_bundle: (r as any)?.is_bundle ?? null,
+
           bb_theme_id: bb?.theme_id ?? null,
           bb_subtheme_id: bb?.subtheme_id ?? null,
 
@@ -281,6 +286,9 @@ export function useCatalogCards({ categories, subcategories, franchises }: UseCa
         release_year: null,
         version: null,
         created_at: mf.created_at ?? null,
+
+        // Bundles (minifigs are never bundles)
+        is_bundle: false,
       }));
 
       setCards([...builtItems, ...builtMinifigs]);
