@@ -179,6 +179,62 @@ async function insertLookupRowSafe<T extends { id: string; name: string }>(
   }
 }
 
+/* ---------------- slug helpers (for NOT NULL slug tables) ---------------- */
+
+function slugify(input: any) {
+  const s = String(input ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  const slug = s
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+
+  return slug || "item";
+}
+
+/**
+ * Insert into a lookup table that requires a NOT NULL slug.
+ * - Attempts base slug first
+ * - If collision, retries with random suffix
+ */
+async function insertWithSlugSafe<T extends { id: string; name: string }>(
+  table: string,
+  payload: Record<string, any>,
+  setBanner: (b: { type: "error" | "success"; msg: string } | null) => void
+): Promise<T | null> {
+  try {
+    const base = slugify(payload?.name);
+
+    // attempt 1
+    let { data, error } = await supabase
+      .from(table)
+      .insert({ ...payload, slug: base })
+      .select("*")
+      .single();
+
+    if (!error) return data as T;
+
+    // attempt 2 (collision safe)
+    const suffix = Math.random().toString(36).slice(2, 7);
+    ({ data, error } = await supabase
+      .from(table)
+      .insert({ ...payload, slug: `${base}-${suffix}` })
+      .select("*")
+      .single());
+
+    if (error) throw error;
+    return data as T;
+  } catch (e: any) {
+    setBanner({ type: "error", msg: e?.message ?? `Insert failed: ${table}` });
+    console.error("insertWithSlugSafe failed:", table, payload, e);
+    return null;
+  }
+}
+
 /* ---------------- component ---------------- */
 
 export default function AddItemModal({
@@ -1322,4 +1378,5 @@ const row = await insertWithSlugSafe<any>("card_manufacturers", { name }, setBan
     </>
   );
 }
+
 
