@@ -78,6 +78,17 @@ type BundleDraftRow = {
   qty: number;
 };
 
+/* ---------------- production status ---------------- */
+
+const PRODUCTION_STATUSES = [
+  { value: "in_production", label: "In Production" },
+  { value: "out_of_production", label: "Out of Production" },
+  { value: "discontinued", label: "Discontinued" },
+  { value: "limited_run", label: "Limited Run" },
+  { value: "preorder", label: "Pre-Order" },
+  { value: "unknown", label: "Unknown" },
+] as const;
+
 /* ---------------- utils ---------------- */
 
 function safeText(v: any) {
@@ -216,10 +227,7 @@ export default function AddItemModal({
       if (!r?.id) return;
       if (bundleIds.has(r.id)) return;
 
-      setBundleRows((prev) => [
-        ...prev,
-        { component_item_id: r.id, name: r.name, qty: 1 },
-      ]);
+      setBundleRows((prev) => [...prev, { component_item_id: r.id, name: r.name, qty: 1 }]);
     },
     [bundleIds]
   );
@@ -230,9 +238,7 @@ export default function AddItemModal({
 
   const setBundleQty = useCallback((id: string, qty: any) => {
     const v = clampQty(qty);
-    setBundleRows((prev) =>
-      prev.map((r) => (r.component_item_id === id ? { ...r, qty: v } : r))
-    );
+    setBundleRows((prev) => prev.map((r) => (r.component_item_id === id ? { ...r, qty: v } : r)));
   }, []);
 
   /* ---------------- submit ---------------- */
@@ -255,6 +261,10 @@ export default function AddItemModal({
         catalogReleaseYear: form.catalogReleaseYear,
         catalogUPC: form.catalogUPC,
         catalogVersion: form.catalogVersion,
+
+        // ✅ NEW
+        productionStatus: form.productionStatus ?? "unknown",
+
         wikiSummary: form.wikiSummary,
         wikiDescription: form.wikiDescription,
         wikiFacts: form.wikiFacts,
@@ -309,7 +319,7 @@ export default function AddItemModal({
 
       await upsertItemDescription(id, form.wikiDescription);
 
-      // ✅ NEW: Variant group linking (THIS is what creates variant_groups + updates catalog_items.variant_group_id)
+      // ✅ NEW: Variant group linking
       await applyVariantGroupLinks({
         catalogItemId: id,
         linkedVariants: variants.linkedVariants ?? [],
@@ -385,6 +395,29 @@ export default function AddItemModal({
 
           <GlobalDetailsSection {...form} />
 
+          {/* ✅ Production Status */}
+          <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
+            <div className="text-sm font-semibold text-[#0F172A]">Production Status</div>
+            <div className="mt-1 text-xs text-[#64748B]">
+              Helps filters + pricing expectations. Use <b>Unknown</b> if you’re not sure.
+            </div>
+
+            <div className="mt-3">
+              <select
+                value={form.productionStatus ?? "unknown"}
+                onChange={(e) => form.setProductionStatus?.(e.target.value)}
+                disabled={saving}
+                className="w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+              >
+                {PRODUCTION_STATUSES.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
           {/* =========================
               Bundles Section (draft)
              ========================= */}
@@ -392,9 +425,7 @@ export default function AddItemModal({
             <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold text-[#0F172A]">Bundle</div>
-                <div className="text-xs text-[#64748B]">
-                  Mark this item as a bundle and define what it includes.
-                </div>
+                <div className="text-xs text-[#64748B]">Mark this item as a bundle and define what it includes.</div>
               </div>
 
               <label className="inline-flex items-center gap-2 text-xs font-semibold text-[#0F172A]">
@@ -518,9 +549,7 @@ export default function AddItemModal({
                     })}
                   </div>
 
-                  <div className="mt-3 text-[11px] text-[#64748B]">
-                    Components are saved after the item is created.
-                  </div>
+                  <div className="mt-3 text-[11px] text-[#64748B]">Components are saved after the item is created.</div>
                 </div>
               </div>
             ) : null}
