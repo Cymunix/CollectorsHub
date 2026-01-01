@@ -22,6 +22,37 @@ export type ItemFranchiseRow = {
 };
 
 /* =========================================================
+   Internal helpers
+   ========================================================= */
+
+function asFranchise(v: any): Franchise | null {
+  if (!v) return null;
+
+  // Supabase can return nested join as object OR array depending on typings.
+  const obj = Array.isArray(v) ? v[0] : v;
+  if (!obj) return null;
+
+  const id = String(obj.id ?? "").trim();
+  const slug = String(obj.slug ?? "").trim();
+  const name = String(obj.name ?? "").trim();
+
+  if (!id || !slug || !name) return null;
+
+  return {
+    id,
+    slug,
+    name,
+    description: obj.description ?? null,
+  };
+}
+
+function asRole(v: any): FranchiseRole {
+  const r = String(v ?? "").trim().toLowerCase();
+  if (r === "primary" || r === "secondary" || r === "crossover") return r;
+  return "secondary";
+}
+
+/* =========================================================
    Read helpers
    ========================================================= */
 
@@ -29,11 +60,9 @@ export type ItemFranchiseRow = {
  * Fetch all franchises linked to a catalog item.
  * - Includes role
  * - Joins franchise metadata
- * - Sorted with primary first
+ * - Sorted with primary first (enum order dependent; we also provide sorter below)
  */
-export async function fetchItemFranchises(
-  catalogItemId: string
-): Promise<ItemFranchiseRow[]> {
+export async function fetchItemFranchises(catalogItemId: string): Promise<ItemFranchiseRow[]> {
   if (!catalogItemId) return [];
 
   const { data, error } = await supabase
@@ -50,15 +79,25 @@ export async function fetchItemFranchises(
       )
     `
     )
-    .eq("catalog_item_id", catalogItemId)
-    .order("role", { ascending: true });
+    .eq("catalog_item_id", catalogItemId);
 
   if (error) {
     console.error("fetchItemFranchises error:", error);
     throw error;
   }
 
-  return (data ?? []) as ItemFranchiseRow[];
+  const rows = (data ?? []) as any[];
+
+  const normalized: ItemFranchiseRow[] = rows
+    .map((r) => ({
+      franchise_id: String(r.franchise_id),
+      role: asRole(r.role),
+      franchises: asFranchise(r.franchises),
+    }))
+    .filter((r) => !!r.franchise_id);
+
+  // stable display sort
+  return sortItemFranchises(normalized);
 }
 
 /**
@@ -75,18 +114,15 @@ export async function fetchAllFranchises(): Promise<Franchise[]> {
     throw error;
   }
 
-  return (data ?? []) as Franchise[];
+  return ((data ?? []) as any[]).map(asFranchise).filter(Boolean) as Franchise[];
 }
 
 /**
  * Search franchises by name (case-insensitive)
  * Used by ItemFranchiseEditor
  */
-export async function searchFranchises(
-  query: string,
-  limit = 20
-): Promise<Franchise[]> {
-  const q = query.trim();
+export async function searchFranchises(query: string, limit = 20): Promise<Franchise[]> {
+  const q = String(query ?? "").trim();
   if (!q) return [];
 
   const { data, error } = await supabase
@@ -100,7 +136,7 @@ export async function searchFranchises(
     throw error;
   }
 
-  return (data ?? []) as Franchise[];
+  return ((data ?? []) as any[]).map(asFranchise).filter(Boolean) as Franchise[];
 }
 
 /* =========================================================
@@ -118,11 +154,7 @@ export function isCrossoverItem(franchises: ItemFranchiseRow[]): boolean {
  * Sort franchises for display:
  * primary → crossover → secondary
  */
-export function sortItemFranchises(
-  rows: ItemFranchiseRow[]
-): ItemFranchiseRow[] {
-  const weight = (r: FranchiseRole) =>
-    r === "primary" ? 0 : r === "crossover" ? 1 : 2;
-
+export function sortItemFranchises(rows: ItemFranchiseRow[]): ItemFranchiseRow[] {
+  const weight = (r: FranchiseRole) => (r === "primary" ? 0 : r === "crossover" ? 1 : 2);
   return [...rows].sort((a, b) => weight(a.role) - weight(b.role));
 }
