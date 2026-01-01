@@ -318,7 +318,7 @@ export default function AddItemModal({
     const name = promptName("card manufacturer");
     if (!name) return;
 
-    const row = await insertLookupRowSafe<any>("card_manufacturers", { name }, setBanner);
+const row = await insertWithSlugSafe<any>("card_manufacturers", { name }, setBanner);
     if (!row) return;
 
     setMeta((m) => ({ ...m, cardManufacturers: sortByName([...(m.cardManufacturers ?? []), row]) }));
@@ -334,11 +334,11 @@ export default function AddItemModal({
       return;
     }
 
-    const row = await insertLookupRowSafe<any>(
-      "card_sets",
-      { name, manufacturer_id: form.cardManufacturerId },
-      setBanner
-    );
+    const row = await insertWithSlugSafe<any>(
+  "card_sets",
+  { name, manufacturer_id: form.cardManufacturerId },
+  setBanner
+);
     if (!row) return;
 
     setMeta((m) => ({ ...m, cardSets: sortByName([...(m.cardSets ?? []), row]) }));
@@ -349,7 +349,7 @@ export default function AddItemModal({
     const name = promptName("card type");
     if (!name) return;
 
-    const row = await insertLookupRowSafe<any>("card_types", { name }, setBanner);
+    const row = await insertWithSlugSafe<any>("card_types", { name }, setBanner);
     if (!row) return;
 
     setMeta((m) => ({ ...m, cardTypes: sortByName([...(m.cardTypes ?? []), row]) }));
@@ -1322,3 +1322,4 @@ export default function AddItemModal({
     </>
   );
 }
+
