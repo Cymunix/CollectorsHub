@@ -50,6 +50,10 @@ export function useAddItemForm(meta: AddItemMeta) {
   const [catalogUPC, setCatalogUPC] = useState<string>("");
   const [catalogVersion, setCatalogVersion] = useState<string>("");
 
+  // ✅ NEW: production status
+  // Keep it permissive; DB constraint should enforce allowed values.
+  const [productionStatus, setProductionStatus] = useState<string>("unknown");
+
   // ---------- wiki ----------
   const [wikiSummary, setWikiSummary] = useState<string>("");
   const [wikiDescription, setWikiDescription] = useState<string>("");
@@ -135,6 +139,9 @@ export function useAddItemForm(meta: AddItemMeta) {
     setCatalogUPC("");
     setCatalogVersion("");
 
+    // ✅ NEW
+    setProductionStatus("unknown");
+
     setWikiSummary("");
     setWikiDescription("");
     setWikiFacts([]);
@@ -199,6 +206,10 @@ export function useAddItemForm(meta: AddItemMeta) {
     setCatalogUPC,
     catalogVersion,
     setCatalogVersion,
+
+    // ✅ NEW
+    productionStatus,
+    setProductionStatus,
 
     wikiSummary,
     setWikiSummary,
