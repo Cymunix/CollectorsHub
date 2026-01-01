@@ -420,14 +420,7 @@ export default function AddItemModal({
 
   return (
     <>
-      <AddItemModalShell
-        open={open}
-        title={title}
-        saving={saving}
-        banner={banner}
-        onClose={safeClose}
-        onSubmit={submit}
-      >
+      <AddItemModalShell open={open} title={title} saving={saving} banner={banner} onClose={safeClose} onSubmit={submit}>
         <form onSubmit={(e) => (e.preventDefault(), submit())}>
           <ClassificationSection
             metaLoading={metaLoading}
@@ -444,8 +437,18 @@ export default function AddItemModal({
             onCreateFranchise={createFranchise}
           />
 
+          {/* ✅ Franchise/Crossover editor should NOT show as disabled pre-create */}
           <div className="mt-4">
-            <ItemFranchiseEditor catalogItemId={createdCatalogItemId} disabled={saving} />
+            {createdCatalogItemId ? (
+              <ItemFranchiseEditor catalogItemId={createdCatalogItemId} disabled={saving} />
+            ) : (
+              <div className="rounded-2xl border border-[#E5E9F2] bg-[#F8FAFC] p-4 shadow-sm">
+                <div className="text-sm font-semibold text-[#0F172A]">Franchises</div>
+                <div className="mt-1 text-xs text-[#64748B]">
+                  Create the item first. Then you can add crossovers / extra franchises here.
+                </div>
+              </div>
+            )}
           </div>
 
           {createdDone && createdCatalogItemId ? (
