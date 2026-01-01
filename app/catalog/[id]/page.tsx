@@ -21,8 +21,17 @@ import ItemReviewsTab from "./tabs/item_reviews";
 import ItemSalesHistoryTab from "./tabs/item_sales_history";
 
 import type { ConditionMeta } from "@/lib/pricingEngine";
+import type { BundleComponent } from "@/lib/catalog/types";
+import { fetchBundleComponents, fetchBundlesIncludingItem, type IncludedInBundleLite } from "@/lib/catalog/queries";
 
-type TabKey = "Item Information" | "variants" | "reviews" | "sales_history" | "listings";
+type TabKey =
+  | "Item Information"
+  | "variants"
+  | "reviews"
+  | "sales_history"
+  | "listings"
+  | "included_items"
+  | "included_in";
 
 type CatalogItem = {
   id: string;
@@ -33,6 +42,9 @@ type CatalogItem = {
   upc: string | null;
   release_year: number | null;
   version?: string | null;
+
+  // Bundles
+  is_bundle?: boolean | null;
 };
 
 type MinifigItem = {
@@ -109,6 +121,39 @@ function TabButton({
   );
 }
 
+function BundleListCard({
+  id,
+  name,
+  image_url,
+  subtitle,
+  onClick,
+}: {
+  id: string;
+  name: string;
+  image_url: string | null;
+  subtitle?: string | null;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="w-full text-left rounded-2xl border border-[#E5E9F2] bg-white hover:bg-[#F8FAFC] transition p-3 flex items-center gap-3"
+    >
+      <div className="h-14 w-14 rounded-xl border border-[#E5E9F2] bg-[#F8FAFF] overflow-hidden flex items-center justify-center">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        {image_url ? <img src={image_url} alt={name} className="h-full w-full object-cover" /> : <span className="text-[10px] text-[#94A3B8]">No image</span>}
+      </div>
+      <div className="min-w-0">
+        <div className="text-sm font-semibold text-[#0F172A] truncate">{name}</div>
+        <div className="text-[11px] text-[#64748B] truncate">
+          {subtitle ? subtitle : id}
+        </div>
+      </div>
+    </button>
+  );
+}
+
 export default function Page({ params }: { params: { id: string } }) {
   const router = useRouter();
   const sp = useSearchParams();
@@ -146,6 +191,12 @@ export default function Page({ params }: { params: { id: string } }) {
   const [bbIsSet, setBbIsSet] = useState<boolean>(false);
   const [bbIsMinifig, setBbIsMinifig] = useState<boolean>(false);
   const [bbMinifigs, setBbMinifigs] = useState<Minifig[]>([]);
+
+  // Bundles
+  const [isBundle, setIsBundle] = useState<boolean>(false);
+  const [bundleComponents, setBundleComponents] = useState<BundleComponent[]>([]);
+  const [includedInBundles, setIncludedInBundles] = useState<IncludedInBundleLite[]>([]);
+  const [bundleErr, setBundleErr] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -233,6 +284,12 @@ export default function Page({ params }: { params: { id: string } }) {
       setLoadingHeader(true);
       setHeaderErr(null);
 
+      // reset bundle state
+      setIsBundle(false);
+      setBundleComponents([]);
+      setIncludedInBundles([]);
+      setBundleErr(null);
+
       try {
         setItem(null);
         setMinifigItem(null);
@@ -288,7 +345,7 @@ export default function Page({ params }: { params: { id: string } }) {
         // 2) Normal catalog_item path
         const itemRes = await supabase
           .from("catalog_items")
-          .select("id,name,category_id,subcategory_id,franchise_id,upc,release_year,version")
+          .select("id,name,category_id,subcategory_id,franchise_id,upc,release_year,version,is_bundle")
           .eq("id", catalogItemId)
           .maybeSingle();
 
@@ -299,6 +356,24 @@ export default function Page({ params }: { params: { id: string } }) {
           if (cancelled) return;
 
           setItem(it);
+
+          // Bundles load (non-blocking; but still awaited so tabs are correct)
+          try {
+            const bundleFlag = !!it?.is_bundle;
+            setIsBundle(bundleFlag);
+
+            const [comps, included] = await Promise.all([
+              bundleFlag ? fetchBundleComponents(it.id) : Promise.resolve([] as BundleComponent[]),
+              fetchBundlesIncludingItem(it.id),
+            ]);
+
+            if (!cancelled) {
+              setBundleComponents(comps);
+              setIncludedInBundles(included);
+            }
+          } catch (e: any) {
+            if (!cancelled) setBundleErr(e?.message ?? "Failed to load bundle data.");
+          }
 
           // Reviews summary
           try {
@@ -483,6 +558,9 @@ export default function Page({ params }: { params: { id: string } }) {
   // ✅ IMPORTANT: Decide BB mode WITHOUT relying on bbIsSet
   const bbMode: "set" | "minifig" = isBuildingBlocks && (isMinifigPage || bbIsMinifig) ? "minifig" : "set";
 
+  const showIncludedItemsTab = !isMinifigPage && !!item?.id && isBundle;
+  const showIncludedInTab = !isMinifigPage && !!item?.id && !isBundle && (includedInBundles?.length ?? 0) > 0;
+
   return (
     <main className="min-h-screen w-full bg-[#F4F7FD] text-[#0F172A]">
       <Header />
@@ -511,6 +589,12 @@ export default function Page({ params }: { params: { id: string } }) {
           <div className="min-w-0">
             <div className="flex items-center gap-3 flex-wrap">
               <h1 className="text-2xl font-semibold truncate">{displayName}</h1>
+
+              {!isMinifigPage && isBundle ? (
+                <span className="inline-flex items-center rounded-full border bg-[#F8FAFC] px-3 py-1 text-xs font-semibold text-[#0F172A] border-[#E5E9F2]">
+                  Bundle
+                </span>
+              ) : null}
 
               <button
                 type="button"
@@ -614,6 +698,19 @@ export default function Page({ params }: { params: { id: string } }) {
             <TabButton active={tab === "Item Information"} onClick={() => setTab("Item Information")}>
               Information
             </TabButton>
+
+            {showIncludedItemsTab ? (
+              <TabButton active={tab === "included_items"} onClick={() => setTab("included_items")}>
+                Included Items
+              </TabButton>
+            ) : null}
+
+            {showIncludedInTab ? (
+              <TabButton active={tab === "included_in"} onClick={() => setTab("included_in")}>
+                Included In
+              </TabButton>
+            ) : null}
+
             <TabButton active={tab === "variants"} onClick={() => setTab("variants")}>
               Variants
             </TabButton>
@@ -628,9 +725,82 @@ export default function Page({ params }: { params: { id: string } }) {
             </TabButton>
           </div>
 
+          {/* Bundle errors */}
+          {bundleErr ? (
+            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+              {bundleErr}
+            </div>
+          ) : null}
+
           {/* Tab Content */}
           <div className="mt-4 space-y-4">
             {tab === "Item Information" ? <ItemDescription catalogItemId={catalogItemId} /> : null}
+
+            {tab === "included_items" && showIncludedItemsTab ? (
+              <div className="rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-[#0F172A]">Included Items</div>
+                    <div className="text-xs text-[#64748B]">Items included in this bundle.</div>
+                  </div>
+                  <div className="text-xs text-[#64748B]">{bundleComponents.length} item(s)</div>
+                </div>
+
+                <div className="mt-3 space-y-2">
+                  {bundleComponents.length === 0 ? (
+                    <div className="rounded-xl border bg-[#F8FAFC] p-3 text-xs text-[#64748B]">
+                      No components set yet.
+                    </div>
+                  ) : (
+                    bundleComponents.map((c) => {
+                      const comp = c.component;
+                      const compName = safeText(comp?.name);
+                      const subtitle = `Qty: ${c.qty}${comp?.release_year ? ` • ${comp.release_year}` : ""}${comp?.version ? ` • ${comp.version}` : ""}`;
+                      return (
+                        <BundleListCard
+                          key={`${c.component_item_id}`}
+                          id={c.component_item_id}
+                          name={compName}
+                          image_url={(comp as any)?.image_url ?? null}
+                          subtitle={subtitle}
+                          onClick={() => router.push(`/catalog/${c.component_item_id}`)}
+                        />
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            ) : null}
+
+            {tab === "included_in" && showIncludedInTab ? (
+              <div className="rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-[#0F172A]">Included In</div>
+                    <div className="text-xs text-[#64748B]">Bundles that include this item.</div>
+                  </div>
+                  <div className="text-xs text-[#64748B]">{includedInBundles.length} bundle(s)</div>
+                </div>
+
+                <div className="mt-3 space-y-2">
+                  {includedInBundles.length === 0 ? (
+                    <div className="rounded-xl border bg-[#F8FAFC] p-3 text-xs text-[#64748B]">No bundles found.</div>
+                  ) : (
+                    includedInBundles.map((b) => (
+                      <BundleListCard
+                        key={b.id}
+                        id={b.id}
+                        name={safeText(b.name)}
+                        image_url={b.image_url ?? null}
+                        subtitle="Bundle"
+                        onClick={() => router.push(`/catalog/${b.id}`)}
+                      />
+                    ))
+                  )}
+                </div>
+              </div>
+            ) : null}
+
             {tab === "variants" ? <ItemVariantsTab catalogItemId={catalogItemId} /> : null}
             {tab === "reviews" ? <ItemReviewsTab catalogItemId={catalogItemId} /> : null}
             {tab === "sales_history" ? (
