@@ -93,7 +93,7 @@ function cleanStringArray(v: any): string[] {
 const CATALOG_TABLE = "catalog_items";
 
 // ✅ Detail tables (create these in Supabase if they don't exist yet)
-const CARD_TABLE = "catalog_item_cards";
+const CARD_TABLE = "catalog_items_cards";
 const MUSIC_TABLE = "catalog_item_music";
 const TOY_TABLE = "catalog_item_toys";
 const GAME_TABLE = "catalog_item_games";
@@ -289,3 +289,4 @@ export async function createCatalogItem(itemKind: string, state: CreateCatalogIt
 }
 
 export default createCatalogItem;
+
