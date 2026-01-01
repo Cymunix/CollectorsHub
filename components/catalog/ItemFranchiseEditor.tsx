@@ -1,3 +1,4 @@
+// components/catalog/ItemFranchiseEditor.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -147,7 +148,7 @@ export default function ItemFranchiseEditor({
     if (selectedIds.has(fr.id)) return;
 
     setSelected((prev) => {
-      const next = [...prev, { franchise: fr, role: "secondary" as Role }];
+      const next: Selected[] = [...prev, { franchise: fr, role: "secondary" }];
       next.sort((a, b) => roleWeight(a.role) - roleWeight(b.role));
       return next;
     });
@@ -167,16 +168,19 @@ export default function ItemFranchiseEditor({
     setSavedMsg(null);
 
     setSelected((prev) => {
+      let next: Selected[];
+
       if (role === "primary") {
         // enforce only one primary in UI
-        const next = prev.map((s) =>
-          s.franchise.id === franchiseId ? { ...s, role: "primary" } : { ...s, role: "secondary" }
+        next = prev.map((s): Selected =>
+          s.franchise.id === franchiseId
+            ? { ...s, role: "primary" }
+            : { ...s, role: "secondary" } // <-- stays Role because return typed as Selected
         );
-        next.sort((a, b) => roleWeight(a.role) - roleWeight(b.role));
-        return next;
+      } else {
+        next = prev.map((s): Selected => (s.franchise.id === franchiseId ? { ...s, role } : s));
       }
 
-      const next = prev.map((s) => (s.franchise.id === franchiseId ? { ...s, role } : s));
       next.sort((a, b) => roleWeight(a.role) - roleWeight(b.role));
       return next;
     });
@@ -271,10 +275,7 @@ export default function ItemFranchiseEditor({
         {loadingExisting && <div className="text-xs text-gray-500">Loading linked franchises...</div>}
 
         {selected.map((s) => (
-          <div
-            key={s.franchise.id}
-            className="flex items-center justify-between gap-2 rounded-xl border px-3 py-2"
-          >
+          <div key={s.franchise.id} className="flex items-center justify-between gap-2 rounded-xl border px-3 py-2">
             <div className="min-w-0">
               <div className="text-sm font-medium truncate">{s.franchise.name}</div>
               <div className="text-xs text-gray-500 truncate">{s.franchise.slug}</div>
@@ -302,9 +303,7 @@ export default function ItemFranchiseEditor({
           </div>
         ))}
 
-        {!loadingExisting && selected.length === 0 && (
-          <div className="text-xs text-gray-500">No franchises linked yet.</div>
-        )}
+        {!loadingExisting && selected.length === 0 && <div className="text-xs text-gray-500">No franchises linked yet.</div>}
       </div>
 
       {errorMsg && (
