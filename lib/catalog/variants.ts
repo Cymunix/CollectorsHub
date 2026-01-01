@@ -1,3 +1,5 @@
+// lib/db/variants.ts
+
 import { supabase } from "@/lib/supabaseClient";
 
 export type LinkVariantResult = {
@@ -24,7 +26,7 @@ export async function linkVariantToVariant(params: {
 export async function fetchVariantGroupItems(variantGroupId: string) {
   const { data, error } = await supabase
     .from("catalog_items")
-    .select("id, name, variant_name, variant_rank, base_catalog_item_id, variant_group_id")
+    .select("id, name, variant_name, variant_rank, base_catalog_item_id, variant_group_id, is_bundle")
     .eq("variant_group_id", variantGroupId)
     .order("variant_rank", { ascending: true, nullsFirst: true })
     .order("name", { ascending: true });
