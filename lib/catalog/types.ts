@@ -42,6 +42,9 @@ export type CatalogItemRow = {
   category_id: string;
   subcategory_id: string;
   franchise_id: string | null;
+
+  // Bundles
+  is_bundle?: boolean;
 };
 
 export type MinifigRow = {
@@ -83,6 +86,9 @@ export type CatalogCard = {
   version: string | null;
   created_at: string | null;
 
+  // Bundles
+  is_bundle?: boolean;
+
   // dynamic filter ids
   bb_theme_id?: string | null;
   bb_subtheme_id?: string | null;
@@ -103,6 +109,40 @@ export type CatalogCard = {
 };
 
 export type QuickAddDefault = "collection" | "wishlist" | "both" | "ask";
+
+/* =========================
+   Bundles
+   ========================= */
+
+export type BundleComponentRow = {
+  id: string;
+  bundle_item_id: string;
+  component_item_id: string;
+  qty: number;
+  role?: string | null;
+  notes?: string | null;
+  created_at?: string | null;
+};
+
+export type BundleComponent = BundleComponentRow & {
+  component?: {
+    id: string;
+    name: string;
+    image_url?: string | null;
+    release_year?: number | null;
+    version?: string | null;
+  } | null;
+};
+
+export type BundleSuggestion = {
+  bundle_id: string;
+  bundle_name: string;
+  bundle_image_url: string | null;
+
+  coverage: number; // 0..1
+  matched: { item_id: string; name: string; qty_have: number; qty_need: number }[];
+  missing: { item_id: string; name: string; qty_need: number }[];
+};
 
 /* ============================================================
    BACK-COMPAT / SHIMS (required for validators + older code)
