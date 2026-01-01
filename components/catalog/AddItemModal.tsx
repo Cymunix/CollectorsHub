@@ -9,7 +9,6 @@ import { useCatalogMeta } from "./add-item/hooks/useCatalogMeta";
 import { useAddItemForm } from "./add-item/hooks/useAddItemForm";
 import { useVariantLinks } from "./add-item/hooks/useVariantLinks";
 import { useMinifigs } from "./add-item/hooks/useMinifigs";
-import { usePeoplePicker } from "./add-item/hooks/usePeoplePicker";
 
 import { safeInsertLookup } from "@/lib/catalog/lookups";
 import { createCatalogItem } from "@/lib/catalog/createCatalogItem";
@@ -106,6 +105,10 @@ function clampQty(v: any) {
   return Math.max(1, Math.floor(n));
 }
 
+function uniqStrings(xs: string[]) {
+  return Array.from(new Set(xs.filter(Boolean)));
+}
+
 /* ---------------- component ---------------- */
 
 export default function AddItemModal({
@@ -126,7 +129,6 @@ export default function AddItemModal({
 
   const form = useAddItemForm(meta) as any;
   const variants = useVariantLinks();
-  const people = usePeoplePicker(meta.people);
   const minifigs = useMinifigs(() => form.subcategoryId, () => form.franchiseId);
 
   const [saving, setSaving] = useState(false);
@@ -135,6 +137,10 @@ export default function AddItemModal({
   // ✅ keep modal open after create so we can attach franchises
   const [createdCatalogItemId, setCreatedCatalogItemId] = useState<string | null>(null);
   const [createdDone, setCreatedDone] = useState(false);
+
+  // ✅ Movie people (simple multi-select UI)
+  const [movieDirectorIds, setMovieDirectorIds] = useState<string[]>([]);
+  const [movieActorIds, setMovieActorIds] = useState<string[]>([]);
 
   // Bundles (draft)
   const [isBundle, setIsBundle] = useState(false);
@@ -162,13 +168,15 @@ export default function AddItemModal({
     form.reset?.();
     variants.resetVariants();
     minifigs.resetMinifigs();
-    people.resetPeople();
 
     setIsBundle(false);
     setBundleRows([]);
     setBundleQuery("");
     setBundleResults([]);
     setBundleUiErr(null);
+
+    setMovieDirectorIds([]);
+    setMovieActorIds([]);
 
     setBanner(null);
 
@@ -238,7 +246,6 @@ export default function AddItemModal({
     (r: CatalogSearchRow) => {
       if (!r?.id) return;
       if (bundleIds.has(r.id)) return;
-
       setBundleRows((prev) => [...prev, { component_item_id: r.id, name: r.name, qty: 1 }]);
     },
     [bundleIds]
@@ -330,8 +337,8 @@ export default function AddItemModal({
         toyModelNumber: form.toyModelNumber,
 
         // movies
-        movieDirectorIds: people.movieDirectorIds,
-        movieActorIds: people.movieActorIds,
+        movieDirectorIds: uniqStrings(movieDirectorIds),
+        movieActorIds: uniqStrings(movieActorIds),
 
         // gaming
         gamePlatformId: form.gamePlatformId,
@@ -416,6 +423,11 @@ export default function AddItemModal({
     }
   };
 
+  /* ---------------- derived ---------------- */
+
+  const kind = String(form.itemKind || "");
+  const showBundles = ["building_blocks", "gaming", "toy", "music", "movie", "comic"].includes(kind);
+
   /* ---------------- render ---------------- */
 
   return (
@@ -467,6 +479,401 @@ export default function AddItemModal({
 
           <GlobalDetailsSection {...form} />
 
+          {/* ✅ Kind-specific sections (these were missing) */}
+
+          {/* Building Blocks */}
+          {kind === "building_blocks" ? (
+            <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
+              <div className="text-sm font-semibold text-[#0F172A]">Building Blocks</div>
+
+              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div>
+                  <div className="text-xs font-semibold text-[#0F172A]">Theme</div>
+                  <select
+                    value={form.bbThemeId ?? ""}
+                    onChange={(e) => form.setBbThemeId?.(e.target.value || null)}
+                    disabled={saving}
+                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+                  >
+                    <option value="">—</option>
+                    {(meta.bbThemes ?? []).map((r: any) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <div className="text-xs font-semibold text-[#0F172A]">Subtheme</div>
+                  <select
+                    value={form.bbSubthemeId ?? ""}
+                    onChange={(e) => form.setBbSubthemeId?.(e.target.value || null)}
+                    disabled={saving}
+                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+                  >
+                    <option value="">—</option>
+                    {(meta.bbSubthemes ?? []).map((r: any) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <div className="text-xs font-semibold text-[#0F172A]">Set #</div>
+                  <input
+                    value={form.bbSetNumber ?? ""}
+                    onChange={(e) => form.setBbSetNumber?.(e.target.value)}
+                    disabled={saving}
+                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+                    placeholder="e.g. 75252"
+                  />
+                </div>
+
+                <div>
+                  <div className="text-xs font-semibold text-[#0F172A]">Piece Count</div>
+                  <input
+                    type="number"
+                    value={form.bbPieceCount ?? ""}
+                    onChange={(e) => form.setBbPieceCount?.(e.target.value === "" ? null : Number(e.target.value))}
+                    disabled={saving}
+                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+                  />
+                </div>
+
+                <div>
+                  <div className="text-xs font-semibold text-[#0F172A]">Retail CAD</div>
+                  <input
+                    type="number"
+                    value={form.bbRetailCad ?? ""}
+                    onChange={(e) => form.setBbRetailCad?.(e.target.value === "" ? null : Number(e.target.value))}
+                    disabled={saving}
+                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+                  />
+                </div>
+
+                <div>
+                  <div className="text-xs font-semibold text-[#0F172A]">Retail USD</div>
+                  <input
+                    type="number"
+                    value={form.bbRetailUsd ?? ""}
+                    onChange={(e) => form.setBbRetailUsd?.(e.target.value === "" ? null : Number(e.target.value))}
+                    disabled={saving}
+                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-3 text-[11px] text-[#64748B]">
+                Minifigs are handled by the existing minifigs UI/modal in this flow.
+              </div>
+            </div>
+          ) : null}
+
+          {/* Cards */}
+          {kind === "trading_card" || kind === "sports_card" ? (
+            <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
+              <div className="text-sm font-semibold text-[#0F172A]">Card Details</div>
+
+              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div>
+                  <div className="text-xs font-semibold text-[#0F172A]">Manufacturer</div>
+                  <select
+                    value={form.cardManufacturerId ?? ""}
+                    onChange={(e) => form.setCardManufacturerId?.(e.target.value || null)}
+                    disabled={saving}
+                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+                  >
+                    <option value="">—</option>
+                    {(meta.cardManufacturers ?? []).map((r: any) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <div className="text-xs font-semibold text-[#0F172A]">Set</div>
+                  <select
+                    value={form.cardSetId ?? ""}
+                    onChange={(e) => form.setCardSetId?.(e.target.value || null)}
+                    disabled={saving}
+                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+                  >
+                    <option value="">—</option>
+                    {(meta.cardSets ?? []).map((r: any) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <div className="text-xs font-semibold text-[#0F172A]">Type</div>
+                  <select
+                    value={form.cardTypeId ?? ""}
+                    onChange={(e) => form.setCardTypeId?.(e.target.value || null)}
+                    disabled={saving}
+                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+                  >
+                    <option value="">—</option>
+                    {(meta.cardTypes ?? []).map((r: any) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <div className="text-xs font-semibold text-[#0F172A]">Card #</div>
+                  <input
+                    value={form.cardNumber ?? ""}
+                    onChange={(e) => form.setCardNumber?.(e.target.value)}
+                    disabled={saving}
+                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+                    placeholder="e.g. XH-3"
+                  />
+                </div>
+
+                <div>
+                  <div className="text-xs font-semibold text-[#0F172A]">Card Year</div>
+                  <input
+                    type="number"
+                    value={form.cardYear ?? ""}
+                    onChange={(e) => form.setCardYear?.(e.target.value === "" ? null : Number(e.target.value))}
+                    disabled={saving}
+                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+                    placeholder="e.g. 1992"
+                  />
+                </div>
+
+                <div>
+                  <div className="text-xs font-semibold text-[#0F172A]">Rarity (custom)</div>
+                  <input
+                    value={form.cardRarityCustom ?? ""}
+                    onChange={(e) => form.setCardRarityCustom?.(e.target.value)}
+                    disabled={saving}
+                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+                    placeholder="e.g. Hologram / SP / Insert"
+                  />
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {/* Music */}
+          {kind === "music" ? (
+            <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
+              <div className="text-sm font-semibold text-[#0F172A]">Music</div>
+
+              <div className="mt-3">
+                <div className="text-xs font-semibold text-[#0F172A]">Artist</div>
+                <select
+                  value={form.musicArtistId ?? ""}
+                  onChange={(e) => form.setMusicArtistId?.(e.target.value || null)}
+                  disabled={saving}
+                  className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+                >
+                  <option value="">—</option>
+                  {(meta.musicArtists ?? []).map((r: any) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          ) : null}
+
+          {/* Movie */}
+          {kind === "movie" ? (
+            <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
+              <div className="text-sm font-semibold text-[#0F172A]">Movie</div>
+              <div className="mt-1 text-xs text-[#64748B]">Directors and actors (multi-select).</div>
+
+              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div>
+                  <div className="text-xs font-semibold text-[#0F172A]">Directors</div>
+                  <select
+                    multiple
+                    value={movieDirectorIds}
+                    onChange={(e) => {
+                      const selected = Array.from(e.target.selectedOptions).map((o) => o.value);
+                      setMovieDirectorIds(selected);
+                    }}
+                    disabled={saving}
+                    className="mt-1 h-40 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+                  >
+                    {(meta.people ?? []).map((p: any) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <div className="text-xs font-semibold text-[#0F172A]">Actors</div>
+                  <select
+                    multiple
+                    value={movieActorIds}
+                    onChange={(e) => {
+                      const selected = Array.from(e.target.selectedOptions).map((o) => o.value);
+                      setMovieActorIds(selected);
+                    }}
+                    disabled={saving}
+                    className="mt-1 h-40 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+                  >
+                    {(meta.people ?? []).map((p: any) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="mt-2 text-[11px] text-[#64748B]">
+                Tip: hold Ctrl (Windows) / Cmd (Mac) to select multiple.
+              </div>
+            </div>
+          ) : null}
+
+          {/* Comic */}
+          {kind === "comic" ? (
+            <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
+              <div className="text-sm font-semibold text-[#0F172A]">Comic</div>
+
+              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div>
+                  <div className="text-xs font-semibold text-[#0F172A]">Publisher</div>
+                  <select
+                    value={form.comicPublisherId ?? ""}
+                    onChange={(e) => form.setComicPublisherId?.(e.target.value || null)}
+                    disabled={saving}
+                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+                  >
+                    <option value="">—</option>
+                    {(meta.comicPublishers ?? []).map((r: any) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <div className="text-xs font-semibold text-[#0F172A]">Series</div>
+                  <input
+                    value={form.comicSeries ?? ""}
+                    onChange={(e) => form.setComicSeries?.(e.target.value)}
+                    disabled={saving}
+                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+                    placeholder="e.g. Amazing Spider-Man"
+                  />
+                </div>
+
+                <div>
+                  <div className="text-xs font-semibold text-[#0F172A]">Issue #</div>
+                  <input
+                    value={form.comicIssueNumber ?? ""}
+                    onChange={(e) => form.setComicIssueNumber?.(e.target.value)}
+                    disabled={saving}
+                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+                    placeholder="e.g. 300"
+                  />
+                </div>
+
+                <div>
+                  <div className="text-xs font-semibold text-[#0F172A]">Variant</div>
+                  <input
+                    value={form.comicVariant ?? ""}
+                    onChange={(e) => form.setComicVariant?.(e.target.value)}
+                    disabled={saving}
+                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+                    placeholder="e.g. 1:25 / Newsstand / Foil"
+                  />
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {/* Toy */}
+          {kind === "toy" ? (
+            <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
+              <div className="text-sm font-semibold text-[#0F172A]">Toy</div>
+
+              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div>
+                  <div className="text-xs font-semibold text-[#0F172A]">Manufacturer</div>
+                  <select
+                    value={form.toyManufacturerId ?? ""}
+                    onChange={(e) => form.setToyManufacturerId?.(e.target.value || null)}
+                    disabled={saving}
+                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+                  >
+                    <option value="">—</option>
+                    {(meta.toyManufacturers ?? []).map((r: any) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <div className="text-xs font-semibold text-[#0F172A]">Brand</div>
+                  <select
+                    value={form.toyBrandId ?? ""}
+                    onChange={(e) => form.setToyBrandId?.(e.target.value || null)}
+                    disabled={saving}
+                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+                  >
+                    <option value="">—</option>
+                    {(meta.toyBrands ?? []).map((r: any) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <div className="text-xs font-semibold text-[#0F172A]">Line</div>
+                  <select
+                    value={form.toyLineId ?? ""}
+                    onChange={(e) => form.setToyLineId?.(e.target.value || null)}
+                    disabled={saving}
+                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+                  >
+                    <option value="">—</option>
+                    {(meta.toyLines ?? []).map((r: any) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <div className="text-xs font-semibold text-[#0F172A]">Model #</div>
+                  <input
+                    value={form.toyModelNumber ?? ""}
+                    onChange={(e) => form.setToyModelNumber?.(e.target.value)}
+                    disabled={saving}
+                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+                    placeholder="Optional"
+                  />
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           {/* Production Status */}
           <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
             <div className="text-sm font-semibold text-[#0F172A]">Production Status</div>
@@ -490,142 +897,147 @@ export default function AddItemModal({
             </div>
           </div>
 
-          {/* Bundles Section (draft) */}
-          <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="text-sm font-semibold text-[#0F172A]">Bundle</div>
-                <div className="text-xs text-[#64748B]">Mark this item as a bundle and define what it includes.</div>
-              </div>
-
-              <label className="inline-flex items-center gap-2 text-xs font-semibold text-[#0F172A]">
-                <input
-                  type="checkbox"
-                  checked={isBundle}
-                  onChange={(e) => setIsBundle(!!e.target.checked)}
-                  disabled={saving}
-                  className="h-4 w-4"
-                />
-                This item is a bundle
-              </label>
-            </div>
-
-            {isBundle ? (
-              <div className="mt-4">
-                {bundleUiErr ? (
-                  <div className="mb-3 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800">
-                    {bundleUiErr}
-                  </div>
-                ) : null}
-
-                <div className="text-xs font-semibold text-[#0F172A]">Included items</div>
-
-                <div className="mt-2 space-y-2">
-                  {bundleRows.length === 0 ? (
-                    <div className="rounded-xl border bg-[#F8FAFC] p-3 text-xs text-[#64748B]">
-                      No components added yet.
-                    </div>
-                  ) : (
-                    bundleRows.map((r) => (
-                      <div
-                        key={r.component_item_id}
-                        className="flex items-center justify-between gap-3 rounded-xl border border-[#E5E9F2] bg-white p-3"
-                      >
-                        <div className="min-w-0">
-                          <div className="truncate text-sm font-semibold text-[#0F172A]">{safeText(r.name)}</div>
-                          <div className="text-[11px] text-[#64748B]">{r.component_item_id}</div>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="number"
-                            min={1}
-                            value={r.qty}
-                            onChange={(e) => setBundleQty(r.component_item_id, e.target.value)}
-                            disabled={saving}
-                            className="w-20 rounded-lg border border-[#E5E9F2] px-2 py-1 text-sm"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => removeBundleComponent(r.component_item_id)}
-                            disabled={saving}
-                            className={`rounded-lg border px-2 py-1 text-xs font-semibold ${
-                              saving
-                                ? "bg-gray-100 text-gray-500 cursor-not-allowed"
-                                : "bg-white text-[#0F172A] hover:bg-[#F8FAFC]"
-                            }`}
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      </div>
-                    ))
-                  )}
+          {/* Bundles Section (only for allowed kinds) */}
+          {showBundles ? (
+            <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-[#0F172A]">Bundle</div>
+                  <div className="text-xs text-[#64748B]">Mark this item as a bundle and define what it includes.</div>
                 </div>
 
-                <div className="mt-4 border-t border-[#E5E9F2] pt-4">
-                  <div className="text-xs font-semibold text-[#0F172A]">Add components</div>
+                <label className="inline-flex items-center gap-2 text-xs font-semibold text-[#0F172A]">
+                  <input
+                    type="checkbox"
+                    checked={isBundle}
+                    onChange={(e) => setIsBundle(!!e.target.checked)}
+                    disabled={saving}
+                    className="h-4 w-4"
+                  />
+                  This item is a bundle
+                </label>
+              </div>
 
-                  <div className="mt-2 flex items-center gap-2">
-                    <input
-                      value={bundleQuery}
-                      onChange={(e) => setBundleQuery(e.target.value)}
-                      placeholder="Search catalog items..."
-                      className="w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
-                      disabled={saving}
-                    />
-                    <button
-                      type="button"
-                      onClick={searchBundleComponents}
-                      disabled={saving || bundleSearching || String(bundleQuery).trim().length < 2}
-                      className={`rounded-xl px-3 py-2 text-xs font-semibold shadow-sm transition ${
-                        saving || bundleSearching || String(bundleQuery).trim().length < 2
-                          ? "bg-gray-200 text-gray-600 cursor-not-allowed"
-                          : "bg-[#0F172A] text-white"
-                      }`}
-                    >
-                      {bundleSearching ? "Searching..." : "Search"}
-                    </button>
-                  </div>
+              {isBundle ? (
+                <div className="mt-4">
+                  {bundleUiErr ? (
+                    <div className="mb-3 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800">
+                      {bundleUiErr}
+                    </div>
+                  ) : null}
 
-                  <div className="mt-3 space-y-2">
-                    {bundleResults.map((r) => {
-                      const already = bundleIds.has(r.id);
-                      const subtitle = `${r.release_year ?? "—"}${r.version ? ` • ${r.version}` : ""}`;
-                      return (
+                  <div className="text-xs font-semibold text-[#0F172A]">Included items</div>
+
+                  <div className="mt-2 space-y-2">
+                    {bundleRows.length === 0 ? (
+                      <div className="rounded-xl border bg-[#F8FAFC] p-3 text-xs text-[#64748B]">
+                        No components added yet.
+                      </div>
+                    ) : (
+                      bundleRows.map((r) => (
                         <div
-                          key={r.id}
+                          key={r.component_item_id}
                           className="flex items-center justify-between gap-3 rounded-xl border border-[#E5E9F2] bg-white p-3"
                         >
                           <div className="min-w-0">
                             <div className="truncate text-sm font-semibold text-[#0F172A]">{safeText(r.name)}</div>
-                            <div className="text-[11px] text-[#64748B] truncate">{subtitle}</div>
+                            <div className="text-[11px] text-[#64748B]">{r.component_item_id}</div>
                           </div>
 
-                          <button
-                            type="button"
-                            onClick={() => addBundleComponent(r)}
-                            disabled={saving || already}
-                            className={`rounded-lg px-3 py-1 text-xs font-semibold ${
-                              saving || already
-                                ? "bg-gray-200 text-gray-600 cursor-not-allowed"
-                                : "bg-white border text-[#0F172A] hover:bg-[#F8FAFC]"
-                            }`}
-                          >
-                            {already ? "Added" : "Add"}
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              min={1}
+                              value={r.qty}
+                              onChange={(e) => setBundleQty(r.component_item_id, e.target.value)}
+                              disabled={saving}
+                              className="w-20 rounded-lg border border-[#E5E9F2] px-2 py-1 text-sm"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => removeBundleComponent(r.component_item_id)}
+                              disabled={saving}
+                              className={`rounded-lg border px-2 py-1 text-xs font-semibold ${
+                                saving
+                                  ? "bg-gray-100 text-gray-500 cursor-not-allowed"
+                                  : "bg-white text-[#0F172A] hover:bg-[#F8FAFC]"
+                              }`}
+                            >
+                              Remove
+                            </button>
+                          </div>
                         </div>
-                      );
-                    })}
+                      ))
+                    )}
                   </div>
 
-                  <div className="mt-3 text-[11px] text-[#64748B]">Components are saved after the item is created.</div>
-                </div>
-              </div>
-            ) : null}
-          </div>
+                  <div className="mt-4 border-t border-[#E5E9F2] pt-4">
+                    <div className="text-xs font-semibold text-[#0F172A]">Add components</div>
 
-          {form.itemKind === "gaming" ? (
+                    <div className="mt-2 flex items-center gap-2">
+                      <input
+                        value={bundleQuery}
+                        onChange={(e) => setBundleQuery(e.target.value)}
+                        placeholder="Search catalog items..."
+                        className="w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+                        disabled={saving}
+                      />
+                      <button
+                        type="button"
+                        onClick={searchBundleComponents}
+                        disabled={saving || bundleSearching || String(bundleQuery).trim().length < 2}
+                        className={`rounded-xl px-3 py-2 text-xs font-semibold shadow-sm transition ${
+                          saving || bundleSearching || String(bundleQuery).trim().length < 2
+                            ? "bg-gray-200 text-gray-600 cursor-not-allowed"
+                            : "bg-[#0F172A] text-white"
+                        }`}
+                      >
+                        {bundleSearching ? "Searching..." : "Search"}
+                      </button>
+                    </div>
+
+                    <div className="mt-3 space-y-2">
+                      {bundleResults.map((r) => {
+                        const already = bundleIds.has(r.id);
+                        const subtitle = `${r.release_year ?? "—"}${r.version ? ` • ${r.version}` : ""}`;
+                        return (
+                          <div
+                            key={r.id}
+                            className="flex items-center justify-between gap-3 rounded-xl border border-[#E5E9F2] bg-white p-3"
+                          >
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-semibold text-[#0F172A]">{safeText(r.name)}</div>
+                              <div className="text-[11px] text-[#64748B] truncate">{subtitle}</div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => addBundleComponent(r)}
+                              disabled={saving || already}
+                              className={`rounded-lg px-3 py-1 text-xs font-semibold ${
+                                saving || already
+                                  ? "bg-gray-200 text-gray-600 cursor-not-allowed"
+                                  : "bg-white border text-[#0F172A] hover:bg-[#F8FAFC]"
+                              }`}
+                            >
+                              {already ? "Added" : "Add"}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="mt-3 text-[11px] text-[#64748B]">
+                      Components are saved after the item is created.
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {/* Gaming kind-specific section: platform + publisher */}
+          {kind === "gaming" ? (
             <GamingSection
               gamePlatforms={meta.gamePlatforms ?? []}
               gamePublishers={meta.gamePublishers ?? []}
