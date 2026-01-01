@@ -41,7 +41,7 @@ export type ReviewRow = {
   rating: number;
   title: string | null;
   body: string | null;
-  created_at: string; // ✅ normalized (NOT nullable)
+  created_at: string; // normalized
 };
 
 export async function fetchItemReviews(catalogItemId: string): Promise<ReviewRow[]> {
@@ -58,7 +58,6 @@ export async function fetchItemReviews(catalogItemId: string): Promise<ReviewRow
 
   const rows = (data ?? []) as any[];
 
-  // ✅ normalize created_at so UI can treat it as string always
   return rows.map((r) => ({
     id: asString(r?.id),
     catalog_item_id: asString(r?.catalog_item_id),
@@ -151,7 +150,7 @@ export type BundleComponentInput = {
   notes?: string | null;
 };
 
-// bundle -> components (2-step to avoid FK constraint-name dependency)
+// bundle -> components (2-step join)
 export async function fetchBundleComponents(bundleItemId: string): Promise<BundleComponent[]> {
   const bid = asString(bundleItemId);
   if (!bid) return [];
@@ -262,6 +261,42 @@ export async function replaceBundleComponents(bundleItemId: string, components: 
 }
 
 /* ============================================================
+   Catalog Search (used by Add Components)
+   ============================================================ */
+
+export type CatalogSearchRow = {
+  id: string;
+  name: string;
+  image_url: string | null;
+  release_year: number | null;
+  version: string | null;
+  is_bundle?: boolean | null;
+};
+
+export async function searchCatalogItems(query: string, limit = 25): Promise<CatalogSearchRow[]> {
+  const q = asString(query);
+  if (q.length < 2) return [];
+
+  const { data, error } = await supabase
+    .from("catalog_items")
+    .select("id,name,image_url,release_year,version,is_bundle")
+    .ilike("name", `%${q}%`)
+    .order("name", { ascending: true })
+    .limit(limit);
+
+  if (error) throw new Error(error.message);
+
+  return (data ?? []).map((r: any) => ({
+    id: asString(r.id),
+    name: asString(r.name),
+    image_url: r.image_url ?? null,
+    release_year: typeof r.release_year === "number" ? r.release_year : null,
+    version: r.version ?? null,
+    is_bundle: r.is_bundle ?? null,
+  }));
+}
+
+/* ============================================================
    Sales History
    ============================================================ */
 
@@ -270,7 +305,7 @@ export type SaleRow = {
   catalog_item_id: string;
   price_cad: number | null;
   condition_json: Record<string, any> | null;
-  created_at: string; // ✅ normalized (NOT nullable)
+  created_at: string; // normalized
 };
 
 export async function fetchItemSalesHistory(catalogItemId: string): Promise<SaleRow[]> {
@@ -313,21 +348,18 @@ export type VariantRow = {
   // link metadata
   link_type: string;
   label: string | null;
-  created_at: string; // ✅ normalized
+  created_at: string; // normalized
 };
 
-// item -> variants (2-step join, same pattern as bundles)
+// item -> variants (2-step join)
 export async function fetchItemVariants(catalogItemId: string): Promise<VariantRow[]> {
   const id = asString(catalogItemId);
   if (!id) return [];
 
-  // NOTE: This assumes your link table is named `catalog_item_links`
-  // with columns: id, source_id, target_id, link_type, label, created_at
   const { data: linkRows, error: linkErr } = await supabase
     .from("catalog_item_links")
     .select("id,source_id,target_id,link_type,label,created_at")
     .eq("source_id", id)
-    // if your tab is specifically "Variants", keep this filter:
     .eq("link_type", "variant")
     .order("created_at", { ascending: true });
 
