@@ -4,6 +4,33 @@
 import { supabase } from "@/lib/supabaseClient";
 
 /* ============================================================
+   Small helpers
+   ============================================================ */
+
+function asString(x: any): string {
+  return String(x ?? "").trim();
+}
+
+function asInt(x: any, fallback = 0): number {
+  const n = Number(x);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.floor(n);
+}
+
+function int1(x: any): number {
+  return Math.max(1, asInt(x, 1));
+}
+
+function uniqStrings(xs: string[]) {
+  return Array.from(new Set(xs.filter(Boolean)));
+}
+
+function asIsoOrEpoch(x: any): string {
+  const s = asString(x);
+  return s || new Date(0).toISOString();
+}
+
+/* ============================================================
    Reviews
    ============================================================ */
 
@@ -14,12 +41,8 @@ export type ReviewRow = {
   rating: number;
   title: string | null;
   body: string | null;
-  created_at: string | null;
+  created_at: string; // ✅ normalized (NOT nullable)
 };
-
-function asString(x: any): string {
-  return String(x ?? "").trim();
-}
 
 export async function fetchItemReviews(catalogItemId: string): Promise<ReviewRow[]> {
   const id = asString(catalogItemId);
@@ -32,7 +55,19 @@ export async function fetchItemReviews(catalogItemId: string): Promise<ReviewRow
     .order("created_at", { ascending: false });
 
   if (error) throw new Error(error.message);
-  return (data ?? []) as ReviewRow[];
+
+  const rows = (data ?? []) as any[];
+
+  // ✅ normalize created_at so UI can treat it as string always
+  return rows.map((r) => ({
+    id: asString(r?.id),
+    catalog_item_id: asString(r?.catalog_item_id),
+    user_id: r?.user_id ?? null,
+    rating: Number(r?.rating ?? 0),
+    title: r?.title ?? null,
+    body: r?.body ?? null,
+    created_at: asIsoOrEpoch(r?.created_at),
+  })) as ReviewRow[];
 }
 
 export async function insertItemReview(params: {
@@ -66,7 +101,18 @@ export async function insertItemReview(params: {
 
   if (error) throw new Error(error.message);
   if (!data) throw new Error("Failed to create review");
-  return data as ReviewRow;
+
+  const r = data as any;
+
+  return {
+    id: asString(r?.id),
+    catalog_item_id: asString(r?.catalog_item_id),
+    user_id: r?.user_id ?? null,
+    rating: Number(r?.rating ?? 0),
+    title: r?.title ?? null,
+    body: r?.body ?? null,
+    created_at: asIsoOrEpoch(r?.created_at),
+  } as ReviewRow;
 }
 
 /* ============================================================
@@ -104,20 +150,6 @@ export type BundleComponentInput = {
   role?: string | null;
   notes?: string | null;
 };
-
-function asInt(x: any, fallback = 0): number {
-  const n = Number(x);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.floor(n);
-}
-
-function int1(x: any): number {
-  return Math.max(1, asInt(x, 1));
-}
-
-function uniqStrings(xs: string[]) {
-  return Array.from(new Set(xs.filter(Boolean)));
-}
 
 // bundle -> components (2-step to avoid FK constraint-name dependency)
 export async function fetchBundleComponents(bundleItemId: string): Promise<BundleComponent[]> {
@@ -227,4 +259,39 @@ export async function replaceBundleComponents(bundleItemId: string, components: 
 
   const { error: insErr } = await supabase.from("bundle_components").insert(payload);
   if (insErr) throw new Error(insErr.message);
+}
+
+/* ============================================================
+   Sales History
+   ============================================================ */
+
+export type SaleRow = {
+  id: string;
+  catalog_item_id: string;
+  price_cad: number | null;
+  condition_json: Record<string, any> | null;
+  created_at: string; // ✅ normalized (NOT nullable)
+};
+
+export async function fetchItemSalesHistory(catalogItemId: string): Promise<SaleRow[]> {
+  const id = asString(catalogItemId);
+  if (!id) return [];
+
+  const { data, error } = await supabase
+    .from("marketplace_sales")
+    .select("id,catalog_item_id,price_cad,condition_json,created_at")
+    .eq("catalog_item_id", id)
+    .order("created_at", { ascending: false });
+
+  if (error) throw new Error(error.message);
+
+  const rows = (data ?? []) as any[];
+
+  return rows.map((r) => ({
+    id: asString(r?.id),
+    catalog_item_id: asString(r?.catalog_item_id),
+    price_cad: typeof r?.price_cad === "number" ? r.price_cad : r?.price_cad ?? null,
+    condition_json: (r?.condition_json ?? null) as any,
+    created_at: asIsoOrEpoch(r?.created_at),
+  })) as SaleRow[];
 }
