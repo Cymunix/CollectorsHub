@@ -105,15 +105,6 @@ function clampQty(v: any) {
   return Math.max(1, Math.floor(n));
 }
 
-async function insertLookupRow<T extends { id: string; name: string }>(
-  table: string,
-  payload: Record<string, any>
-): Promise<T> {
-  const { data, error } = await supabase.from(table).insert(payload).select("*").single();
-  if (error) throw error;
-  return data as T;
-}
-
 function sortByName<T extends { name: string }>(arr: T[]) {
   return [...arr].sort((a, b) => String(a.name ?? "").localeCompare(String(b.name ?? "")));
 }
@@ -166,6 +157,26 @@ function CreateLinkButton({
       {label}
     </button>
   );
+}
+
+/**
+ * SAFE lookup insert: if it fails, it shows the real error in the banner
+ * instead of appearing to do nothing.
+ */
+async function insertLookupRowSafe<T extends { id: string; name: string }>(
+  table: string,
+  payload: Record<string, any>,
+  setBanner: (b: { type: "error" | "success"; msg: string } | null) => void
+): Promise<T | null> {
+  try {
+    const { data, error } = await supabase.from(table).insert(payload).select("*").single();
+    if (error) throw error;
+    return data as T;
+  } catch (e: any) {
+    setBanner({ type: "error", msg: e?.message ?? `Insert failed: ${table}` });
+    console.error("Lookup insert failed:", table, payload, e);
+    return null;
+  }
 }
 
 /* ---------------- component ---------------- */
@@ -247,25 +258,38 @@ export default function AddItemModal({
     const name = promptName("franchise");
     if (!name) return;
 
-    const row = await safeInsertLookup("franchises", name);
-    if (!row) return;
+    try {
+      const row = await safeInsertLookup("franchises", name);
+      if (!row) return;
 
-    setMeta((m) => ({
-      ...m,
-      franchises: sortByName([...(m.franchises ?? []), row]),
-    }));
+      setMeta((m) => ({
+        ...m,
+        franchises: sortByName([...(m.franchises ?? []), row]),
+      }));
 
-    form.setFranchiseId?.(row.id);
+      form.setFranchiseId?.(row.id);
+    } catch (e: any) {
+      setBanner({ type: "error", msg: e?.message ?? "Failed to create franchise." });
+      console.error("createFranchise failed:", e);
+    }
   };
 
   const createBbTheme = async () => {
     const name = promptName("theme");
     if (!name) return;
+
     if (!form.subcategoryId) {
       setBanner({ type: "error", msg: "Select a subcategory before creating a theme." });
       return;
     }
-    const row = await insertLookupRow<any>("bb_themes", { name, subcategory_id: form.subcategoryId });
+
+    const row = await insertLookupRowSafe<any>(
+      "bb_themes",
+      { name, subcategory_id: form.subcategoryId },
+      setBanner
+    );
+    if (!row) return;
+
     setMeta((m) => ({ ...m, bbThemes: sortByName([...(m.bbThemes ?? []), row]) }));
     form.setBbThemeId?.(row.id);
   };
@@ -273,11 +297,19 @@ export default function AddItemModal({
   const createBbSubtheme = async () => {
     const name = promptName("subtheme");
     if (!name) return;
+
     if (!form.bbThemeId) {
       setBanner({ type: "error", msg: "Select a theme before creating a subtheme." });
       return;
     }
-    const row = await insertLookupRow<any>("bb_subthemes", { name, theme_id: form.bbThemeId });
+
+    const row = await insertLookupRowSafe<any>(
+      "bb_subthemes",
+      { name, theme_id: form.bbThemeId },
+      setBanner
+    );
+    if (!row) return;
+
     setMeta((m) => ({ ...m, bbSubthemes: sortByName([...(m.bbSubthemes ?? []), row]) }));
     form.setBbSubthemeId?.(row.id);
   };
@@ -285,7 +317,10 @@ export default function AddItemModal({
   const createCardManufacturer = async () => {
     const name = promptName("card manufacturer");
     if (!name) return;
-    const row = await insertLookupRow<any>("card_manufacturers", { name });
+
+    const row = await insertLookupRowSafe<any>("card_manufacturers", { name }, setBanner);
+    if (!row) return;
+
     setMeta((m) => ({ ...m, cardManufacturers: sortByName([...(m.cardManufacturers ?? []), row]) }));
     form.setCardManufacturerId?.(row.id);
   };
@@ -293,11 +328,19 @@ export default function AddItemModal({
   const createCardSet = async () => {
     const name = promptName("card set");
     if (!name) return;
+
     if (!form.cardManufacturerId) {
       setBanner({ type: "error", msg: "Select a card manufacturer before creating a set." });
       return;
     }
-    const row = await insertLookupRow<any>("card_sets", { name, manufacturer_id: form.cardManufacturerId });
+
+    const row = await insertLookupRowSafe<any>(
+      "card_sets",
+      { name, manufacturer_id: form.cardManufacturerId },
+      setBanner
+    );
+    if (!row) return;
+
     setMeta((m) => ({ ...m, cardSets: sortByName([...(m.cardSets ?? []), row]) }));
     form.setCardSetId?.(row.id);
   };
@@ -305,7 +348,10 @@ export default function AddItemModal({
   const createCardType = async () => {
     const name = promptName("card type");
     if (!name) return;
-    const row = await insertLookupRow<any>("card_types", { name });
+
+    const row = await insertLookupRowSafe<any>("card_types", { name }, setBanner);
+    if (!row) return;
+
     setMeta((m) => ({ ...m, cardTypes: sortByName([...(m.cardTypes ?? []), row]) }));
     form.setCardTypeId?.(row.id);
   };
@@ -313,7 +359,10 @@ export default function AddItemModal({
   const createMusicArtist = async () => {
     const name = promptName("artist");
     if (!name) return;
-    const row = await insertLookupRow<any>("music_artists", { name });
+
+    const row = await insertLookupRowSafe<any>("music_artists", { name }, setBanner);
+    if (!row) return;
+
     setMeta((m) => ({ ...m, musicArtists: sortByName([...(m.musicArtists ?? []), row]) }));
     form.setMusicArtistId?.(row.id);
   };
@@ -321,7 +370,10 @@ export default function AddItemModal({
   const createPerson = async () => {
     const name = promptName("person");
     if (!name) return null;
-    const row = await insertLookupRow<any>("people", { name });
+
+    const row = await insertLookupRowSafe<any>("people", { name }, setBanner);
+    if (!row) return null;
+
     setMeta((m) => ({ ...m, people: sortByName([...(m.people ?? []), row]) }));
     return row;
   };
@@ -702,7 +754,7 @@ export default function AddItemModal({
                   </div>
                 </div>
 
-                {/* Minifigs flow (this is what you were missing) */}
+                {/* Minifigs flow */}
                 <div className="mt-2 rounded-2xl border border-[#E5E9F2] bg-white p-4">
                   <div className="flex items-center justify-between">
                     <div className="text-sm font-semibold text-[#0F172A]">Minifigs</div>
@@ -797,7 +849,7 @@ export default function AddItemModal({
           ) : null}
 
           {kind === "trading_card" || kind === "sports_card" ? (
-            <SectionShell title="Cards" subtitle="Manufacturer, set, and type. (This is why you saw “nothing” before.)">
+            <SectionShell title="Cards" subtitle="Manufacturer, set, and type.">
               <div className="space-y-3">
                 <div>
                   <div className="flex items-center justify-between">
@@ -919,7 +971,6 @@ export default function AddItemModal({
                     onClick={async () => {
                       const p = await createPerson();
                       if (!p) return;
-                      // no auto-add; user can pick below
                     }}
                     disabled={saving}
                   />
@@ -949,9 +1000,7 @@ export default function AddItemModal({
                             <input
                               type="checkbox"
                               checked={checked}
-                              onChange={() =>
-                                (people as any).setMovieDirectorIds?.(toggleId(ids, String(p.id)))
-                              }
+                              onChange={() => (people as any).setMovieDirectorIds?.(toggleId(ids, String(p.id)))}
                               disabled={saving}
                             />
                             <span className="truncate">{p.name}</span>
