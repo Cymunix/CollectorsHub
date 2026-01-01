@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { fetchItemVariants } from "../_lib/queries";
+import { fetchItemVariants, type VariantRow as QueryVariantRow } from "../_lib/queries";
 
 type VariantRow = {
   id: string;
@@ -9,6 +9,23 @@ type VariantRow = {
   url?: string | null;
   source?: string | null;
 };
+
+function toUiRow(r: QueryVariantRow): VariantRow {
+  // Make sure the UI always has a string label
+  const label =
+    (r.label && String(r.label).trim()) ||
+    (r.target_name && String(r.target_name).trim()) ||
+    "Variant";
+
+  // You don't currently return url/source from fetchItemVariants,
+  // so we derive a reasonable "source" from link_type and leave url null.
+  return {
+    id: r.id,
+    label,
+    source: r.link_type ? String(r.link_type) : "Variant",
+    url: null,
+  };
+}
 
 export default function VariantsTab({ catalogItemId }: { catalogItemId: string }) {
   const [loading, setLoading] = useState(true);
@@ -23,7 +40,8 @@ export default function VariantsTab({ catalogItemId }: { catalogItemId: string }
       setErr(null);
       try {
         const data = await fetchItemVariants(catalogItemId);
-        if (!cancelled) setRows(data);
+        const ui = (data ?? []).map(toUiRow);
+        if (!cancelled) setRows(ui);
       } catch (e: any) {
         if (!cancelled) setErr(e?.message ?? "Failed to load variants.");
       } finally {
