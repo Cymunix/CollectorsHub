@@ -142,13 +142,15 @@ function BundleListCard({
     >
       <div className="h-14 w-14 rounded-xl border border-[#E5E9F2] bg-[#F8FAFF] overflow-hidden flex items-center justify-center">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        {image_url ? <img src={image_url} alt={name} className="h-full w-full object-cover" /> : <span className="text-[10px] text-[#94A3B8]">No image</span>}
+        {image_url ? (
+          <img src={image_url} alt={name} className="h-full w-full object-cover" />
+        ) : (
+          <span className="text-[10px] text-[#94A3B8]">No image</span>
+        )}
       </div>
       <div className="min-w-0">
         <div className="text-sm font-semibold text-[#0F172A] truncate">{name}</div>
-        <div className="text-[11px] text-[#64748B] truncate">
-          {subtitle ? subtitle : id}
-        </div>
+        <div className="text-[11px] text-[#64748B] truncate">{subtitle ? subtitle : id}</div>
       </div>
     </button>
   );
@@ -357,7 +359,7 @@ export default function Page({ params }: { params: { id: string } }) {
 
           setItem(it);
 
-          // Bundles load (non-blocking; but still awaited so tabs are correct)
+          // Bundles load
           try {
             const bundleFlag = !!it?.is_bundle;
             setIsBundle(bundleFlag);
@@ -755,10 +757,13 @@ export default function Page({ params }: { params: { id: string } }) {
                     bundleComponents.map((c) => {
                       const comp = c.component;
                       const compName = safeText(comp?.name);
-                      const subtitle = `Qty: ${c.qty}${comp?.release_year ? ` • ${comp.release_year}` : ""}${comp?.version ? ` • ${comp.version}` : ""}`;
+                      const subtitle = `Qty: ${c.qty}${
+                        comp?.release_year ? ` • ${comp.release_year}` : ""
+                      }${comp?.version ? ` • ${comp.version}` : ""}`;
+
                       return (
                         <BundleListCard
-                          key={`${c.component_item_id}`}
+                          key={c.component_item_id}
                           id={c.component_item_id}
                           name={compName}
                           image_url={(comp as any)?.image_url ?? null}
