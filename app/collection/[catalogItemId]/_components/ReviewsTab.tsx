@@ -3,8 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { fetchItemReviews, insertItemReview } from "../_lib/queries";
-
-type ReviewRow = Awaited<ReturnType<typeof fetchItemReviews>>[number];
+import type { ReviewRow } from "../_lib/queries";
 
 function clampRating(n: any) {
   const x = Number(n);
@@ -12,18 +11,15 @@ function clampRating(n: any) {
   return Math.max(1, Math.min(5, Math.round(x)));
 }
 
-function formatDateMaybe(d: string | null | undefined) {
-  if (!d) return "—";
-  const dt = new Date(d);
-  return Number.isNaN(dt.getTime()) ? "—" : dt.toLocaleDateString();
+function Stars({ n }: { n: number }) {
+  const stars = Array.from({ length: 5 }, (_, i) => (i < n ? "★" : "☆"));
+  return <div className="text-sm leading-none">{stars.join("")}</div>;
 }
 
 export default function ReviewsTab({ catalogItemId }: { catalogItemId: string }) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [rows, setRows] = useState<ReviewRow[]>([]);
-
-  const [userId, setUserId] = useState<string | null>(null);
 
   // add form
   const [rating, setRating] = useState<number>(5);
@@ -32,33 +28,12 @@ export default function ReviewsTab({ catalogItemId }: { catalogItemId: string })
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
 
-  useEffect(() => {
-    let mounted = true;
-
-    const init = async () => {
-      const { data } = await supabase.auth.getUser();
-      if (!mounted) return;
-      setUserId(data.user?.id ?? null);
-    };
-
-    init();
-
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUserId(session?.user?.id ?? null);
-    });
-
-    return () => {
-      mounted = false;
-      sub.subscription.unsubscribe();
-    };
-  }, []);
-
   async function reload() {
     setLoading(true);
     setErr(null);
     try {
       const data = await fetchItemReviews(catalogItemId);
-      setRows(data);
+      setRows(data ?? []);
     } catch (e: any) {
       setErr(e?.message ?? "Failed to load reviews.");
     } finally {
@@ -73,18 +48,13 @@ export default function ReviewsTab({ catalogItemId }: { catalogItemId: string })
 
   const avg = useMemo(() => {
     if (rows.length === 0) return null;
-    const sum = rows.reduce((s, r: any) => s + (Number(r.rating) || 0), 0);
+    const sum = rows.reduce((s, r) => s + (Number(r.rating) || 0), 0);
     return Math.round((sum / rows.length) * 10) / 10;
   }, [rows]);
 
   async function onSubmit() {
     setErr(null);
     setSavedMsg(null);
-
-    if (!userId) {
-      setErr("You must be logged in to post a review.");
-      return;
-    }
 
     const r = clampRating(rating);
     const t = title.trim();
@@ -97,6 +67,11 @@ export default function ReviewsTab({ catalogItemId }: { catalogItemId: string })
 
     setSaving(true);
     try {
+      const { data, error } = await supabase.auth.getUser();
+      if (error) throw new Error(error.message);
+      const userId = data?.user?.id;
+      if (!userId) throw new Error("You must be signed in to post a review.");
+
       await insertItemReview({
         catalogItemId,
         userId,
@@ -209,22 +184,17 @@ export default function ReviewsTab({ catalogItemId }: { catalogItemId: string })
             <div className="h-20 rounded-2xl bg-gray-100" />
           </div>
         ) : rows.length === 0 ? (
-          <div className="rounded-2xl border bg-gray-50 p-4 text-sm text-gray-600">
-            Be the first to review this item.
-          </div>
+          <div className="rounded-2xl border bg-gray-50 p-4 text-sm text-gray-600">Be the first to review this item.</div>
         ) : (
           <div className="space-y-3">
-            {rows.map((r: any) => (
+            {rows.map((r) => (
               <div key={r.id} className="rounded-2xl border bg-white p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <Stars n={clampRating(r.rating)} />
                     <div className="font-semibold">{r.title?.trim() ? r.title : "Review"}</div>
                   </div>
-                  <div className="text-xs text-gray-500">
-                    {formatDateMaybe(r.created_at)}
-                    {r.display_name ? ` • ${r.display_name}` : ""}
-                  </div>
+                  <div className="text-xs text-gray-500">{new Date(r.created_at).toLocaleDateString()}</div>
                 </div>
                 {r.body && <div className="mt-2 text-sm text-gray-700 whitespace-pre-wrap">{r.body}</div>}
               </div>
@@ -234,9 +204,4 @@ export default function ReviewsTab({ catalogItemId }: { catalogItemId: string })
       </div>
     </div>
   );
-}
-
-function Stars({ n }: { n: number }) {
-  const stars = Array.from({ length: 5 }, (_, i) => (i < n ? "★" : "☆"));
-  return <div className="text-sm leading-none">{stars.join("")}</div>;
 }
