@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import type { ConditionMeta, ConditionStatus } from "@/lib/pricingEngine";
-import { statusLabel, flagLabel } from "@/lib/pricingEngine";
+import { statusLabel, flagLabel, getConditionLabel } from "@/lib/pricingEngine";
 import ItemConditionBuildingBlocks from "@/components/catalog/ItemConditionBuildingBlocks";
 
 type Minifig = { id: string; minifig_number: string; name: string | null; image_url: string | null };
@@ -11,6 +11,28 @@ type Minifig = { id: string; minifig_number: string; name: string | null; image_
 function normalizeCert(input: any): string {
   const s = String(input ?? "").trim().replace(/\s+/g, " ");
   return s.slice(0, 64);
+}
+
+/* ---------------- Cards helpers ---------------- */
+
+function isCardCategoryName(categoryName: string | null | undefined) {
+  const c = String(categoryName ?? "").toLowerCase();
+  if (!c) return false;
+  // treat "trading cards" + "sports cards" as the same path
+  return (
+    c.includes("trading") ||
+    c.includes("sports card") ||
+    c.includes("sports cards") ||
+    c.includes("trading card") ||
+    c.includes("cards") ||
+    c.includes("tcg")
+  );
+}
+
+function clampInt(n: any, min: number, max: number, fallback: number) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(x)));
 }
 
 /* ---------------- BGS helpers ---------------- */
@@ -105,12 +127,14 @@ function SelectRow({
   onChange,
   options,
   disabled,
+  help,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   options: string[];
   disabled?: boolean;
+  help?: React.ReactNode;
 }) {
   return (
     <div className="rounded-xl border border-[#E5E9F2] bg-white px-3 py-2">
@@ -130,6 +154,7 @@ function SelectRow({
           </option>
         ))}
       </select>
+      {help ? <div className="mt-2 text-xs text-[#64748B]">{help}</div> : null}
     </div>
   );
 }
@@ -246,10 +271,7 @@ function toggleFlag(flags: string[], flag: string, nextOn: boolean) {
   return Array.from(set);
 }
 
-function resolveMetaFromInputs(
-  conditionValues: Record<string, any>,
-  conditionMeta?: ConditionMeta
-): ConditionMeta {
+function resolveMetaFromInputs(conditionValues: Record<string, any>, conditionMeta?: ConditionMeta): ConditionMeta {
   const data = conditionValues?.data ?? {};
   const meta = conditionMeta ?? conditionValues?.meta ?? null;
 
@@ -260,16 +282,10 @@ function resolveMetaFromInputs(
     (!!data?.for_parts ? "for_parts" : null) ||
     "complete";
 
-  const flags: string[] = Array.isArray(meta?.flags)
-    ? meta.flags
-    : Array.isArray(data?.flags)
-    ? data.flags
-    : [];
+  const flags: string[] = Array.isArray(meta?.flags) ? meta.flags : Array.isArray(data?.flags) ? data.flags : [];
 
   const normalizedFlags =
-    status === "for_parts"
-      ? toggleFlag(flags, "for_parts", true)
-      : toggleFlag(flags, "for_parts", false);
+    status === "for_parts" ? toggleFlag(flags, "for_parts", true) : toggleFlag(flags, "for_parts", false);
 
   return {
     status,
@@ -283,7 +299,7 @@ export default function ItemConditionSelector({
   catalogItemId,
   categoryName,
   isBuildingBlocks,
-  isGradableCategory, // we keep this prop but we do NOT gate grading anymore (anything can be graded)
+  isGradableCategory, // kept for callers, but not gating
   conditionValues,
   conditionMeta,
   onChange,
@@ -313,9 +329,7 @@ export default function ItemConditionSelector({
         .eq("catalog_item_id", catalogItemId)
         .limit(200);
 
-      const ids = (linkRes.data ?? [])
-        .map((r: any) => r.minifig_id)
-        .filter(Boolean);
+      const ids = (linkRes.data ?? []).map((r: any) => r.minifig_id).filter(Boolean);
 
       if (!ids.length) {
         setLinkedMinifigs([]);
@@ -338,7 +352,7 @@ export default function ItemConditionSelector({
     };
   }, [catalogItemId, isBuildingBlocks]);
 
-  // ✅ LEGO path stays delegated (we’ll update that component next)
+  // ✅ LEGO path stays delegated
   if (isBuildingBlocks) {
     const expected = linkedMinifigs.map((m) => ({
       id: m.id,
@@ -360,18 +374,22 @@ export default function ItemConditionSelector({
   }
 
   const data = conditionValues?.data ?? {};
-  const meta = useMemo(
-    () => resolveMetaFromInputs(conditionValues ?? {}, conditionMeta),
-    [conditionValues, conditionMeta]
-  );
+  const meta = useMemo(() => resolveMetaFromInputs(conditionValues ?? {}, conditionMeta), [conditionValues, conditionMeta]);
+
+  const isCard = useMemo(() => isCardCategoryName(categoryName), [categoryName]);
 
   const isGraded = !!data?.is_graded;
+
+  // Cards: raw 1–10 lives here
+  const rawGrade10 = useMemo(() => {
+    const v = data?.raw_grade_10 ?? data?.rawGrade10 ?? data?.tier10;
+    return clampInt(v, 1, 10, 8);
+  }, [data?.raw_grade_10, data?.rawGrade10, data?.tier10]);
 
   const gradeCompany = String(data?.grading_company ?? "").toUpperCase();
   const gradeValueNum = data?.grade_value == null ? null : Number(data.grade_value);
   const isBgs = isGraded && gradeCompany === "BGS";
-  const isTen =
-    isBgs && gradeValueNum != null && Number.isFinite(gradeValueNum) && gradeValueNum === 10;
+  const isTen = isBgs && gradeValueNum != null && Number.isFinite(gradeValueNum) && gradeValueNum === 10;
 
   const bgsSub = readBgsSubgrades(data);
   const trackingSubgrades = !!bgsSub;
@@ -380,53 +398,64 @@ export default function ItemConditionSelector({
   const summary = useMemo(() => {
     const chips: string[] = [];
 
+    // Cards: show raw grade label prominently when not graded
+    if (isCard && !isGraded) {
+      chips.push(`RAW ${rawGrade10} • ${getConditionLabel(rawGrade10)}`);
+    }
+
     // Show up to 3 flags
     const important = (meta.flags || []).filter((f) => f !== "for_parts").slice(0, 3);
     for (const f of important) chips.push(flagLabel(f));
 
-    if (data?.is_graded) {
+    if (isGraded) {
       const c = data?.grading_company ? String(data.grading_company).toUpperCase() : "GRADED";
       const gv = data?.grade_value;
       chips.push(gv != null && Number.isFinite(Number(gv)) ? `${c} ${Number(gv)}` : c);
 
-      // If we have a BGS label, show it as a chip too
       if (c === "BGS" && typeof data?.grading_label === "string" && data.grading_label) {
         chips.push(data.grading_label === "bgs_black_10" ? "BLACK LABEL" : "GOLD LABEL");
       }
     }
 
-    return { title: statusLabel(meta.status), chips };
-  }, [meta, data]);
+    // Title: if graded, treat as graded (even if meta.status is "complete")
+    const title = isGraded ? "Graded" : statusLabel(meta.status);
+
+    return { title, chips };
+  }, [meta, data, isGraded, isCard, rawGrade10]);
 
   const emit = (nextMeta: ConditionMeta, nextDataPatch?: Record<string, any>) => {
+    // ✅ If graded is on, meta.status should be "graded" for pricing/filtering consistency
+    const patchedMeta: ConditionMeta =
+      (nextDataPatch?.is_graded ?? data?.is_graded) ? { ...nextMeta, status: "graded" } : nextMeta;
+
     const nextData: Record<string, any> = {
       ...(data ?? {}),
       ...(nextDataPatch ?? {}),
-      status: nextMeta.status,
-      flags: nextMeta.flags,
-      sealed: nextMeta.status === "sealed",
-      for_parts: nextMeta.status === "for_parts",
+      status: patchedMeta.status,
+      flags: patchedMeta.flags,
+      sealed: patchedMeta.status === "sealed",
+      for_parts: patchedMeta.status === "for_parts",
     };
 
     const nextJson = {
       v: 3,
       item_type: conditionValues?.item_type ?? "generic",
       category: categoryName ?? null,
-      meta: nextMeta,
+      meta: patchedMeta,
       data: nextData,
     };
 
-    onChange(nextJson, nextMeta);
+    onChange(nextJson, patchedMeta);
   };
 
   const setStatus = (s: ConditionStatus) => {
+    // Cards are almost never "sealed/incomplete" in the same sense.
+    // But we won't block it; we just keep it simple.
     const nextMeta: ConditionMeta = {
       ...meta,
       status: s,
       flags:
-        s === "for_parts"
-          ? toggleFlag(meta.flags, "for_parts", true)
-          : toggleFlag(meta.flags, "for_parts", false),
+        s === "for_parts" ? toggleFlag(meta.flags, "for_parts", true) : toggleFlag(meta.flags, "for_parts", false),
     };
 
     emit(nextMeta);
@@ -438,71 +467,88 @@ export default function ItemConditionSelector({
     emit({ ...meta, flags: nextFlags });
   };
 
+  const setRawGrade10 = (v: string) => {
+    const n = v === "" ? null : Number(v);
+    const tier = n != null && Number.isFinite(n) ? clampInt(n, 1, 10, 8) : 8;
+    emit(meta, { raw_grade_10: tier });
+  };
+
   const setGraded = (on: boolean) => {
     if (!on) {
-      emit(meta, {
-        is_graded: false,
-        grading_company: null,
-        grade_value: null,
-        certification_number: "",
-        grading_label: null,
-        grading_subgrades: null,
-      });
+      emit(
+        {
+          ...meta,
+          status: meta.status === "graded" ? "complete" : meta.status,
+        },
+        {
+          is_graded: false,
+          grading_company: null,
+          grade_value: null,
+          certification_number: "",
+          grading_label: null,
+          grading_subgrades: null,
+        }
+      );
       return;
     }
 
     const company =
-      typeof data?.grading_company === "string" && data.grading_company.trim().length
-        ? data.grading_company
-        : "PSA";
+      typeof data?.grading_company === "string" && data.grading_company.trim().length ? data.grading_company : "PSA";
 
     const gradeValue =
-      data?.grade_value === null || data?.grade_value === undefined || data?.grade_value === ""
-        ? 9
-        : Number(data.grade_value);
+      data?.grade_value === null || data?.grade_value === undefined || data?.grade_value === "" ? 9 : Number(data.grade_value);
 
-    emit(meta, {
-      is_graded: true,
-      grading_company: company,
-      grade_value: Number.isFinite(gradeValue) ? gradeValue : null,
-      certification_number: String(data?.certification_number ?? ""),
-    });
+    emit(
+      {
+        ...meta,
+        status: "graded",
+      },
+      {
+        is_graded: true,
+        grading_company: company,
+        grade_value: Number.isFinite(gradeValue) ? gradeValue : null,
+        certification_number: String(data?.certification_number ?? ""),
+        // Keep raw_grade_10 as-is so "Raw 10" and "Graded 10" share the same meaning words.
+        raw_grade_10: clampInt(data?.raw_grade_10 ?? rawGrade10, 1, 10, 8),
+      }
+    );
   };
 
   const setGradeCompany = (company: string) => {
-    // If switching away from BGS, wipe BGS-specific fields to avoid stale data
     const nextCompany = String(company || "").toUpperCase();
     if (nextCompany !== "BGS") {
-      emit(meta, { is_graded: true, grading_company: company, grading_label: null, grading_subgrades: null });
+      emit(
+        { ...meta, status: "graded" },
+        { is_graded: true, grading_company: company, grading_label: null, grading_subgrades: null }
+      );
       return;
     }
-    emit(meta, { is_graded: true, grading_company: company });
+    emit({ ...meta, status: "graded" }, { is_graded: true, grading_company: company });
   };
 
   const setGradeValue = (v: string) => {
     const n = v === "" ? null : Number(v);
     const gv = n != null && Number.isFinite(n) ? n : null;
 
-    // If BGS and grade is not 10 anymore, drop the 10-label (black/gold)
     if (String(data?.grading_company ?? "").toUpperCase() === "BGS" && gv !== 10) {
-      emit(meta, { is_graded: true, grade_value: gv, grading_label: null });
+      emit({ ...meta, status: "graded" }, { is_graded: true, grade_value: gv, grading_label: null });
       return;
     }
 
-    emit(meta, { is_graded: true, grade_value: gv });
+    emit({ ...meta, status: "graded" }, { is_graded: true, grade_value: gv });
   };
 
   const setCert = (v: string) => {
-    emit(meta, { certification_number: normalizeCert(v) });
+    emit({ ...meta, status: "graded" }, { certification_number: normalizeCert(v) });
   };
 
   const setGradingLabel = (label: string) => {
-    emit(meta, { is_graded: true, grading_label: label || null });
+    emit({ ...meta, status: "graded" }, { is_graded: true, grading_label: label || null });
   };
 
   const setTrackSubgrades = (on: boolean) => {
     if (!on) {
-      emit(meta, { grading_subgrades: null });
+      emit({ ...meta, status: "graded" }, { grading_subgrades: null });
       return;
     }
 
@@ -510,7 +556,7 @@ export default function ItemConditionSelector({
       ? { centering: 10, corners: 10, edges: 10, surface: 10 }
       : { centering: null, corners: null, edges: null, surface: null };
 
-    emit(meta, { grading_subgrades: next });
+    emit({ ...meta, status: "graded" }, { grading_subgrades: next });
   };
 
   const setOneSubgrade = (key: keyof BgsSubgrades, v: string) => {
@@ -519,15 +565,12 @@ export default function ItemConditionSelector({
 
     const current = readBgsSubgrades(data) ?? {};
     const next = { ...current, [key]: val };
-    emit(meta, { grading_subgrades: next });
+
+    emit({ ...meta, status: "graded" }, { grading_subgrades: next });
   };
 
-  // Pick a small, sane default flag set (not exhaustive)
+  // Generic flags (keep for now; we can specialize later)
   const flagOptions: { key: string; label: string; sub?: string }[] = [
-    { key: "box_missing", label: "Box missing" },
-    { key: "instructions_missing", label: "Instructions missing" },
-    { key: "pieces_incomplete", label: "Missing pieces / incomplete" },
-    { key: "yellowing", label: "Yellowing" },
     { key: "damaged", label: "Damaged" },
     { key: "scratched", label: "Scratched / scuffed" },
     { key: "not_working", label: "Not working", sub: "Use for electronics/toys that fail testing." },
@@ -548,38 +591,67 @@ export default function ItemConditionSelector({
       }
     >
       <div className="space-y-4">
-        {/* Status */}
-        <div className="space-y-2">
-          <div className="text-sm font-semibold text-[#0F172A]">Overall status</div>
-          <StatusPills value={meta.status} onPick={setStatus} />
-          <div className="text-xs text-[#64748B]">
-            This is the only “big” condition choice. Everything else is just extra details.
-          </div>
-        </div>
+        {/* Cards: RAW 1–10 condition (this is the missing piece you wanted) */}
+        {isCard ? (
+          <div className="space-y-2">
+            <div className="text-sm font-semibold text-[#0F172A]">Raw card condition (1–10)</div>
 
-        {/* Flags */}
-        <div className="space-y-2">
-          <div className="text-sm font-semibold text-[#0F172A]">Details</div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-            {flagOptions.map((f) => (
-              <CheckboxRow
-                key={f.key}
-                label={f.label}
-                checked={(meta.flags || []).includes(f.key)}
-                onChange={(v) => setFlag(f.key, v)}
-                subtext={f.sub ? <span>{f.sub}</span> : undefined}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <SelectRow
+                label="Raw grade (1–10)"
+                value={String(rawGrade10)}
+                options={Array.from({ length: 10 }).map((_, i) => String(i + 1))}
+                onChange={setRawGrade10}
+                disabled={false}
+                help={
+                  <span>
+                    Words match graded meaning (e.g. raw 10 and graded 10 are both <span className="font-semibold">Gem Mint</span>).
+                  </span>
+                }
               />
-            ))}
+              <div className="rounded-xl border border-[#E5E9F2] bg-white px-3 py-2">
+                <div className="text-sm text-[#0F172A] font-medium">Label</div>
+                <div className="mt-2 text-sm font-semibold text-[#0F172A]">{getConditionLabel(rawGrade10)}</div>
+                <div className="mt-1 text-xs text-[#64748B]">
+                  This is the “words” part. Grading companies add value; they don’t change what Mint means.
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
+        ) : (
+          <>
+            {/* Status (non-cards) */}
+            <div className="space-y-2">
+              <div className="text-sm font-semibold text-[#0F172A]">Overall status</div>
+              <StatusPills value={meta.status} onPick={setStatus} />
+              <div className="text-xs text-[#64748B]">
+                This is the only “big” condition choice. Everything else is just extra details.
+              </div>
+            </div>
 
-        {/* For Parts explanation */}
-        {meta.status === "for_parts" ? (
-          <div className="rounded-xl border border-[#F59E0B] bg-[#FFFBEB] px-3 py-2 text-xs text-[#92400E]">
-            <span className="font-semibold">For Parts</span> means it’s broken / incomplete enough
-            that it should be priced accordingly.
-          </div>
-        ) : null}
+            {/* Flags (non-cards) */}
+            <div className="space-y-2">
+              <div className="text-sm font-semibold text-[#0F172A]">Details</div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {flagOptions.map((f) => (
+                  <CheckboxRow
+                    key={f.key}
+                    label={f.label}
+                    checked={(meta.flags || []).includes(f.key)}
+                    onChange={(v) => setFlag(f.key, v)}
+                    subtext={f.sub ? <span>{f.sub}</span> : undefined}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {meta.status === "for_parts" ? (
+              <div className="rounded-xl border border-[#F59E0B] bg-[#FFFBEB] px-3 py-2 text-xs text-[#92400E]">
+                <span className="font-semibold">For Parts</span> means it’s broken / incomplete enough that it should be priced accordingly.
+              </div>
+            ) : null}
+          </>
+        )}
 
         {/* Grading (anything can be graded) */}
         <div className="space-y-2">
@@ -589,11 +661,7 @@ export default function ItemConditionSelector({
             label="This item is graded"
             checked={isGraded}
             onChange={setGraded}
-            subtext={
-              <span className="text-[#64748B]">
-                Turn this on only if it has an official grade slab/case.
-              </span>
-            }
+            subtext={<span className="text-[#64748B]">Turn this on only if it has an official grade slab/case.</span>}
           />
 
           {isGraded ? (
@@ -631,6 +699,7 @@ export default function ItemConditionSelector({
                       value={typeof data?.grading_label === "string" ? data.grading_label : ""}
                       options={["bgs_gold_10", "bgs_black_10"]}
                       onChange={setGradingLabel}
+                      help={<span>Black Label 10 should only be used if all four subgrades are 10.</span>}
                     />
                   ) : null}
 
@@ -638,11 +707,7 @@ export default function ItemConditionSelector({
                     label="Track BGS subgrades (Centering / Corners / Edges / Surface)"
                     checked={trackingSubgrades}
                     onChange={setTrackSubgrades}
-                    subtext={
-                      <span className="text-[#64748B]">
-                        Optional, but adds credibility and enables Black Label verification.
-                      </span>
-                    }
+                    subtext={<span className="text-[#64748B]">Optional, but enables Black Label verification.</span>}
                     emphasize={blackMismatch}
                   />
 
@@ -685,8 +750,7 @@ export default function ItemConditionSelector({
 
                   {blackMismatch ? (
                     <div className="rounded-xl border border-[#F59E0B] bg-[#FFFBEB] px-3 py-2 text-xs text-[#92400E]">
-                      <span className="font-semibold">Black Label check:</span> Black Label 10 requires all four
-                      subgrades to be 10.
+                      <span className="font-semibold">Black Label check:</span> Black Label 10 requires all four subgrades to be 10.
                     </div>
                   ) : null}
                 </div>
@@ -697,13 +761,12 @@ export default function ItemConditionSelector({
 
         {/* Debug (optional) */}
         <div className="rounded-xl border border-[#E5E9F2] bg-[#F8FAFC] px-3 py-2 text-xs text-[#334155]">
-          Stored meta: <span className="font-mono">{meta.status}</span>
+          Stored meta: <span className="font-mono">{(isGraded ? "graded" : meta.status) as any}</span>
           {" • flags="}
           <span className="font-mono">[{(meta.flags || []).join(", ")}]</span>
+          {isCard ? <span className="font-mono">{` • raw=${String(rawGrade10)}`}</span> : null}
           {data?.is_graded ? (
-            <span className="font-mono">{` • grade=${String(data?.grading_company ?? "GRADED")} ${
-              data?.grade_value ?? ""
-            }`}</span>
+            <span className="font-mono">{` • grade=${String(data?.grading_company ?? "GRADED")} ${data?.grade_value ?? ""}`}</span>
           ) : null}
           {data?.grading_label ? <span className="font-mono">{` • label=${String(data.grading_label)}`}</span> : null}
           {data?.grading_subgrades ? <span className="font-mono">{` • subgrades=✓`}</span> : null}
