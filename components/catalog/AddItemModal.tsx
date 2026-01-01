@@ -32,6 +32,9 @@ import CreateMinifigModal from "./add-item/modals/CreateMinifigModal";
 import { supabase } from "@/lib/supabaseClient";
 import { replaceBundleComponents } from "@/lib/catalog/queries";
 
+// ✅ NEW: franchises editor (many-to-many)
+import ItemFranchiseEditor from "@/components/catalog/ItemFranchiseEditor";
+
 /* ---------------- types ---------------- */
 
 type NamedRow = { id: string; name: string };
@@ -129,6 +132,10 @@ export default function AddItemModal({
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState<{ type: "error" | "success"; msg: string } | null>(null);
 
+  // ✅ NEW: keep modal open after create so we can attach franchises
+  const [createdCatalogItemId, setCreatedCatalogItemId] = useState<string | null>(null);
+  const [createdDone, setCreatedDone] = useState(false);
+
   // Bundles (draft)
   const [isBundle, setIsBundle] = useState(false);
   const [bundleRows, setBundleRows] = useState<BundleDraftRow[]>([]);
@@ -145,6 +152,8 @@ export default function AddItemModal({
   const safeClose = () => {
     if (!saving) {
       setBanner(null);
+      setCreatedCatalogItemId(null);
+      setCreatedDone(false);
       onClose();
     }
   };
@@ -162,6 +171,10 @@ export default function AddItemModal({
     setBundleUiErr(null);
 
     setBanner(null);
+
+    // ✅ NEW
+    setCreatedCatalogItemId(null);
+    setCreatedDone(false);
   };
 
   const promptName = (label: string) => (window.prompt(`New ${label} name:`) || "").trim();
@@ -241,9 +254,24 @@ export default function AddItemModal({
     setBundleRows((prev) => prev.map((r) => (r.component_item_id === id ? { ...r, qty: v } : r)));
   }, []);
 
+  /* ---------------- finish ---------------- */
+
+  const finish = useCallback(() => {
+    if (!createdCatalogItemId) return;
+    onCreated?.(createdCatalogItemId);
+    resetAll();
+    onClose();
+  }, [createdCatalogItemId, onCreated, onClose]);
+
   /* ---------------- submit ---------------- */
 
   const submit = async () => {
+    // After create, the primary action becomes "Finish"
+    if (createdDone && createdCatalogItemId) {
+      finish();
+      return;
+    }
+
     if (saving) return;
     setSaving(true);
     setBanner(null);
@@ -255,7 +283,10 @@ export default function AddItemModal({
       const id = await createCatalogItem(form.itemKind, {
         categoryId: form.categoryId,
         subcategoryId: form.subcategoryId,
+
+        // NOTE: legacy single franchise (can be treated as "primary" later)
         franchiseId: form.franchiseId || null,
+
         itemImageFile: form.itemImageFile,
         catalogName: form.catalogName,
         catalogReleaseYear: form.catalogReleaseYear,
@@ -359,10 +390,14 @@ export default function AddItemModal({
         }
       }
 
-      setBanner({ type: "success", msg: "Item created successfully." });
-      onCreated?.(id);
-      resetAll();
-      onClose();
+      // ✅ Keep modal open so franchises can be attached
+      setCreatedCatalogItemId(id);
+      setCreatedDone(true);
+
+      setBanner({
+        type: "success",
+        msg: "Item created. Attach franchises (and anything else), then click Finish.",
+      });
     } catch (e: any) {
       setBanner({ type: "error", msg: e?.message || "Failed to create item." });
     } finally {
@@ -374,7 +409,14 @@ export default function AddItemModal({
 
   return (
     <>
-      <AddItemModalShell open={open} title={title} saving={saving} banner={banner} onClose={safeClose} onSubmit={submit}>
+      <AddItemModalShell
+        open={open}
+        title={title}
+        saving={saving}
+        banner={banner}
+        onClose={safeClose}
+        onSubmit={submit}
+      >
         <form onSubmit={(e) => (e.preventDefault(), submit())}>
           <ClassificationSection
             metaLoading={metaLoading}
@@ -390,6 +432,25 @@ export default function AddItemModal({
             setFranchiseId={form.setFranchiseId}
             onCreateFranchise={createFranchise}
           />
+
+          {/* ✅ NEW: Franchise / Crossover editor (many-to-many)
+              Disabled until the item is created (needs an ID) */}
+          <div className="mt-4">
+            <ItemFranchiseEditor catalogItemId={createdCatalogItemId} disabled={saving} />
+          </div>
+
+          {/* ✅ After creation, make it obvious what to do next */}
+          {createdDone && createdCatalogItemId ? (
+            <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
+              <div className="text-sm font-semibold text-[#0F172A]">Next step</div>
+              <div className="mt-1 text-xs text-[#64748B]">
+                You’ve created the item. Attach franchises above, then click <b>Finish</b> (top-right action).
+              </div>
+              <div className="mt-2 text-[11px] text-[#64748B]">
+                Item ID: <span className="font-mono">{createdCatalogItemId}</span>
+              </div>
+            </div>
+          ) : null}
 
           <PhotoSection itemImagePreview={form.itemImagePreview} onPick={form.pickItemImage} />
 
