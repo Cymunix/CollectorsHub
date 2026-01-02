@@ -255,7 +255,7 @@ export default function AddItemModal({
 
   const form = useAddItemForm(meta) as any;
   const variants = useVariantLinks();
-  const people = usePeoplePicker(meta.people);
+  const people = usePeoplePicker();
   const minifigs = useMinifigs(() => form.subcategoryId, () => form.franchiseId);
 
   const [saving, setSaving] = useState(false);
@@ -1017,91 +1017,158 @@ const row = await insertWithSlugSafe<any>("card_manufacturers", { name }, setBan
             </SectionShell>
           ) : null}
 
-          {kind === "movie" ? (
-            <SectionShell title="Movie" subtitle="Directors & actors come from the People lookup.">
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="text-xs font-semibold text-[#0F172A]">People</div>
-                  <CreateLinkButton
-                    label="Create Person"
-                    onClick={async () => {
-                      const p = await createPerson();
-                      if (!p) return;
-                    }}
-                    disabled={saving}
-                  />
-                </div>
+{kind === "movie" ? (
+  <SectionShell title="Movie" subtitle="Search people and add them as Directors / Actors.">
+    <div className="space-y-4">
+      {(people as any).peopleUiErr ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800">
+          {(people as any).peopleUiErr}
+        </div>
+      ) : null}
 
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <div className="text-xs font-semibold text-[#0F172A]">Directors</div>
-                      <CreateLinkButton
-                        label="Create + Add"
-                        onClick={async () => {
-                          const p = await createPerson();
-                          if (!p) return;
-                          const prev = (people as any).movieDirectorIds ?? [];
-                          (people as any).setMovieDirectorIds?.(uniqStrings([...prev, p.id]));
-                        }}
-                        disabled={saving}
-                      />
-                    </div>
-                    <div className="mt-2 max-h-48 overflow-auto rounded-xl border border-[#E5E9F2] p-2">
-                      {(meta.people ?? []).map((p: any) => {
-                        const ids: string[] = (people as any).movieDirectorIds ?? [];
-                        const checked = ids.includes(p.id);
-                        return (
-                          <label key={p.id} className="flex items-center gap-2 py-1 text-sm">
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => (people as any).setMovieDirectorIds?.(toggleId(ids, String(p.id)))}
-                              disabled={saving}
-                            />
-                            <span className="truncate">{p.name}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </div>
+      {/* Search */}
+      <div>
+        <div className="text-xs font-semibold text-[#0F172A]">Find person</div>
+        <div className="mt-2 flex items-center gap-2">
+          <input
+            value={(people as any).peopleQuery ?? ""}
+            onChange={(e) => (people as any).setPeopleQuery?.(e.target.value)}
+            placeholder="Search people... (min 2 chars)"
+            disabled={saving}
+            className="w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+          />
+          <button
+            type="button"
+            onClick={() => (people as any).searchPeople?.()}
+            disabled={saving || !!(people as any).peopleSearching || String((people as any).peopleQuery ?? "").trim().length < 2}
+            className="rounded-xl bg-[#0F172A] px-3 py-2 text-xs font-semibold text-white disabled:bg-gray-200 disabled:text-gray-600"
+          >
+            {(people as any).peopleSearching ? "Searching..." : "Search"}
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              const name = (window.prompt("New person name:") || "").trim();
+              if (!name) return;
 
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <div className="text-xs font-semibold text-[#0F172A]">Actors</div>
-                      <CreateLinkButton
-                        label="Create + Add"
-                        onClick={async () => {
-                          const p = await createPerson();
-                          if (!p) return;
-                          const prev = (people as any).movieActorIds ?? [];
-                          (people as any).setMovieActorIds?.(uniqStrings([...prev, p.id]));
-                        }}
-                        disabled={saving}
-                      />
-                    </div>
-                    <div className="mt-2 max-h-48 overflow-auto rounded-xl border border-[#E5E9F2] p-2">
-                      {(meta.people ?? []).map((p: any) => {
-                        const ids: string[] = (people as any).movieActorIds ?? [];
-                        const checked = ids.includes(p.id);
-                        return (
-                          <label key={p.id} className="flex items-center gap-2 py-1 text-sm">
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => (people as any).setMovieActorIds?.(toggleId(ids, String(p.id)))}
-                              disabled={saving}
-                            />
-                            <span className="truncate">{p.name}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
+              const row = await (people as any).createPerson?.(name);
+              if (!row) {
+                setBanner({ type: "error", msg: "Failed to create person." });
+                return;
+              }
+
+              // Put them into results so they show immediately
+              const prev = (people as any).peopleResults ?? [];
+              (people as any).setPeopleQuery?.("");
+              // best-effort: just prepend into local results (no DB re-fetch needed)
+              // (hook doesn't expose setPeopleResults; so just run a new search if you want)
+              setBanner({ type: "success", msg: `Created ${row.name}. Now add them as Director/Actor.` });
+            }}
+            disabled={saving}
+            className="rounded-xl border px-3 py-2 text-xs font-semibold hover:bg-[#F8FAFC] disabled:opacity-50"
+          >
+            Create
+          </button>
+        </div>
+
+        {/* Results */}
+        <div className="mt-3 space-y-2">
+          {((people as any).peopleResults ?? []).map((r: any) => (
+            <div
+              key={r.id}
+              className="flex items-center justify-between gap-3 rounded-xl border border-[#E5E9F2] bg-white p-3"
+            >
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold text-[#0F172A]">{safeText(r.name)}</div>
+                <div className="text-[11px] text-[#64748B]">{r.id}</div>
               </div>
-            </SectionShell>
-          ) : null}
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => (people as any).addDirector?.(r.id)}
+                  disabled={saving}
+                  className="rounded-lg border px-3 py-1 text-xs font-semibold hover:bg-[#F8FAFC]"
+                >
+                  Add Director
+                </button>
+                <button
+                  type="button"
+                  onClick={() => (people as any).addActor?.(r.id)}
+                  disabled={saving}
+                  className="rounded-lg border px-3 py-1 text-xs font-semibold hover:bg-[#F8FAFC]"
+                >
+                  Add Actor
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Selected Directors */}
+      <div className="rounded-2xl border border-[#E5E9F2] bg-white p-4">
+        <div className="text-sm font-semibold text-[#0F172A]">Directors</div>
+        <div className="mt-2 space-y-2">
+          {(((people as any).movieDirectorIds ?? []) as string[]).length === 0 ? (
+            <div className="rounded-xl border bg-[#F8FAFC] p-3 text-xs text-[#64748B]">None selected.</div>
+          ) : (
+            ((people as any).movieDirectorIds ?? []).map((id: string) => {
+              const r = (people as any).resultsById?.get?.(id);
+              return (
+                <div key={id} className="flex items-center justify-between rounded-xl border border-[#E5E9F2] p-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-[#0F172A]">{r?.name ?? id}</div>
+                    <div className="text-[11px] text-[#64748B]">{id}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => (people as any).removeDirector?.(id)}
+                    disabled={saving}
+                    className="rounded-lg border px-2 py-1 text-xs font-semibold hover:bg-[#F8FAFC]"
+                  >
+                    Remove
+                  </button>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      {/* Selected Actors */}
+      <div className="rounded-2xl border border-[#E5E9F2] bg-white p-4">
+        <div className="text-sm font-semibold text-[#0F172A]">Actors</div>
+        <div className="mt-2 space-y-2">
+          {(((people as any).movieActorIds ?? []) as string[]).length === 0 ? (
+            <div className="rounded-xl border bg-[#F8FAFC] p-3 text-xs text-[#64748B]">None selected.</div>
+          ) : (
+            ((people as any).movieActorIds ?? []).map((id: string) => {
+              const r = (people as any).resultsById?.get?.(id);
+              return (
+                <div key={id} className="flex items-center justify-between rounded-xl border border-[#E5E9F2] p-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-[#0F172A]">{r?.name ?? id}</div>
+                    <div className="text-[11px] text-[#64748B]">{id}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => (people as any).removeActor?.(id)}
+                    disabled={saving}
+                    className="rounded-lg border px-2 py-1 text-xs font-semibold hover:bg-[#F8FAFC]"
+                  >
+                    Remove
+                  </button>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </div>
+  </SectionShell>
+) : null}
+
 
           {kind === "comic" ? (
             <SectionShell title="Comics" subtitle="Publisher and issue details.">
@@ -1378,5 +1445,6 @@ const row = await insertWithSlugSafe<any>("card_manufacturers", { name }, setBan
     </>
   );
 }
+
 
 
