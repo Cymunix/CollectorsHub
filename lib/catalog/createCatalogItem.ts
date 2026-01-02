@@ -16,7 +16,7 @@ export type CreateCatalogItemState = {
   catalogUPC: string;
   catalogVersion: string;
 
-  // ✅ NEW
+  // ✅ production status
   productionStatus?: string;
 
   /* =========================
@@ -32,8 +32,11 @@ export type CreateCatalogItemState = {
 
   /* =========================
      Music (optional)
-     ========================= */
-  musicArtistId?: string | null;
+     =========================
+     NOTE: We now use PEOPLE for artists too.
+     Use musicArtistIds for one-or-many artists.
+   */
+  musicArtistIds?: string[] | null;
 
   /* =========================
      Toys (optional)
@@ -92,14 +95,20 @@ function cleanStringArray(v: any): string[] {
 
 const CATALOG_TABLE = "catalog_items";
 
-// ✅ Detail tables (create these in Supabase if they don't exist yet)
+// Detail tables (must exist)
 const CARD_TABLE = "catalog_items_cards";
 const MUSIC_TABLE = "catalog_item_music";
 const TOY_TABLE = "catalog_item_toys";
 const GAME_TABLE = "catalog_item_games";
 const COMIC_TABLE = "catalog_item_comics";
 const MOVIE_TABLE = "catalog_item_movies";
-const MOVIE_PEOPLE_TABLE = "catalog_item_movie_people"; // join table
+
+// ✅ unified join table for ALL roles (must exist)
+const ITEM_PEOPLE_TABLE = "catalog_item_people";
+
+/* =========================
+   Upsert detail rows
+   ========================= */
 
 async function upsertCardDetails(catalogItemId: string, state: CreateCatalogItemState) {
   const rarity = nullableStr(state?.cardRarityCustom) ?? nullableStr(state?.cardRarityDropdown);
@@ -122,16 +131,14 @@ async function upsertCardDetails(catalogItemId: string, state: CreateCatalogItem
   if (error) throw error;
 }
 
-async function upsertMusicDetails(catalogItemId: string, state: CreateCatalogItemState) {
-  const { error } = await supabase.from(MUSIC_TABLE).upsert(
-    [
-      {
-        catalog_item_id: catalogItemId,
-        artist_id: nullableStr(state?.musicArtistId),
-      },
-    ],
-    { onConflict: "catalog_item_id" }
-  );
+/**
+ * Keep a music detail row as a marker (optional).
+ * We do NOT store artist ids here anymore — those live in catalog_item_people with role="artist".
+ */
+async function upsertMusicDetails(catalogItemId: string) {
+  const { error } = await supabase
+    .from(MUSIC_TABLE)
+    .upsert([{ catalog_item_id: catalogItemId }], { onConflict: "catalog_item_id" });
 
   if (error) throw error;
 }
@@ -185,9 +192,10 @@ async function upsertComicDetails(catalogItemId: string, state: CreateCatalogIte
   if (error) throw error;
 }
 
+/**
+ * Keep a movie detail row as a marker (optional).
+ */
 async function upsertMovieDetails(catalogItemId: string) {
-  // If you want movie-specific columns later, keep this table.
-  // For now it can just exist as a marker row.
   const { error } = await supabase.from(MOVIE_TABLE).upsert([{ catalog_item_id: catalogItemId }], {
     onConflict: "catalog_item_id",
   });
@@ -195,25 +203,47 @@ async function upsertMovieDetails(catalogItemId: string) {
   if (error) throw error;
 }
 
-async function replaceMoviePeopleLinks(catalogItemId: string, directorIds: string[], actorIds: string[]) {
-  // delete old links
-  const { error: delErr } = await supabase.from(MOVIE_PEOPLE_TABLE).delete().eq("catalog_item_id", catalogItemId);
+/* =========================
+   Unified item-people links
+   ========================= */
+
+type ItemPersonLink = { person_id: string; role: string; sort_order?: number };
+
+async function replaceItemPeopleLinks(catalogItemId: string, links: ItemPersonLink[]) {
+  // delete old links for this item
+  const { error: delErr } = await supabase.from(ITEM_PEOPLE_TABLE).delete().eq("catalog_item_id", catalogItemId);
   if (delErr) throw delErr;
 
-  const rows: any[] = [];
+  if (!links.length) return;
 
-  for (const pid of directorIds) {
-    rows.push({ catalog_item_id: catalogItemId, person_id: pid, role: "director" });
-  }
-  for (const pid of actorIds) {
-    rows.push({ catalog_item_id: catalogItemId, person_id: pid, role: "actor" });
-  }
+  // de-dupe exact duplicates (same person_id + role)
+  const seen = new Set<string>();
+  const rows = links
+    .filter((l) => {
+      const pid = s(l?.person_id);
+      const role = s(l?.role);
+      if (!pid || !role) return false;
+      const key = `${pid}::${role}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map((l, idx) => ({
+      catalog_item_id: catalogItemId,
+      person_id: s(l.person_id),
+      role: s(l.role),
+      sort_order: Number.isFinite(Number(l.sort_order)) ? Number(l.sort_order) : idx,
+    }));
 
   if (!rows.length) return;
 
-  const { error: insErr } = await supabase.from(MOVIE_PEOPLE_TABLE).insert(rows);
+  const { error: insErr } = await supabase.from(ITEM_PEOPLE_TABLE).insert(rows);
   if (insErr) throw insErr;
 }
+
+/* =========================
+   Main create
+   ========================= */
 
 export async function createCatalogItem(itemKind: string, state: CreateCatalogItemState): Promise<string> {
   const kind = s(itemKind) || "building_blocks";
@@ -223,7 +253,6 @@ export async function createCatalogItem(itemKind: string, state: CreateCatalogIt
   const subcategory_id = nullableStr(state?.subcategoryId);
   const franchise_id = nullableStr(state?.franchiseId);
 
-  // ✅ NEW: permissive; DB constraints can enforce allowed values later
   const production_status = s(state?.productionStatus) || "unknown";
 
   if (!name) throw new Error("createCatalogItem: name is required");
@@ -241,7 +270,6 @@ export async function createCatalogItem(itemKind: string, state: CreateCatalogIt
       release_year: nullableNum(state?.catalogReleaseYear),
       upc: nullableStr(state?.catalogUPC),
       version: nullableStr(state?.catalogVersion),
-
       production_status,
       image_url: null,
     })
@@ -253,12 +281,19 @@ export async function createCatalogItem(itemKind: string, state: CreateCatalogIt
   const id = inserted?.id as string | undefined;
   if (!id) throw new Error("createCatalogItem: insert succeeded but no id returned");
 
-  // 1b) INSERT/UPSERT kind-specific details (requires the detail tables to exist)
+  // 2) Kind-specific details
   // NOTE: building_blocks is handled elsewhere (ensureBuildingBlocksRow)
+  const peopleLinks: ItemPersonLink[] = [];
+
   if (kind === "trading_card" || kind === "sports_card") {
     await upsertCardDetails(id, state);
   } else if (kind === "music") {
-    await upsertMusicDetails(id, state);
+    // marker row (optional)
+    await upsertMusicDetails(id);
+
+    // NEW: artists are PEOPLE
+    const artists = cleanStringArray((state as any)?.musicArtistIds);
+    artists.forEach((pid, i) => peopleLinks.push({ person_id: pid, role: "artist", sort_order: i }));
   } else if (kind === "toy") {
     await upsertToyDetails(id, state);
   } else if (kind === "gaming") {
@@ -266,21 +301,27 @@ export async function createCatalogItem(itemKind: string, state: CreateCatalogIt
   } else if (kind === "comic") {
     await upsertComicDetails(id, state);
   } else if (kind === "movie") {
+    // marker row (optional)
     await upsertMovieDetails(id);
 
     const directors = cleanStringArray(state?.movieDirectorIds);
     const actors = cleanStringArray(state?.movieActorIds);
-    if (directors.length || actors.length) {
-      await replaceMoviePeopleLinks(id, directors, actors);
-    }
+
+    directors.forEach((pid, i) => peopleLinks.push({ person_id: pid, role: "director", sort_order: i }));
+    actors.forEach((pid, i) => peopleLinks.push({ person_id: pid, role: "actor", sort_order: i }));
   }
 
-  // 2) UPLOAD image (same as minifigs)
+  // 2b) Unified people links (movie + music + future roles)
+  if (peopleLinks.length) {
+    await replaceItemPeopleLinks(id, peopleLinks);
+  }
+
+  // 3) UPLOAD image
   const file = state?.itemImageFile ?? null;
   if (file) {
     const url = await uploadToBucket(file, `catalog-items/${id}`);
 
-    // 3) UPDATE image_url
+    // 4) UPDATE image_url
     const { error: updErr } = await supabase.from(CATALOG_TABLE).update({ image_url: url }).eq("id", id);
     if (updErr) throw updErr;
   }
@@ -289,4 +330,3 @@ export async function createCatalogItem(itemKind: string, state: CreateCatalogIt
 }
 
 export default createCatalogItem;
-
