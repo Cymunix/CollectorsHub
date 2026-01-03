@@ -713,6 +713,11 @@ export default function Page({ params }: { params: { id: string } }) {
     return c.includes("comic") || c.includes("trading") || c.includes("sports card") || c.includes("cards");
   }, [category?.name, isBuildingBlocks]);
 
+  const isCardCategory = useMemo(() => {
+    const c = (category?.name ?? "").toLowerCase();
+    return c.includes("trading card") || c.includes("trading") || c.includes("sports card") || c === "cards";
+  }, [category?.name]);
+
   const reviewText = useMemo(() => {
     if (reviewCount > 0) {
       const avgStr = reviewAvg.toFixed(1);
@@ -758,7 +763,7 @@ export default function Page({ params }: { params: { id: string } }) {
             <div className="flex items-center gap-3 flex-wrap">
               <h1 className="text-2xl font-semibold truncate">{displayName}</h1>
 
-              {/* ✅ Version badge (only for catalog items) */}
+              {/* ✅ Version badge (ONLY once, here) */}
               {!isMinifigPage && item?.version ? (
                 <span className="inline-flex items-center rounded-full border bg-[#0F172A] px-3 py-1 text-xs font-semibold text-white border-[#0F172A]">
                   Version: {item.version}
@@ -771,6 +776,7 @@ export default function Page({ params }: { params: { id: string } }) {
                 </span>
               ) : null}
 
+              {/* ✅ Reviews moved up beside title, same row as version */}
               <button
                 type="button"
                 onClick={() => setTab("reviews")}
@@ -782,13 +788,13 @@ export default function Page({ params }: { params: { id: string } }) {
               </button>
             </div>
 
+            {/* ✅ Subtitle line (NO version here anymore) */}
             <div className="mt-1 text-xs text-[#6B7280]">
               {safeText(category?.name)}
               {subcategory?.name ? ` • ${subcategory.name}` : ""}
               {franchise?.name ? ` • ${franchise.name}` : ""}
               {isMinifigPage && minifigItem?.minifig_number ? ` • Fig # ${minifigItem.minifig_number}` : ""}
               {!isMinifigPage && item?.upc ? ` • UPC: ${item.upc}` : ""}
-              {!isMinifigPage && item?.version ? ` • ${item.version}` : ""}
             </div>
           </div>
 
@@ -911,7 +917,14 @@ export default function Page({ params }: { params: { id: string } }) {
 
           {/* Tab Content */}
           <div className="mt-4 space-y-4">
-            {tab === "Item Information" ? <ItemDescription catalogItemId={catalogItemId} isAdmin={isAdmin} /> : null}
+            {tab === "Item Information" ? (
+              <ItemDescription
+                catalogItemId={catalogItemId}
+                isAdmin={isAdmin}
+                // ✅ NEW: pass category so ItemDescription can gate card-only fields
+                categoryName={category?.name ?? null}
+              />
+            ) : null}
 
             {tab === "included_items" && showIncludedItemsTab ? (
               <div className="rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
