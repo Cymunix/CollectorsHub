@@ -130,19 +130,6 @@ export default function ItemDescription({
   catalogItemId: string;
   isAdmin: boolean;
 }) {
-  const shouldShowSet = useMemo(() => {
-  // If already set, always show it (so you can see/clear it)
-  if (item?.card_set_id) return true;
-
-  const c = (categoryName ?? "").toLowerCase();
-
-  // Adjust these rules to your categories
-  const isCard =
-    c.includes("card") || c.includes("trading") || c.includes("sports card");
-  const isComic = c.includes("comic");
-
-  return isCard || isComic;
-}, [categoryName, item?.card_set_id]);
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);
@@ -188,6 +175,11 @@ export default function ItemDescription({
     return formatPartialDate(item.end_year, item.end_month, item.end_day);
   }, [item]);
 
+  // ✅ Your rule:
+  // - hide Set unless the item actually has a set id
+  // - BUT allow admins to see it while editing so they can set/clear it
+  const shouldShowSet = Boolean(editing || item?.card_set_id);
+
   function primeDraftFromLoaded(nextItem: CatalogItemRow | null) {
     setDraftDescription(String(nextItem?.description ?? ""));
 
@@ -198,7 +190,9 @@ export default function ItemDescription({
     setDraftPublisher(String(nextItem?.publisher ?? ""));
 
     setDraftReleaseDate(
-      nextItem ? formatPartialDate(nextItem.release_year, nextItem.release_month, nextItem.release_day).replace("—", "") : ""
+      nextItem
+        ? formatPartialDate(nextItem.release_year, nextItem.release_month, nextItem.release_day).replace("—", "")
+        : ""
     );
     setDraftProductionStatus(String(nextItem?.production_status ?? ""));
 
@@ -405,8 +399,8 @@ export default function ItemDescription({
 
             {/* Grid */}
             <div className="rounded-2xl border border-[#E5E9F2] bg-white p-4">
-              {/* Row 1: Franchise — Set — Card Number — Publisher */}
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+              {/* Row 1: Franchise — Set (conditional) — Card Number — Publisher */}
+              <div className={`grid grid-cols-1 gap-4 ${shouldShowSet ? "md:grid-cols-4" : "md:grid-cols-3"}`}>
                 {/* Franchise */}
                 <div className="min-w-0">
                   <div className="text-xs font-semibold text-[#64748B]">Franchise</div>
@@ -439,37 +433,39 @@ export default function ItemDescription({
                   )}
                 </div>
 
-                {/* Set */}
-                <div className="min-w-0">
-                  <div className="text-xs font-semibold text-[#64748B]">Set</div>
-                  {editing ? (
-                    <select
-                      className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm text-[#0F172A]"
-                      value={draftSetId ?? ""}
-                      onChange={(e) => setDraftSetId(e.target.value ? e.target.value : null)}
-                    >
-                      <option value="">—</option>
-                      {cardSets.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <button
-                      type="button"
-                      className={`mt-1 text-left text-sm truncate w-full ${
-                        item?.card_set_id ? "text-[#2563EB] hover:underline" : "text-[#0F172A]"
-                      }`}
-                      onClick={() => {
-                        if (item?.card_set_id) router.push(`/catalog?set=${item.card_set_id}`);
-                      }}
-                      title={setName || "—"}
-                    >
-                      {display(setName)}
-                    </button>
-                  )}
-                </div>
+                {/* Set (only if editing OR item has card_set_id) */}
+                {shouldShowSet ? (
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold text-[#64748B]">Set</div>
+                    {editing ? (
+                      <select
+                        className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm text-[#0F172A]"
+                        value={draftSetId ?? ""}
+                        onChange={(e) => setDraftSetId(e.target.value ? e.target.value : null)}
+                      >
+                        <option value="">—</option>
+                        {cardSets.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <button
+                        type="button"
+                        className={`mt-1 text-left text-sm truncate w-full ${
+                          item?.card_set_id ? "text-[#2563EB] hover:underline" : "text-[#0F172A]"
+                        }`}
+                        onClick={() => {
+                          if (item?.card_set_id) router.push(`/catalog?set=${item.card_set_id}`);
+                        }}
+                        title={setName || "—"}
+                      >
+                        {display(setName)}
+                      </button>
+                    )}
+                  </div>
+                ) : null}
 
                 <Field
                   label="Card Number"
@@ -535,4 +531,3 @@ export default function ItemDescription({
     </div>
   );
 }
-
