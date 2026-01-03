@@ -8,10 +8,10 @@ export type CreateCatalogItemState = {
   subcategoryId: string;
   franchiseId: string | null;
 
-  // ✅ NEW: multiple files
+  // ✅ multi files
   itemImageFiles?: File[] | null;
 
-  // ✅ Legacy: keep for backwards compatibility (optional)
+  // ✅ legacy single (optional)
   itemImageFile?: File | null;
 
   catalogName: string;
@@ -19,53 +19,25 @@ export type CreateCatalogItemState = {
   catalogUPC: string;
   catalogVersion: string;
 
-  // ✅ production status
   productionStatus?: string;
 
-  /* =========================
-     Card details (optional)
-     ========================= */
-  cardManufacturerId?: string | null;
+  // Cards (saved onto catalog_items)
   cardSetId?: string | null;
-  cardTypeId?: string | null;
   cardNumber?: string | null;
-  cardYear?: string | number | null;
-  cardRarityDropdown?: string | null;
-  cardRarityCustom?: string | null;
+  tcgplayerId?: string | null;
 
-  /* =========================
-     Music (optional)
-     =========================
-     NOTE: We now use PEOPLE for artists too.
-     Use musicArtistIds for one-or-many artists.
-   */
-  musicArtistIds?: string[] | null;
-
-  /* =========================
-     Toys (optional)
-     ========================= */
-  toyManufacturerId?: string | null;
-  toyBrandId?: string | null;
-  toyLineId?: string | null;
-  toyModelNumber?: string | null;
-
-  /* =========================
-     Gaming (optional)
-     ========================= */
+  // Gaming (saved onto catalog_items)
   gamePlatformId?: string | null;
   gamePublisherId?: string | null;
 
-  /* =========================
-     Comics (optional)
-     ========================= */
+  // Comics (saved onto catalog_items) — requires columns
   comicPublisherId?: string | null;
   comicSeries?: string | null;
   comicIssueNumber?: string | null;
   comicVariant?: string | null;
 
-  /* =========================
-     Movies (optional)
-     ========================= */
+  // People roles (still join table, correct)
+  musicArtistIds?: string[] | null;
   movieDirectorIds?: string[] | null;
   movieActorIds?: string[] | null;
 
@@ -75,41 +47,27 @@ export type CreateCatalogItemState = {
 function s(v: any): string {
   return String(v ?? "").trim();
 }
-
 function nullableStr(v: any): string | null {
   const x = s(v);
   return x ? x : null;
 }
-
 function nullableNum(v: any): number | null {
   const x = s(v);
   if (!x) return null;
   const n = Number(x);
   return Number.isFinite(n) ? n : null;
 }
-
 function cleanStringArray(v: any): string[] {
   if (!Array.isArray(v)) return [];
-  return v
-    .map((x) => s(x))
-    .map((x) => x.trim())
-    .filter((x) => x.length > 0);
+  return v.map((x) => s(x)).filter((x) => x.length > 0);
 }
 
 const CATALOG_TABLE = "catalog_items";
 
-// Detail tables (must exist)
-const CARD_TABLE = "catalog_items_cards";
-const MUSIC_TABLE = "catalog_item_music";
-const TOY_TABLE = "catalog_item_toys";
-const GAME_TABLE = "catalog_item_games";
-const COMIC_TABLE = "catalog_item_comics";
-const MOVIE_TABLE = "catalog_item_movies";
-
-// ✅ unified join table for ALL roles (must exist)
+// ✅ people join table (keep)
 const ITEM_PEOPLE_TABLE = "catalog_item_people";
 
-// ✅ multi-image table (must exist)
+// ✅ multi-image table (keep)
 const IMAGES_TABLE = "catalog_item_images";
 
 // ✅ Storage bucket
@@ -117,104 +75,7 @@ const IMAGES_BUCKET = "item-images";
 const CATALOG_PREFIX = "catalog-items";
 
 /* =========================
-   Upsert detail rows
-   ========================= */
-
-async function upsertCardDetails(catalogItemId: string, state: CreateCatalogItemState) {
-  const rarity = nullableStr(state?.cardRarityCustom) ?? nullableStr(state?.cardRarityDropdown);
-
-  const { error } = await supabase.from(CARD_TABLE).upsert(
-    [
-      {
-        catalog_item_id: catalogItemId,
-        manufacturer_id: nullableStr(state?.cardManufacturerId),
-        set_id: nullableStr(state?.cardSetId),
-        type_id: nullableStr(state?.cardTypeId),
-        card_number: nullableStr(state?.cardNumber),
-        card_year: nullableNum(state?.cardYear),
-        rarity,
-      },
-    ],
-    { onConflict: "catalog_item_id" }
-  );
-
-  if (error) throw error;
-}
-
-/**
- * Keep a music detail row as a marker (optional).
- * We do NOT store artist ids here anymore — those live in catalog_item_people with role="artist".
- */
-async function upsertMusicDetails(catalogItemId: string) {
-  const { error } = await supabase
-    .from(MUSIC_TABLE)
-    .upsert([{ catalog_item_id: catalogItemId }], { onConflict: "catalog_item_id" });
-
-  if (error) throw error;
-}
-
-async function upsertToyDetails(catalogItemId: string, state: CreateCatalogItemState) {
-  const { error } = await supabase.from(TOY_TABLE).upsert(
-    [
-      {
-        catalog_item_id: catalogItemId,
-        manufacturer_id: nullableStr(state?.toyManufacturerId),
-        brand_id: nullableStr(state?.toyBrandId),
-        line_id: nullableStr(state?.toyLineId),
-        model_number: nullableStr(state?.toyModelNumber),
-      },
-    ],
-    { onConflict: "catalog_item_id" }
-  );
-
-  if (error) throw error;
-}
-
-async function upsertGameDetails(catalogItemId: string, state: CreateCatalogItemState) {
-  const { error } = await supabase.from(GAME_TABLE).upsert(
-    [
-      {
-        catalog_item_id: catalogItemId,
-        platform_id: nullableStr(state?.gamePlatformId),
-        publisher_id: nullableStr(state?.gamePublisherId),
-      },
-    ],
-    { onConflict: "catalog_item_id" }
-  );
-
-  if (error) throw error;
-}
-
-async function upsertComicDetails(catalogItemId: string, state: CreateCatalogItemState) {
-  const { error } = await supabase.from(COMIC_TABLE).upsert(
-    [
-      {
-        catalog_item_id: catalogItemId,
-        publisher_id: nullableStr(state?.comicPublisherId),
-        series: nullableStr(state?.comicSeries),
-        issue_number: nullableStr(state?.comicIssueNumber),
-        variant: nullableStr(state?.comicVariant),
-      },
-    ],
-    { onConflict: "catalog_item_id" }
-  );
-
-  if (error) throw error;
-}
-
-/**
- * Keep a movie detail row as a marker (optional).
- */
-async function upsertMovieDetails(catalogItemId: string) {
-  const { error } = await supabase.from(MOVIE_TABLE).upsert([{ catalog_item_id: catalogItemId }], {
-    onConflict: "catalog_item_id",
-  });
-
-  if (error) throw error;
-}
-
-/* =========================
-   Unified item-people links
+   People links
    ========================= */
 
 type ItemPersonLink = { person_id: string; role: string; sort_order?: number };
@@ -258,11 +119,6 @@ function safeExt(file: File) {
   return ["png", "jpg", "jpeg", "webp"].includes(ext) ? ext : "jpg";
 }
 
-/**
- * Uploads files to:
- * item-images/catalog-items/{catalogItemId}/01_primary.jpg ...
- * Returns public URLs in the same order as input.
- */
 async function uploadCatalogImagesMany(catalogItemId: string, files: File[]): Promise<string[]> {
   const urls: string[] = [];
 
@@ -319,14 +175,20 @@ export async function createCatalogItem(itemKind: string, state: CreateCatalogIt
   if (!name) throw new Error("createCatalogItem: name is required");
   if (!category_id) throw new Error("createCatalogItem: category_id is required");
 
-  // ✅ NEW: attach publisher directly to catalog_items
-  // Requires columns on catalog_items:
-  // - game_publisher_id uuid null
-  // - comic_publisher_id uuid null
+  // ✅ Single-source-of-truth fields ON catalog_items
+  const game_platform_id = kind === "gaming" ? nullableStr(state?.gamePlatformId) : null;
   const game_publisher_id = kind === "gaming" ? nullableStr(state?.gamePublisherId) : null;
-  const comic_publisher_id = kind === "comic" ? nullableStr(state?.comicPublisherId) : null;
 
-  // 1) INSERT base item
+  const card_set_id = kind === "trading_card" || kind === "sports_card" ? nullableStr(state?.cardSetId) : null;
+  const card_number = kind === "trading_card" || kind === "sports_card" ? nullableStr(state?.cardNumber) : null;
+  const tcgplayer_id = kind === "trading_card" || kind === "sports_card" ? nullableStr(state?.tcgplayerId) : null;
+
+  const comic_publisher_id = kind === "comic" ? nullableStr(state?.comicPublisherId) : null;
+  const comic_series = kind === "comic" ? nullableStr(state?.comicSeries) : null;
+  const comic_issue_number = kind === "comic" ? nullableStr(state?.comicIssueNumber) : null;
+  const comic_variant = kind === "comic" ? nullableStr(state?.comicVariant) : null;
+
+  // 1) INSERT base item (and ALL kind fields directly onto catalog_items)
   const { data: inserted, error: insertErr } = await supabase
     .from(CATALOG_TABLE)
     .insert({
@@ -341,9 +203,20 @@ export async function createCatalogItem(itemKind: string, state: CreateCatalogIt
       production_status,
       image_url: null, // legacy compatibility
 
-      // ✅ publish links on catalog_items
+      // gaming
+      game_platform_id,
       game_publisher_id,
+
+      // cards
+      card_set_id,
+      card_number,
+      tcgplayer_id,
+
+      // comics
       comic_publisher_id,
+      comic_series,
+      comic_issue_number,
+      comic_variant,
     })
     .select("id")
     .single();
@@ -353,36 +226,26 @@ export async function createCatalogItem(itemKind: string, state: CreateCatalogIt
   const id = inserted?.id as string | undefined;
   if (!id) throw new Error("createCatalogItem: insert succeeded but no id returned");
 
-  // 2) Kind-specific details
+  // 2) People links (artists/directors/actors) — keep join table
   const peopleLinks: ItemPersonLink[] = [];
 
-  if (kind === "trading_card" || kind === "sports_card") {
-    await upsertCardDetails(id, state);
-  } else if (kind === "music") {
-    await upsertMusicDetails(id);
-    const artists = cleanStringArray((state as any)?.musicArtistIds);
+  if (kind === "music") {
+    const artists = cleanStringArray(state?.musicArtistIds);
     artists.forEach((pid, i) => peopleLinks.push({ person_id: pid, role: "artist", sort_order: i }));
-  } else if (kind === "toy") {
-    await upsertToyDetails(id, state);
-  } else if (kind === "gaming") {
-    await upsertGameDetails(id, state);
-  } else if (kind === "comic") {
-    await upsertComicDetails(id, state);
-  } else if (kind === "movie") {
-    await upsertMovieDetails(id);
+  }
+
+  if (kind === "movie") {
     const directors = cleanStringArray(state?.movieDirectorIds);
     const actors = cleanStringArray(state?.movieActorIds);
     directors.forEach((pid, i) => peopleLinks.push({ person_id: pid, role: "director", sort_order: i }));
     actors.forEach((pid, i) => peopleLinks.push({ person_id: pid, role: "actor", sort_order: i }));
   }
 
-  // 2b) Unified people links
   if (peopleLinks.length) {
     await replaceItemPeopleLinks(id, peopleLinks);
   }
 
   // 3) UPLOAD images (multi)
-  // Prefer itemImageFiles, fallback to legacy single file
   const files = (Array.isArray(state?.itemImageFiles) ? state.itemImageFiles : []).filter(Boolean) as File[];
   const legacySingle = state?.itemImageFile ?? null;
   const effectiveFiles = files.length ? files : legacySingle ? [legacySingle] : [];
@@ -390,7 +253,6 @@ export async function createCatalogItem(itemKind: string, state: CreateCatalogIt
   if (effectiveFiles.length) {
     const urls = await uploadCatalogImagesMany(id, effectiveFiles);
 
-    // Insert into new multi-image table
     await insertCatalogItemImages(id, urls);
 
     // Legacy compatibility: set catalog_items.image_url to primary
