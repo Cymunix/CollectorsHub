@@ -184,8 +184,201 @@ export default function Page({ params }: { params: { id: string } }) {
       .select("role")
       .eq("id", userId)
       .maybeSingle()
-      .then((r) => setIsAdmin(r.data?.role === "admin"));
+      .then((r) => setIsAdmin(String(r.data?.role ?? "").toLowerCase() === "admin"));
   }, [userId]);
+
+  /* =========================
+     Header Loader (minimal)
+     ========================= */
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      // reset
+      setItem(null);
+      setMinifigItem(null);
+      setCategory(null);
+      setSubcategory(null);
+      setFranchise(null);
+      setBbMinifigs([]);
+      setIsBundle(false);
+      setBundleComponents([]);
+      setIncludedInBundles([]);
+      setReviewAvg(0);
+      setReviewCount(0);
+
+      try {
+        // Prefer minifig path if explicit
+        if (preferMinifig) {
+          const mfRes = await supabase
+            .from("catalog_minifigs")
+            .select("minifig_id,name,minifig_number,image_url,subcategory_id,franchise_id")
+            .eq("minifig_id", catalogItemId)
+            .maybeSingle();
+
+          if (mfRes.error) throw mfRes.error;
+          if (!mfRes.data) throw new Error("Item not found.");
+
+          if (cancelled) return;
+
+          const mf: any = mfRes.data;
+
+          setMinifigItem({
+            id: String(mf.minifig_id),
+            name: String(mf.name ?? "Minifig"),
+            minifig_number: mf.minifig_number ?? null,
+            image_url: mf.image_url ?? null,
+            subcategory_id: mf.subcategory_id ?? null,
+            franchise_id: mf.franchise_id ?? null,
+          });
+
+          setCategory({ id: "building_blocks", name: "Building Blocks" });
+
+          const [sRes, fRes] = await Promise.all([
+            mf.subcategory_id
+              ? supabase.from("subcategories").select("id,name").eq("id", mf.subcategory_id).maybeSingle()
+              : Promise.resolve({ data: null } as any),
+            mf.franchise_id
+              ? supabase.from("franchises").select("id,name").eq("id", mf.franchise_id).maybeSingle()
+              : Promise.resolve({ data: null } as any),
+          ]);
+
+          if (cancelled) return;
+
+          setSubcategory((sRes.data as any) ?? null);
+          setFranchise((fRes.data as any) ?? null);
+          return;
+        }
+
+        // Normal catalog item path
+        const itemRes = await supabase
+          .from("catalog_items")
+          .select("id,name,category_id,subcategory_id,franchise_id,upc,release_year,version,is_bundle")
+          .eq("id", catalogItemId)
+          .maybeSingle();
+
+        if (itemRes.error) throw itemRes.error;
+
+        if (itemRes.data) {
+          if (cancelled) return;
+
+          const it = itemRes.data as CatalogItem;
+          setItem(it);
+
+          // category/sub/franchise
+          const [cRes, sRes, fRes] = await Promise.all([
+            it.category_id
+              ? supabase.from("categories").select("id,name").eq("id", it.category_id).maybeSingle()
+              : Promise.resolve({ data: null } as any),
+            it.subcategory_id
+              ? supabase.from("subcategories").select("id,name").eq("id", it.subcategory_id).maybeSingle()
+              : Promise.resolve({ data: null } as any),
+            it.franchise_id
+              ? supabase.from("franchises").select("id,name").eq("id", it.franchise_id).maybeSingle()
+              : Promise.resolve({ data: null } as any),
+          ]);
+
+          if (cancelled) return;
+
+          setCategory((cRes.data as any) ?? null);
+          setSubcategory((sRes.data as any) ?? null);
+          setFranchise((fRes.data as any) ?? null);
+
+          // bundle state
+          const bundleFlag = !!it.is_bundle;
+          setIsBundle(bundleFlag);
+
+          try {
+            const [comps, included] = await Promise.all([
+              bundleFlag ? fetchBundleComponents(it.id) : Promise.resolve([] as BundleComponentsState),
+              fetchBundlesIncludingItem(it.id),
+            ]);
+            if (!cancelled) {
+              setBundleComponents(comps);
+              setIncludedInBundles(included);
+            }
+          } catch {
+            // non-fatal
+          }
+
+          // reviews summary
+          try {
+            const reviewsRes = await supabase
+              .from("catalog_item_reviews")
+              .select("rating", { count: "exact" })
+              .eq("catalog_item_id", it.id);
+
+            if (!cancelled && !reviewsRes.error) {
+              const rows = reviewsRes.data ?? [];
+              const count = reviewsRes.count ?? rows.length;
+              setReviewCount(count);
+              if (count > 0) {
+                const avg =
+                  rows.reduce((sum: number, r: any) => sum + Number(r?.rating ?? 0), 0) / count;
+                setReviewAvg(Math.round(avg * 10) / 10);
+              } else {
+                setReviewAvg(0);
+              }
+            }
+          } catch {
+            if (!cancelled) {
+              setReviewAvg(0);
+              setReviewCount(0);
+            }
+          }
+
+          return;
+        }
+
+        // fallback: treat as minifig if not found in catalog_items
+        const mfRes = await supabase
+          .from("catalog_minifigs")
+          .select("minifig_id,name,minifig_number,image_url,subcategory_id,franchise_id")
+          .eq("minifig_id", catalogItemId)
+          .maybeSingle();
+
+        if (mfRes.error) throw mfRes.error;
+        if (!mfRes.data) throw new Error("Item not found.");
+
+        if (cancelled) return;
+
+        const mf: any = mfRes.data;
+
+        setMinifigItem({
+          id: String(mf.minifig_id),
+          name: String(mf.name ?? "Minifig"),
+          minifig_number: mf.minifig_number ?? null,
+          image_url: mf.image_url ?? null,
+          subcategory_id: mf.subcategory_id ?? null,
+          franchise_id: mf.franchise_id ?? null,
+        });
+
+        setCategory({ id: "building_blocks", name: "Building Blocks" });
+
+        const [sRes, fRes] = await Promise.all([
+          mf.subcategory_id
+            ? supabase.from("subcategories").select("id,name").eq("id", mf.subcategory_id).maybeSingle()
+            : Promise.resolve({ data: null } as any),
+          mf.franchise_id
+            ? supabase.from("franchises").select("id,name").eq("id", mf.franchise_id).maybeSingle()
+            : Promise.resolve({ data: null } as any),
+        ]);
+
+        if (cancelled) return;
+
+        setSubcategory((sRes.data as any) ?? null);
+        setFranchise((fRes.data as any) ?? null);
+      } catch (e) {
+        console.error(e);
+      }
+    };
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [catalogItemId, preferMinifig]);
 
   /* =========================
      Derived
@@ -208,6 +401,9 @@ export default function Page({ params }: { params: { id: string } }) {
 
   const displayName = safeText(isMinifigPage ? minifigItem?.name : item?.name);
 
+  const showIncludedItemsTab = !isMinifigPage && !!item?.id && isBundle;
+  const showIncludedInTab = !isMinifigPage && !!item?.id && !isBundle && (includedInBundles?.length ?? 0) > 0;
+
   /* =========================
      Render
      ========================= */
@@ -228,7 +424,19 @@ export default function Page({ params }: { params: { id: string } }) {
         </button>
 
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
-          <h1 className="text-2xl font-semibold">{displayName}</h1>
+          <div className="flex items-center gap-3 flex-wrap">
+            <h1 className="text-2xl font-semibold truncate">{displayName}</h1>
+
+            <button
+              type="button"
+              onClick={() => setTab("reviews")}
+              className="flex items-center gap-2 rounded-full border border-[#E5E9F2] bg-[#F8FAFC] px-3 py-1 text-xs font-semibold text-[#0F172A] hover:bg-white transition"
+              aria-label="View reviews"
+            >
+              <Stars avg={reviewCount > 0 ? reviewAvg : 0} />
+              <span className="text-[11px] text-[#64748B]">{reviewText}</span>
+            </button>
+          </div>
 
           <div className="mt-1 text-xs text-[#6B7280]">
             {safeText(category?.name)}
@@ -291,6 +499,19 @@ export default function Page({ params }: { params: { id: string } }) {
             <TabButton active={tab === "Item Information"} onClick={() => setTab("Item Information")}>
               Information
             </TabButton>
+
+            {showIncludedItemsTab ? (
+              <TabButton active={tab === "included_items"} onClick={() => setTab("included_items")}>
+                Included Items
+              </TabButton>
+            ) : null}
+
+            {showIncludedInTab ? (
+              <TabButton active={tab === "included_in"} onClick={() => setTab("included_in")}>
+                Included In
+              </TabButton>
+            ) : null}
+
             <TabButton active={tab === "variants"} onClick={() => setTab("variants")}>
               Variants
             </TabButton>
@@ -309,19 +530,20 @@ export default function Page({ params }: { params: { id: string } }) {
             {tab === "Item Information" && (
               <ItemDescription catalogItemId={catalogItemId} isAdmin={isAdmin} />
             )}
+
             {tab === "variants" && <ItemVariantsTab catalogItemId={catalogItemId} />}
             {tab === "reviews" && <ItemReviewsTab catalogItemId={catalogItemId} />}
             {tab === "sales_history" && (
-              <ItemSalesHistoryTab
-                catalogItemId={catalogItemId}
-                selectedConditionJson={conditionValues}
-              />
+              <ItemSalesHistoryTab catalogItemId={catalogItemId} selectedConditionJson={conditionValues} />
             )}
+
             {tab === "listings" && (
               <ItemListingsTab
                 catalogItemId={catalogItemId}
                 categoryName={category?.name ?? null}
                 itemName={displayName}
+                userId={userId}
+                onRequireAuth={() => setAuthOpen(true)}
               />
             )}
           </div>
