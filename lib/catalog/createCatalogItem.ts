@@ -2,14 +2,17 @@
 "use client";
 
 import { supabase } from "@/lib/supabaseClient";
-import { uploadToBucket } from "@/lib/catalog/upload";
 
 export type CreateCatalogItemState = {
   categoryId: string;
   subcategoryId: string;
   franchiseId: string | null;
 
-  itemImageFile: File | null;
+  // ✅ NEW: multiple files
+  itemImageFiles?: File[] | null;
+
+  // ✅ Legacy: keep for backwards compatibility (optional)
+  itemImageFile?: File | null;
 
   catalogName: string;
   catalogReleaseYear: string;
@@ -105,6 +108,13 @@ const MOVIE_TABLE = "catalog_item_movies";
 
 // ✅ unified join table for ALL roles (must exist)
 const ITEM_PEOPLE_TABLE = "catalog_item_people";
+
+// ✅ NEW: multi-image table (must exist)
+const IMAGES_TABLE = "catalog_item_images";
+
+// ✅ Storage bucket (you already have this)
+const IMAGES_BUCKET = "item-images";
+const CATALOG_PREFIX = "catalog-items";
 
 /* =========================
    Upsert detail rows
@@ -210,13 +220,11 @@ async function upsertMovieDetails(catalogItemId: string) {
 type ItemPersonLink = { person_id: string; role: string; sort_order?: number };
 
 async function replaceItemPeopleLinks(catalogItemId: string, links: ItemPersonLink[]) {
-  // delete old links for this item
   const { error: delErr } = await supabase.from(ITEM_PEOPLE_TABLE).delete().eq("catalog_item_id", catalogItemId);
   if (delErr) throw delErr;
 
   if (!links.length) return;
 
-  // de-dupe exact duplicates (same person_id + role)
   const seen = new Set<string>();
   const rows = links
     .filter((l) => {
@@ -239,6 +247,59 @@ async function replaceItemPeopleLinks(catalogItemId: string, links: ItemPersonLi
 
   const { error: insErr } = await supabase.from(ITEM_PEOPLE_TABLE).insert(rows);
   if (insErr) throw insErr;
+}
+
+/* =========================
+   Image upload helpers
+   ========================= */
+
+function safeExt(file: File) {
+  const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+  return ["png", "jpg", "jpeg", "webp"].includes(ext) ? ext : "jpg";
+}
+
+/**
+ * Uploads files to:
+ * item-images/catalog-items/{catalogItemId}/01_primary.jpg ...
+ * Returns public URLs in the same order as input.
+ */
+async function uploadCatalogImagesMany(catalogItemId: string, files: File[]): Promise<string[]> {
+  const urls: string[] = [];
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const ext = safeExt(file);
+
+    const order = String(i + 1).padStart(2, "0");
+    const label = i === 0 ? "primary" : "image";
+    const path = `${CATALOG_PREFIX}/${catalogItemId}/${order}_${label}.${ext}`;
+
+    const { error: upErr } = await supabase.storage
+      .from(IMAGES_BUCKET)
+      .upload(path, file, { upsert: true, contentType: file.type });
+
+    if (upErr) throw upErr;
+
+    const { data } = supabase.storage.from(IMAGES_BUCKET).getPublicUrl(path);
+    if (!data?.publicUrl) throw new Error("uploadCatalogImagesMany: missing publicUrl");
+    urls.push(data.publicUrl);
+  }
+
+  return urls;
+}
+
+async function insertCatalogItemImages(catalogItemId: string, urls: string[]) {
+  if (!urls.length) return;
+
+  const rows = urls.map((url, idx) => ({
+    catalog_item_id: catalogItemId,
+    image_url: url,
+    sort_order: idx,
+    role: idx === 0 ? "primary" : null,
+  }));
+
+  const { error } = await supabase.from(IMAGES_TABLE).insert(rows);
+  if (error) throw error;
 }
 
 /* =========================
@@ -271,7 +332,7 @@ export async function createCatalogItem(itemKind: string, state: CreateCatalogIt
       upc: nullableStr(state?.catalogUPC),
       version: nullableStr(state?.catalogVersion),
       production_status,
-      image_url: null,
+      image_url: null, // we will set to primary image later (legacy compatibility)
     })
     .select("id")
     .single();
@@ -282,16 +343,12 @@ export async function createCatalogItem(itemKind: string, state: CreateCatalogIt
   if (!id) throw new Error("createCatalogItem: insert succeeded but no id returned");
 
   // 2) Kind-specific details
-  // NOTE: building_blocks is handled elsewhere (ensureBuildingBlocksRow)
   const peopleLinks: ItemPersonLink[] = [];
 
   if (kind === "trading_card" || kind === "sports_card") {
     await upsertCardDetails(id, state);
   } else if (kind === "music") {
-    // marker row (optional)
     await upsertMusicDetails(id);
-
-    // NEW: artists are PEOPLE
     const artists = cleanStringArray((state as any)?.musicArtistIds);
     artists.forEach((pid, i) => peopleLinks.push({ person_id: pid, role: "artist", sort_order: i }));
   } else if (kind === "toy") {
@@ -301,29 +358,38 @@ export async function createCatalogItem(itemKind: string, state: CreateCatalogIt
   } else if (kind === "comic") {
     await upsertComicDetails(id, state);
   } else if (kind === "movie") {
-    // marker row (optional)
     await upsertMovieDetails(id);
-
     const directors = cleanStringArray(state?.movieDirectorIds);
     const actors = cleanStringArray(state?.movieActorIds);
-
     directors.forEach((pid, i) => peopleLinks.push({ person_id: pid, role: "director", sort_order: i }));
     actors.forEach((pid, i) => peopleLinks.push({ person_id: pid, role: "actor", sort_order: i }));
   }
 
-  // 2b) Unified people links (movie + music + future roles)
+  // 2b) Unified people links
   if (peopleLinks.length) {
     await replaceItemPeopleLinks(id, peopleLinks);
   }
 
-  // 3) UPLOAD image
-  const file = state?.itemImageFile ?? null;
-  if (file) {
-    const url = await uploadToBucket(file, `catalog-items/${id}`);
+  // 3) UPLOAD images (multi)
+  // Prefer itemImageFiles, fallback to legacy single file
+  const files =
+    (Array.isArray(state?.itemImageFiles) ? state.itemImageFiles : []).filter(Boolean) as File[];
 
-    // 4) UPDATE image_url
-    const { error: updErr } = await supabase.from(CATALOG_TABLE).update({ image_url: url }).eq("id", id);
-    if (updErr) throw updErr;
+  const legacySingle = state?.itemImageFile ?? null;
+  const effectiveFiles = files.length ? files : legacySingle ? [legacySingle] : [];
+
+  if (effectiveFiles.length) {
+    const urls = await uploadCatalogImagesMany(id, effectiveFiles);
+
+    // Insert into new multi-image table
+    await insertCatalogItemImages(id, urls);
+
+    // Legacy compatibility: set catalog_items.image_url to primary
+    const primaryUrl = urls[0] ?? null;
+    if (primaryUrl) {
+      const { error: updErr } = await supabase.from(CATALOG_TABLE).update({ image_url: primaryUrl }).eq("id", id);
+      if (updErr) throw updErr;
+    }
   }
 
   return id;
