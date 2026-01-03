@@ -33,8 +33,9 @@ type CatalogItemRow = {
   card_number?: string | null;
   tcgplayer_id?: string | null;
 
-  // ✅ single source of truth for platform (non-card)
-  platform_id?: string | null;
+  // legacy/odd columns may exist (NOT typed here on purpose):
+  // platform_id, Platform_id
+  // publisher_id, Publisher_Id
 };
 
 type LookupRow = { id: string; name: string };
@@ -163,6 +164,15 @@ async function safeUpdateCatalogItem(
   return { ok: false as const, error: first.error };
 }
 
+/** pick the first key that exists on the row (handles weird casing) */
+function pickExistingKey(row: any, keys: string[]): string | null {
+  if (!row || typeof row !== "object") return null;
+  for (const k of keys) {
+    if (k in row) return k;
+  }
+  return null;
+}
+
 export default function ItemDescription({
   catalogItemId,
   isAdmin,
@@ -183,20 +193,27 @@ export default function ItemDescription({
   const [franchiseName, setFranchiseName] = useState<string>("");
   const [setName, setSetName] = useState<string>("");
   const [platformName, setPlatformName] = useState<string>("");
+  const [publisherName, setPublisherName] = useState<string>("");
 
   const [franchises, setFranchises] = useState<LookupRow[]>([]);
   const [cardSets, setCardSets] = useState<LookupRow[]>([]);
   const [platforms, setPlatforms] = useState<LookupRow[]>([]);
+  const [publishers, setPublishers] = useState<LookupRow[]>([]);
 
   const [editing, setEditing] = useState(false);
+
+  // These store the *actual* column names that exist in your table for this row.
+  // (e.g. platform_id vs Platform_id, Publisher_Id vs publisher_id)
+  const [platformIdKey, setPlatformIdKey] = useState<string | null>(null);
+  const [publisherIdKey, setPublisherIdKey] = useState<string | null>(null);
 
   // Draft fields (admin edits)
   const [draftDescription, setDraftDescription] = useState<string>("");
 
   const [draftFranchiseId, setDraftFranchiseId] = useState<string | null>(null);
 
-  // generic
-  const [draftPublisher, setDraftPublisher] = useState<string>("");
+  // generic (legacy text)
+  const [draftPublisherText, setDraftPublisherText] = useState<string>("");
   const [draftUpc, setDraftUpc] = useState<string>("");
   const [draftEpid, setDraftEpid] = useState<string>("");
 
@@ -205,8 +222,11 @@ export default function ItemDescription({
   const [draftCardNumber, setDraftCardNumber] = useState<string>("");
   const [draftTcgPlayer, setDraftTcgPlayer] = useState<string>("");
 
-  // ✅ platform (non-card) — single source of truth
+  // ✅ platform (non-card) — read/write to detected key
   const [draftPlatformId, setDraftPlatformId] = useState<string | null>(null);
+
+  // ✅ publisher (non-card) — if Publisher_Id exists, use that; else fallback to text input
+  const [draftPublisherId, setDraftPublisherId] = useState<string | null>(null);
 
   const [draftReleaseDate, setDraftReleaseDate] = useState<string>("");
   const [draftProductionStatus, setDraftProductionStatus] = useState<string>("");
@@ -221,7 +241,6 @@ export default function ItemDescription({
     return c.includes("trading") || c.includes("sports card") || c === "cards" || c.includes("tcg");
   }, [categoryKey]);
 
-  // Best-effort label only (we only have `publisher` column today)
   const makerLabel = useMemo(() => {
     const c = categoryKey;
     if (c.includes("lego") || c.includes("toy") || c.includes("figure") || c.includes("collectible")) return "Manufacturer";
@@ -242,30 +261,33 @@ export default function ItemDescription({
     return formatPartialDate(item.end_year, item.end_month, item.end_day);
   }, [item]);
 
-  function primeDraftFromLoaded(nextItem: CatalogItemRow | null) {
-    setDraftDescription(String(nextItem?.description ?? ""));
-    setDraftFranchiseId(nextItem?.franchise_id ?? null);
+  function primeDraftFromLoaded(nextItem: CatalogItemRow | null, pKey: string | null, pubKey: string | null) {
+    const row: any = nextItem as any;
+
+    setDraftDescription(String(row?.description ?? ""));
+    setDraftFranchiseId(row?.franchise_id ?? null);
 
     // generic
-    setDraftPublisher(String(nextItem?.publisher ?? ""));
-    setDraftUpc(String(nextItem?.upc ?? ""));
-    setDraftEpid(String(nextItem?.epid_ebay ?? ""));
+    setDraftPublisherText(String(row?.publisher ?? ""));
+    setDraftUpc(String(row?.upc ?? ""));
+    setDraftEpid(String(row?.epid_ebay ?? ""));
 
     // card-only
-    setDraftSetId((nextItem as any)?.card_set_id ?? null);
-    setDraftCardNumber(String((nextItem as any)?.card_number ?? ""));
-    setDraftTcgPlayer(String((nextItem as any)?.tcgplayer_id ?? ""));
+    setDraftSetId(row?.card_set_id ?? null);
+    setDraftCardNumber(String(row?.card_number ?? ""));
+    setDraftTcgPlayer(String(row?.tcgplayer_id ?? ""));
 
-    // ✅ platform (non-card) — only platform_id
-    setDraftPlatformId((nextItem as any)?.platform_id ?? null);
+    // platform (non-card)
+    setDraftPlatformId(pKey ? (row?.[pKey] ?? null) : (row?.platform_id ?? row?.Platform_id ?? null));
+
+    // publisher (non-card)
+    setDraftPublisherId(pubKey ? (row?.[pubKey] ?? null) : (row?.publisher_id ?? row?.Publisher_Id ?? null));
 
     setDraftReleaseDate(
       nextItem ? formatPartialDate(nextItem.release_year, nextItem.release_month, nextItem.release_day).replace("—", "") : ""
     );
-    setDraftProductionStatus(String(nextItem?.production_status ?? ""));
-    setDraftEndDate(
-      nextItem ? formatPartialDate(nextItem.end_year, nextItem.end_month, nextItem.end_day).replace("—", "") : ""
-    );
+    setDraftProductionStatus(String(row?.production_status ?? ""));
+    setDraftEndDate(nextItem ? formatPartialDate(nextItem.end_year, nextItem.end_month, nextItem.end_day).replace("—", "") : "");
   }
 
   useEffect(() => {
@@ -281,36 +303,52 @@ export default function ItemDescription({
         if (itemRes.error) throw itemRes.error;
 
         const it = (itemRes.data as any) as CatalogItemRow | null;
+        const row: any = it as any;
 
-        const [frs, sets, plats] = await Promise.all([
+        // Detect the real column names that exist for this row
+        const detectedPlatformKey = pickExistingKey(row, ["platform_id", "Platform_id", "game_platform_id"]);
+        const detectedPublisherKey = pickExistingKey(row, ["publisher_id", "Publisher_Id", "Publisher_id", "game_publisher_id"]);
+
+        const [frs, sets, plats, pubs] = await Promise.all([
           safeLookup("franchises"),
           safeLookup("card_sets"),
           safeLookup("game_platforms"),
+          safeLookup("game_publishers"),
         ]);
 
         let fName = "";
-        if (it?.franchise_id) fName = String(frs.find((x) => x.id === it.franchise_id)?.name ?? "");
+        if (row?.franchise_id) fName = String(frs.find((x) => x.id === String(row.franchise_id))?.name ?? "");
 
         let sName = "";
-        const cardSetId = (it as any)?.card_set_id ?? null;
-        if (cardSetId) sName = String(sets.find((x) => x.id === cardSetId)?.name ?? "");
+        const cardSetId = row?.card_set_id ?? null;
+        if (cardSetId) sName = String(sets.find((x) => x.id === String(cardSetId))?.name ?? "");
 
         let pName = "";
-        const platId = (it as any)?.platform_id ?? null;
-        if (platId) pName = String(plats.find((x) => x.id === platId)?.name ?? "");
+        const platId = detectedPlatformKey ? row?.[detectedPlatformKey] ?? null : null;
+        if (platId) pName = String(plats.find((x) => x.id === String(platId))?.name ?? "");
+
+        let pubName = "";
+        const pubId = detectedPublisherKey ? row?.[detectedPublisherKey] ?? null : null;
+        if (pubId) pubName = String(pubs.find((x) => x.id === String(pubId))?.name ?? "");
 
         if (cancelled) return;
 
         setItem(it);
+
+        setPlatformIdKey(detectedPlatformKey);
+        setPublisherIdKey(detectedPublisherKey);
+
         setFranchises(frs);
         setCardSets(sets);
         setPlatforms(plats);
+        setPublishers(pubs);
 
         setFranchiseName(fName);
         setSetName(sName);
         setPlatformName(pName);
+        setPublisherName(pubName);
 
-        primeDraftFromLoaded(it);
+        primeDraftFromLoaded(it, detectedPlatformKey, detectedPublisherKey);
 
         setLoading(false);
       } catch (e: any) {
@@ -328,13 +366,13 @@ export default function ItemDescription({
   }, [catalogItemId]);
 
   function startEdit() {
-    primeDraftFromLoaded(item);
+    primeDraftFromLoaded(item, platformIdKey, publisherIdKey);
     setEditing(true);
     setErr(null);
   }
 
   function cancelEdit() {
-    primeDraftFromLoaded(item);
+    primeDraftFromLoaded(item, platformIdKey, publisherIdKey);
     setEditing(false);
     setErr(null);
   }
@@ -353,7 +391,9 @@ export default function ItemDescription({
         description: normalizeInput(draftDescription),
         franchise_id: draftFranchiseId,
 
-        publisher: normalizeInput(draftPublisher),
+        // keep legacy text publisher column populated too (it’s harmless and useful)
+        publisher: normalizeInput(draftPublisherText),
+
         upc: normalizeInput(draftUpc),
         epid_ebay: normalizeInput(draftEpid),
 
@@ -374,20 +414,29 @@ export default function ItemDescription({
         tcgplayer_id: isCardCategory ? normalizeInput(draftTcgPlayer) : null,
       };
 
-      // ✅ single platform column
-      const platformPayload: Record<string, any> = {
-        platform_id: !isCardCategory ? draftPlatformId : null,
-      };
+      // platform writes to detected key only
+      const platformPayload: Record<string, any> = {};
+      if (!isCardCategory && platformIdKey) {
+        platformPayload[platformIdKey] = draftPlatformId;
+      }
+
+      // publisher id writes to detected key only
+      const publisherIdPayload: Record<string, any> = {};
+      if (!isCardCategory && publisherIdKey) {
+        publisherIdPayload[publisherIdKey] = draftPublisherId;
+      }
 
       const tryFull = {
         ...basePayload,
         ...(isCardCategory ? cardPayload : {}),
         ...(!isCardCategory ? platformPayload : {}),
+        ...(!isCardCategory ? publisherIdPayload : {}),
       };
 
       const fallbacks: Array<Record<string, any>> = [];
       fallbacks.push({ ...basePayload, ...(isCardCategory ? cardPayload : {}) });
       fallbacks.push({ ...basePayload, ...(!isCardCategory ? platformPayload : {}) });
+      fallbacks.push({ ...basePayload, ...(!isCardCategory ? publisherIdPayload : {}) });
       fallbacks.push({ ...basePayload });
 
       const res = await safeUpdateCatalogItem(catalogItemId, tryFull, fallbacks);
@@ -397,15 +446,15 @@ export default function ItemDescription({
       setItem(merged);
 
       const fName = draftFranchiseId ? String(franchises.find((x) => x.id === draftFranchiseId)?.name ?? "") : "";
-
       const sName = isCardCategory && draftSetId ? String(cardSets.find((x) => x.id === draftSetId)?.name ?? "") : "";
-
-      const pName =
-        !isCardCategory && draftPlatformId ? String(platforms.find((x) => x.id === draftPlatformId)?.name ?? "") : "";
+      const pName = !isCardCategory && draftPlatformId ? String(platforms.find((x) => x.id === draftPlatformId)?.name ?? "") : "";
+      const pubName =
+        !isCardCategory && draftPublisherId ? String(publishers.find((x) => x.id === draftPublisherId)?.name ?? "") : "";
 
       setFranchiseName(fName);
       setSetName(sName);
       setPlatformName(pName);
+      setPublisherName(pubName);
 
       setEditing(false);
       setSaving(false);
@@ -422,6 +471,19 @@ export default function ItemDescription({
   const pushFranchise = (id: string) => router.push(`/catalog?franchise=${id}`);
   const pushSet = (id: string) => router.push(`/catalog?set=${id}`);
   const pushPlatform = (id: string) => router.push(`/catalog?platform=${id}`);
+  const pushPublisher = (id: string) => router.push(`/catalog?publisher=${id}`);
+
+  // For non-card maker display, prefer publisherName when publisherId exists; else fall back to legacy text.
+  const makerDisplayValue = useMemo(() => {
+    if (isCardCategory) return "";
+    if (publisherIdKey) return publisherName;
+    return String(item?.publisher ?? "");
+  }, [isCardCategory, publisherIdKey, publisherName, item]);
+
+  const makerClickable = useMemo(() => {
+    if (isCardCategory) return false;
+    return !!(publisherIdKey && draftPublisherId && !editing);
+  }, [isCardCategory, publisherIdKey, draftPublisherId, editing]);
 
   return (
     <div className="rounded-2xl border border-[#E5E9F2] bg-white shadow-sm overflow-hidden">
@@ -486,9 +548,9 @@ export default function ItemDescription({
 
             {/* Details grid */}
             <div className="rounded-2xl border border-[#E5E9F2] bg-white p-4">
-              {/* Row 1: Franchise | Set/Platform | Identifier (Card#/UPC) | Publisher/Manufacturer */}
+              {/* Row 1 */}
               <div className={`grid grid-cols-1 gap-4 ${row1GridClass}`}>
-                {/* Franchise (clickable) */}
+                {/* Franchise */}
                 <div className="min-w-0">
                   <div className="text-xs font-semibold text-[#64748B]">Franchise</div>
                   {editing ? (
@@ -508,10 +570,11 @@ export default function ItemDescription({
                     <button
                       type="button"
                       className={`mt-1 text-left text-sm truncate w-full ${
-                        item?.franchise_id ? "text-[#2563EB] hover:underline" : "text-[#0F172A]"
+                        (item as any)?.franchise_id ? "text-[#2563EB] hover:underline" : "text-[#0F172A]"
                       }`}
                       onClick={() => {
-                        if (item?.franchise_id) pushFranchise(item.franchise_id);
+                        const id = (item as any)?.franchise_id ?? null;
+                        if (id) pushFranchise(String(id));
                       }}
                       title={franchiseName || "—"}
                     >
@@ -546,7 +609,7 @@ export default function ItemDescription({
                         }`}
                         onClick={() => {
                           const id = (item as any)?.card_set_id ?? null;
-                          if (id) pushSet(id);
+                          if (id) pushSet(String(id));
                         }}
                         title={setName || "—"}
                       >
@@ -573,8 +636,9 @@ export default function ItemDescription({
                         platformName ? "text-[#2563EB] hover:underline" : "text-[#0F172A]"
                       }`}
                       onClick={() => {
-                        const id = (item as any)?.platform_id ?? null;
-                        if (id) pushPlatform(id);
+                        const row: any = item as any;
+                        const id = platformIdKey ? row?.[platformIdKey] ?? null : row?.platform_id ?? row?.Platform_id ?? null;
+                        if (id) pushPlatform(String(id));
                       }}
                       title={platformName || "—"}
                     >
@@ -583,7 +647,7 @@ export default function ItemDescription({
                   )}
                 </div>
 
-                {/* Identifier (Card Number OR UPC) */}
+                {/* Identifier */}
                 {isCardCategory ? (
                   <Field
                     label={identifierLabel}
@@ -592,19 +656,60 @@ export default function ItemDescription({
                     onChange={setDraftCardNumber}
                   />
                 ) : (
-                  <Field
-                    label={identifierLabel}
-                    value={editing ? draftUpc : String(item?.upc ?? "")}
-                    editing={editing}
-                    onChange={setDraftUpc}
-                  />
+                  <Field label={identifierLabel} value={editing ? draftUpc : String(item?.upc ?? "")} editing={editing} onChange={setDraftUpc} />
                 )}
 
-                {/* Maker (Publisher OR Manufacturer label, same `publisher` field today) */}
-                <Field label={makerLabel} value={editing ? draftPublisher : String(item?.publisher ?? "")} editing={editing} onChange={setDraftPublisher} />
+                {/* Maker: Publisher (ID-aware) */}
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold text-[#64748B]">{makerLabel}</div>
+
+                  {isCardCategory ? (
+                    <div className="mt-1 text-left text-sm truncate w-full text-[#0F172A]">—</div>
+                  ) : editing ? (
+                    publisherIdKey ? (
+                      <select
+                        className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm text-[#0F172A]"
+                        value={draftPublisherId ?? ""}
+                        onChange={(e) => setDraftPublisherId(e.target.value ? e.target.value : null)}
+                      >
+                        <option value="">—</option>
+                        {publishers.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm text-[#0F172A] outline-none focus:ring-2 focus:ring-[#0F172A]/10"
+                        value={draftPublisherText}
+                        onChange={(e) => setDraftPublisherText(e.target.value)}
+                        placeholder="—"
+                      />
+                    )
+                  ) : publisherIdKey ? (
+                    <button
+                      type="button"
+                      className={`mt-1 text-left text-sm truncate w-full ${
+                        publisherName ? "text-[#2563EB] hover:underline" : "text-[#0F172A]"
+                      }`}
+                      onClick={() => {
+                        const id = draftPublisherId;
+                        if (id) pushPublisher(id);
+                      }}
+                      title={publisherName || "—"}
+                    >
+                      {display(publisherName)}
+                    </button>
+                  ) : (
+                    <div className="mt-1 text-left text-sm truncate w-full text-[#0F172A]" title={String(item?.publisher ?? "")}>
+                      {display(String(item?.publisher ?? ""))}
+                    </div>
+                  )}
+                </div>
               </div>
 
-              {/* Row 2: Production Status | Release Date | End Date */}
+              {/* Row 2 */}
               <div className={`mt-4 grid grid-cols-1 gap-4 ${row2GridClass}`}>
                 <Field
                   label="Production Status"
@@ -616,10 +721,9 @@ export default function ItemDescription({
                 <Field label="End Date" value={editing ? draftEndDate : endDateDisplay} editing={editing} onChange={setDraftEndDate} />
               </div>
 
-              {/* Row 3: CollectorsHub ID | ePID (eBay) | External ID (TCGPlayer for cards) */}
+              {/* Row 3 */}
               <div className={`mt-4 grid grid-cols-1 gap-4 ${row3GridClass}`}>
                 <Field label="CollectorsHub ID" value={collectorsHubId} editing={false} />
-
                 <Field label="ePID (eBay)" value={editing ? draftEpid : String(item?.epid_ebay ?? "")} editing={editing} onChange={setDraftEpid} />
 
                 {isCardCategory ? (
