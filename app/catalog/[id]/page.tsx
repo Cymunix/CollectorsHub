@@ -171,6 +171,9 @@ export default function Page({ params }: { params: { id: string } }) {
   const [authOpen, setAuthOpen] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
 
+  // ✅ NEW: admin flag (derived from profiles)
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
+
   // Minimal header data only
   const [loadingHeader, setLoadingHeader] = useState(true);
   const [headerErr, setHeaderErr] = useState<string | null>(null);
@@ -222,6 +225,42 @@ export default function Page({ params }: { params: { id: string } }) {
       sub.subscription.unsubscribe();
     };
   }, []);
+
+  // ✅ NEW: derive admin status from profiles.role
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadRole = async () => {
+      if (!userId) {
+        setIsAdmin(false);
+        return;
+      }
+
+      // If your profiles table uses user_id instead of id, change this line:
+      // .eq("user_id", userId)
+      const res = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", userId)
+        .maybeSingle();
+
+      if (cancelled) return;
+
+      if (res.error) {
+        console.error("Failed to load profile role:", res.error);
+        setIsAdmin(false);
+        return;
+      }
+
+      setIsAdmin(String(res.data?.role ?? "").toLowerCase() === "admin");
+    };
+
+    loadRole();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
 
   // ✅ Reliable 2-step loader for set → connected minifigs (with quantity support + instance_key)
   const loadSetMinifigs = async (setCatalogItemId: string): Promise<Minifig[]> => {
@@ -738,7 +777,9 @@ export default function Page({ params }: { params: { id: string } }) {
 
           {/* Tab Content */}
           <div className="mt-4 space-y-4">
-            {tab === "Item Information" ? <ItemDescription catalogItemId={catalogItemId} /> : null}
+            {tab === "Item Information" ? (
+              <ItemDescription catalogItemId={catalogItemId} isAdmin={isAdmin} />
+            ) : null}
 
             {tab === "included_items" && showIncludedItemsTab ? (
               <div className="rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
