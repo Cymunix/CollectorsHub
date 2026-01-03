@@ -28,13 +28,12 @@ type CatalogItemRow = {
 
   epid_ebay: string | null;
 
-  // card-only (may or may not exist depending on schema, so treat as optional at runtime)
+  // card-only
   card_set_id?: string | null;
   card_number?: string | null;
   tcgplayer_id?: string | null;
 
-  // non-card (platform) — we support either column name if your schema uses one of these
-  game_platform_id?: string | null;
+  // ✅ single source of truth for platform (non-card)
   platform_id?: string | null;
 };
 
@@ -153,11 +152,9 @@ async function safeUpdateCatalogItem(
   payload: Record<string, any>,
   fallbacks: Array<Record<string, any>>
 ) {
-  // attempt 1
   const first = await supabase.from("catalog_items").update(payload).eq("id", catalogItemId);
   if (!first.error) return { ok: true as const };
 
-  // attempt fallbacks
   for (const fb of fallbacks) {
     const next = await supabase.from("catalog_items").update(fb).eq("id", catalogItemId);
     if (!next.error) return { ok: true as const };
@@ -208,7 +205,7 @@ export default function ItemDescription({
   const [draftCardNumber, setDraftCardNumber] = useState<string>("");
   const [draftTcgPlayer, setDraftTcgPlayer] = useState<string>("");
 
-  // platform (non-card) — we don’t know which column you use, so we store one draft value and map it on save.
+  // ✅ platform (non-card) — single source of truth
   const [draftPlatformId, setDraftPlatformId] = useState<string | null>(null);
 
   const [draftReleaseDate, setDraftReleaseDate] = useState<string>("");
@@ -231,20 +228,9 @@ export default function ItemDescription({
     return "Publisher";
   }, [categoryKey]);
 
-  // Row label changes depending on card vs non-card
   const setOrPlatformLabel = useMemo(() => (isCardCategory ? "Set" : "Platform"), [isCardCategory]);
-
   const identifierLabel = useMemo(() => (isCardCategory ? "Card Number" : "UPC"), [isCardCategory]);
-
   const externalIdLabel = useMemo(() => (isCardCategory ? "TCGPlayer ID" : "External ID"), [isCardCategory]);
-
-  // Decide which platform column exists on the loaded row (if any)
-  const platformCol: "game_platform_id" | "platform_id" | null = useMemo(() => {
-    const it: any = item ?? {};
-    if (Object.prototype.hasOwnProperty.call(it, "game_platform_id")) return "game_platform_id";
-    if (Object.prototype.hasOwnProperty.call(it, "platform_id")) return "platform_id";
-    return null;
-  }, [item]);
 
   const releaseDateDisplay = useMemo(() => {
     if (!item) return "—";
@@ -270,17 +256,11 @@ export default function ItemDescription({
     setDraftCardNumber(String((nextItem as any)?.card_number ?? ""));
     setDraftTcgPlayer(String((nextItem as any)?.tcgplayer_id ?? ""));
 
-    // platform (non-card)
-    const pVal =
-      (nextItem as any)?.game_platform_id ??
-      (nextItem as any)?.platform_id ??
-      null;
-    setDraftPlatformId(pVal);
+    // ✅ platform (non-card) — only platform_id
+    setDraftPlatformId((nextItem as any)?.platform_id ?? null);
 
     setDraftReleaseDate(
-      nextItem
-        ? formatPartialDate(nextItem.release_year, nextItem.release_month, nextItem.release_day).replace("—", "")
-        : ""
+      nextItem ? formatPartialDate(nextItem.release_year, nextItem.release_month, nextItem.release_day).replace("—", "") : ""
     );
     setDraftProductionStatus(String(nextItem?.production_status ?? ""));
     setDraftEndDate(
@@ -297,20 +277,17 @@ export default function ItemDescription({
       setEditing(false);
 
       try {
-        // Use select("*") so this component doesn't explode when optional columns differ by environment.
         const itemRes = await supabase.from("catalog_items").select("*").eq("id", catalogItemId).maybeSingle();
         if (itemRes.error) throw itemRes.error;
 
         const it = (itemRes.data as any) as CatalogItemRow | null;
 
-        // Lookups (safe; empty arrays if table doesn't exist)
         const [frs, sets, plats] = await Promise.all([
           safeLookup("franchises"),
           safeLookup("card_sets"),
           safeLookup("game_platforms"),
         ]);
 
-        // Resolve names
         let fName = "";
         if (it?.franchise_id) fName = String(frs.find((x) => x.id === it.franchise_id)?.name ?? "");
 
@@ -319,7 +296,7 @@ export default function ItemDescription({
         if (cardSetId) sName = String(sets.find((x) => x.id === cardSetId)?.name ?? "");
 
         let pName = "";
-        const platId = (it as any)?.game_platform_id ?? (it as any)?.platform_id ?? null;
+        const platId = (it as any)?.platform_id ?? null;
         if (platId) pName = String(plats.find((x) => x.id === platId)?.name ?? "");
 
         if (cancelled) return;
@@ -372,7 +349,6 @@ export default function ItemDescription({
       const rel = parsePartialDate(draftReleaseDate);
       const end = parsePartialDate(draftEndDate);
 
-      // Base payload (always safe columns)
       const basePayload: Record<string, any> = {
         description: normalizeInput(draftDescription),
         franchise_id: draftFranchiseId,
@@ -392,66 +368,40 @@ export default function ItemDescription({
         end_day: end.d,
       };
 
-      // Optional payload parts
       const cardPayload: Record<string, any> = {
         card_set_id: isCardCategory ? draftSetId : null,
         card_number: isCardCategory ? normalizeInput(draftCardNumber) : null,
         tcgplayer_id: isCardCategory ? normalizeInput(draftTcgPlayer) : null,
       };
 
-      // Platform payload (only for non-card)
-      const platformPayloadGame: Record<string, any> = {
-        game_platform_id: !isCardCategory ? draftPlatformId : null,
-      };
-      const platformPayloadGeneric: Record<string, any> = {
+      // ✅ single platform column
+      const platformPayload: Record<string, any> = {
         platform_id: !isCardCategory ? draftPlatformId : null,
       };
 
-      // Decide what to try first based on what the loaded row seems to have
       const tryFull = {
         ...basePayload,
         ...(isCardCategory ? cardPayload : {}),
-        ...(!isCardCategory
-          ? platformCol === "game_platform_id"
-            ? platformPayloadGame
-            : platformCol === "platform_id"
-              ? platformPayloadGeneric
-              : platformPayloadGame // default guess
-          : {}),
+        ...(!isCardCategory ? platformPayload : {}),
       };
 
-      // Fallbacks: if unknown columns exist, we retry with less
       const fallbacks: Array<Record<string, any>> = [];
-
-      // 1) base + card (no platform)
       fallbacks.push({ ...basePayload, ...(isCardCategory ? cardPayload : {}) });
-
-      // 2) base + platform (game_platform_id)
-      fallbacks.push({ ...basePayload, ...(!isCardCategory ? platformPayloadGame : {}) });
-
-      // 3) base + platform (platform_id)
-      fallbacks.push({ ...basePayload, ...(!isCardCategory ? platformPayloadGeneric : {}) });
-
-      // 4) base only (always works as long as base columns exist)
+      fallbacks.push({ ...basePayload, ...(!isCardCategory ? platformPayload : {}) });
       fallbacks.push({ ...basePayload });
 
       const res = await safeUpdateCatalogItem(catalogItemId, tryFull, fallbacks);
       if (!res.ok) throw res.error;
 
-      // Locally merge new data
       const merged: any = { ...(item as any), ...(tryFull as any) };
       setItem(merged);
 
-      // Update display names
       const fName = draftFranchiseId ? String(franchises.find((x) => x.id === draftFranchiseId)?.name ?? "") : "";
 
-      const sName =
-        isCardCategory && draftSetId ? String(cardSets.find((x) => x.id === draftSetId)?.name ?? "") : "";
+      const sName = isCardCategory && draftSetId ? String(cardSets.find((x) => x.id === draftSetId)?.name ?? "") : "";
 
       const pName =
-        !isCardCategory && draftPlatformId
-          ? String(platforms.find((x) => x.id === draftPlatformId)?.name ?? "")
-          : "";
+        !isCardCategory && draftPlatformId ? String(platforms.find((x) => x.id === draftPlatformId)?.name ?? "") : "";
 
       setFranchiseName(fName);
       setSetName(sName);
@@ -465,13 +415,10 @@ export default function ItemDescription({
     }
   }
 
-  // Row classes (fixed to your new layout)
   const row1GridClass = "md:grid-cols-4";
   const row2GridClass = "md:grid-cols-3";
   const row3GridClass = "md:grid-cols-3";
 
-  // Click behavior: match your catalog page expected params.
-  // (These are your current params; if your /catalog uses different keys, change here.)
   const pushFranchise = (id: string) => router.push(`/catalog?franchise=${id}`);
   const pushSet = (id: string) => router.push(`/catalog?set=${id}`);
   const pushPlatform = (id: string) => router.push(`/catalog?platform=${id}`);
@@ -606,35 +553,33 @@ export default function ItemDescription({
                         {display(setName)}
                       </button>
                     )
+                  ) : editing ? (
+                    <select
+                      className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm text-[#0F172A]"
+                      value={draftPlatformId ?? ""}
+                      onChange={(e) => setDraftPlatformId(e.target.value ? e.target.value : null)}
+                    >
+                      <option value="">—</option>
+                      {platforms.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
                   ) : (
-                    editing ? (
-                      <select
-                        className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm text-[#0F172A]"
-                        value={draftPlatformId ?? ""}
-                        onChange={(e) => setDraftPlatformId(e.target.value ? e.target.value : null)}
-                      >
-                        <option value="">—</option>
-                        {platforms.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <button
-                        type="button"
-                        className={`mt-1 text-left text-sm truncate w-full ${
-                          draftPlatformId || platformName ? "text-[#2563EB] hover:underline" : "text-[#0F172A]"
-                        }`}
-                        onClick={() => {
-                          const id = (item as any)?.game_platform_id ?? (item as any)?.platform_id ?? null;
-                          if (id) pushPlatform(id);
-                        }}
-                        title={platformName || "—"}
-                      >
-                        {display(platformName)}
-                      </button>
-                    )
+                    <button
+                      type="button"
+                      className={`mt-1 text-left text-sm truncate w-full ${
+                        platformName ? "text-[#2563EB] hover:underline" : "text-[#0F172A]"
+                      }`}
+                      onClick={() => {
+                        const id = (item as any)?.platform_id ?? null;
+                        if (id) pushPlatform(id);
+                      }}
+                      title={platformName || "—"}
+                    >
+                      {display(platformName)}
+                    </button>
                   )}
                 </div>
 
@@ -656,12 +601,7 @@ export default function ItemDescription({
                 )}
 
                 {/* Maker (Publisher OR Manufacturer label, same `publisher` field today) */}
-                <Field
-                  label={makerLabel}
-                  value={editing ? draftPublisher : String(item?.publisher ?? "")}
-                  editing={editing}
-                  onChange={setDraftPublisher}
-                />
+                <Field label={makerLabel} value={editing ? draftPublisher : String(item?.publisher ?? "")} editing={editing} onChange={setDraftPublisher} />
               </div>
 
               {/* Row 2: Production Status | Release Date | End Date */}
@@ -672,30 +612,15 @@ export default function ItemDescription({
                   editing={editing}
                   onChange={setDraftProductionStatus}
                 />
-                <Field
-                  label="Release Date"
-                  value={editing ? draftReleaseDate : releaseDateDisplay}
-                  editing={editing}
-                  onChange={setDraftReleaseDate}
-                />
-                <Field
-                  label="End Date"
-                  value={editing ? draftEndDate : endDateDisplay}
-                  editing={editing}
-                  onChange={setDraftEndDate}
-                />
+                <Field label="Release Date" value={editing ? draftReleaseDate : releaseDateDisplay} editing={editing} onChange={setDraftReleaseDate} />
+                <Field label="End Date" value={editing ? draftEndDate : endDateDisplay} editing={editing} onChange={setDraftEndDate} />
               </div>
 
               {/* Row 3: CollectorsHub ID | ePID (eBay) | External ID (TCGPlayer for cards) */}
               <div className={`mt-4 grid grid-cols-1 gap-4 ${row3GridClass}`}>
                 <Field label="CollectorsHub ID" value={collectorsHubId} editing={false} />
 
-                <Field
-                  label="ePID (eBay)"
-                  value={editing ? draftEpid : String(item?.epid_ebay ?? "")}
-                  editing={editing}
-                  onChange={setDraftEpid}
-                />
+                <Field label="ePID (eBay)" value={editing ? draftEpid : String(item?.epid_ebay ?? "")} editing={editing} onChange={setDraftEpid} />
 
                 {isCardCategory ? (
                   <Field
