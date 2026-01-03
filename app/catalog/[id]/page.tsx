@@ -576,6 +576,9 @@ export default function Page({ params }: { params: { id: string } }) {
   }, [category?.name]);
 
   const isGradableCategory = useMemo(() => {
-    if (isBuildingBlocks) return false;
-    const c = (category?.name ?? "").toLowerCase();
-    return c
+  if (isBuildingBlocks) return false;
+  const c = (category?.name ?? "").toLowerCase();
+  return c.includes("comic") || c.includes("trading") || c.includes("sports card") || c.includes("cards");
+}, [category?.name, isBuildingBlocks]);
+
+
