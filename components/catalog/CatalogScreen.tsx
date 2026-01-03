@@ -54,7 +54,14 @@ export default function CatalogScreen() {
 
   const router = useRouter();
   const sp = useSearchParams();
-  const urlSearch = (sp.get("search") || "").trim();
+
+  // ✅ Support BOTH "search" (your current header behavior) AND "q" (common pattern)
+  // Item pages / future links can use either and it will still work.
+  const urlSearch = (sp.get("search") || sp.get("q") || "").trim();
+
+  // ✅ NEW: URL-driven context filters coming from item page clicks
+  const urlFranchise = (sp.get("franchise") || "").trim();
+  const urlSet = (sp.get("set") || "").trim();
 
   const [modalOpen, setModalOpen] = useState(false);
 
@@ -153,6 +160,32 @@ export default function CatalogScreen() {
     [meta.toyLines, toyBrandId]
   );
 
+  // -------------------- URL Context -> Local Filter State --------------------
+  // This is the critical fix: when you navigate to /catalog?franchise=... or /catalog?set=...,
+  // the filters actually get set.
+  useEffect(() => {
+    // Franchise click from item page
+    if (urlFranchise) {
+      setFranchiseId(urlFranchise);
+    }
+
+    // Set click from item page: this should drive cardSetId
+    if (urlSet) {
+      setCardSetId(urlSet);
+    }
+    // We intentionally DO NOT clear local values when params are missing, because:
+    // - user might be using sidebar filters without URL params
+    // - clearing should be an explicit action (Reset / Clear)
+  }, [urlFranchise, urlSet]);
+
+  // -------------------- URL helpers --------------------
+  const removeUrlKeys = (keys: string[]) => {
+    const next = new URLSearchParams(sp.toString());
+    keys.forEach((k) => next.delete(k));
+    const qs = next.toString();
+    router.push(qs ? `/catalog?${qs}` : "/catalog");
+  };
+
   const clearFilters = () => {
     setCategoryId("");
     setSubcategoryId("");
@@ -179,13 +212,14 @@ export default function CatalogScreen() {
     setGamePlatformId("");
 
     setComicPublisherId("");
+
+    // ✅ ALSO clear URL-driven context so it doesn't "stick" on refresh/back
+    removeUrlKeys(["franchise", "set"]);
   };
 
   const clearSearch = () => {
-    const next = new URLSearchParams(sp.toString());
-    next.delete("search");
-    const qs = next.toString();
-    router.push(qs ? `/catalog?${qs}` : "/catalog");
+    // ✅ clear BOTH search keys we support
+    removeUrlKeys(["search", "q"]);
   };
 
   // Reset dynamic filters on category change
@@ -242,6 +276,8 @@ export default function CatalogScreen() {
 
       if (categoryId && it.category_id !== categoryId) return false;
       if (subcategoryId && it.subcategory_id !== subcategoryId) return false;
+
+      // ✅ Franchise filter (either sidebar state OR URL-driven param)
       if (franchiseId && it.franchise_id !== franchiseId) return false;
 
       if (minY !== null || maxY !== null) {
@@ -273,9 +309,14 @@ export default function CatalogScreen() {
         if (comicPublisherId && it.comic_publisher_id !== comicPublisherId) return false;
       }
 
+      // ✅ IMPORTANT FIX:
+      // "set" from item page should filter the catalog even if category isn't set to cards.
+      // So apply cardSetId globally if it exists.
+      if (cardSetId && (it as any).card_set_id !== cardSetId) return false;
+
+      // Card-only extras still apply when in card kinds
       if (selectedKind === "trading_card" || selectedKind === "sports_card") {
         if (cardManufacturerId && it.card_manufacturer_id !== cardManufacturerId) return false;
-        if (cardSetId && it.card_set_id !== cardSetId) return false;
         if (cardTypeId && it.card_type_id !== cardTypeId) return false;
       }
 
@@ -705,7 +746,7 @@ export default function CatalogScreen() {
                 <p className="mt-0.5 text-xs text-gray-500">Quick info about what you’re viewing.</p>
               </div>
 
-              {(urlSearch || categoryId || subcategoryId || franchiseId) && (
+              {(urlSearch || categoryId || subcategoryId || franchiseId || cardSetId) && (
                 <button
                   type="button"
                   onClick={() => {
@@ -751,6 +792,11 @@ export default function CatalogScreen() {
                     <span className="font-semibold">Franchise:</span>{" "}
                     {selectedFranchise?.name ?? <span className="text-gray-400">Any</span>}
                   </li>
+                  {cardSetId ? (
+                    <li>
+                      <span className="font-semibold">Set:</span> <span className="text-gray-800">{cardSetId}</span>
+                    </li>
+                  ) : null}
                   {selectedKind === "building_blocks" ? (
                     <li>
                       <span className="font-semibold">Minifigs:</span> {showMinifigs ? "Shown" : "Hidden"}
@@ -758,7 +804,7 @@ export default function CatalogScreen() {
                   ) : null}
                 </ul>
 
-                {(categoryId || subcategoryId || franchiseId) && (
+                {(categoryId || subcategoryId || franchiseId || cardSetId) && (
                   <button
                     type="button"
                     onClick={clearFilters}
