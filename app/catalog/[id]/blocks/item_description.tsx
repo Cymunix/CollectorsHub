@@ -37,6 +37,10 @@ function normalizeInput(s: string) {
   return t.length ? t : null;
 }
 
+function hasText(v: any) {
+  return String(v ?? "").trim().length > 0;
+}
+
 function display(v: string | null | undefined) {
   const s = String(v ?? "").trim();
   return s.length ? s : "—";
@@ -126,9 +130,11 @@ function Field({
 export default function ItemDescription({
   catalogItemId,
   isAdmin,
+  categoryName = null,
 }: {
   catalogItemId: string;
   isAdmin: boolean;
+  categoryName?: string | null;
 }) {
   const router = useRouter();
 
@@ -165,6 +171,12 @@ export default function ItemDescription({
 
   const collectorsHubId = catalogItemId;
 
+  const isCardCategory = useMemo(() => {
+    const c = String(categoryName ?? "").toLowerCase();
+    // tighten later if you want, but this stops the leak immediately
+    return c.includes("trading") || c.includes("sports card") || c === "cards" || c.includes("tcg");
+  }, [categoryName]);
+
   const releaseDateDisplay = useMemo(() => {
     if (!item) return "—";
     return formatPartialDate(item.release_year, item.release_month, item.release_day);
@@ -175,10 +187,23 @@ export default function ItemDescription({
     return formatPartialDate(item.end_year, item.end_month, item.end_day);
   }, [item]);
 
+  // ✅ Card-only fields must never show for non-card items.
+  // Admin can see card fields while editing ONLY if category is cards.
+  const canShowCardFields = isCardCategory && (editing || true);
+
   // ✅ Your rule:
   // - hide Set unless the item actually has a set id
   // - BUT allow admins to see it while editing so they can set/clear it
-  const shouldShowSet = Boolean(editing || item?.card_set_id);
+  // - AND card-only gate
+  const shouldShowSet = Boolean(isCardCategory && (editing || item?.card_set_id));
+
+  // Card-only: only show when card category AND (editing OR has a value)
+  const shouldShowCardNumber = Boolean(isCardCategory && (editing || hasText(item?.card_number)));
+  const shouldShowPublisher = Boolean(isCardCategory && (editing || hasText(item?.publisher)));
+  const shouldShowTcgPlayer = Boolean(isCardCategory && (editing || hasText(item?.tcgplayer_id)));
+
+  // ePID: keep it generic, but don’t show an empty row for non-admin view
+  const shouldShowEpid = Boolean(editing || hasText(item?.epid_ebay));
 
   function primeDraftFromLoaded(nextItem: CatalogItemRow | null) {
     setDraftDescription(String(nextItem?.description ?? ""));
@@ -288,14 +313,18 @@ export default function ItemDescription({
       const rel = parsePartialDate(draftReleaseDate);
       const end = parsePartialDate(draftEndDate);
 
+      // ✅ If not card category, forcibly clear card-only fields on save
+      // (prevents random items from accidentally keeping card metadata)
       const payload = {
         description: normalizeInput(draftDescription),
 
         franchise_id: draftFranchiseId,
-        card_set_id: draftSetId,
 
-        card_number: normalizeInput(draftCardNumber),
-        publisher: normalizeInput(draftPublisher),
+        // card-only
+        card_set_id: isCardCategory ? draftSetId : null,
+        card_number: isCardCategory ? normalizeInput(draftCardNumber) : null,
+        publisher: isCardCategory ? normalizeInput(draftPublisher) : null,
+        tcgplayer_id: isCardCategory ? normalizeInput(draftTcgPlayer) : null,
 
         release_year: rel.y,
         release_month: rel.m,
@@ -307,8 +336,8 @@ export default function ItemDescription({
         end_month: end.m,
         end_day: end.d,
 
+        // keep as generic
         epid_ebay: normalizeInput(draftEpid),
-        tcgplayer_id: normalizeInput(draftTcgPlayer),
       };
 
       const up = await supabase.from("catalog_items").update(payload).eq("id", catalogItemId);
@@ -323,7 +352,8 @@ export default function ItemDescription({
       setItem(newItem);
 
       const fName = draftFranchiseId ? String(franchises.find((x) => x.id === draftFranchiseId)?.name ?? "") : "";
-      const sName = draftSetId ? String(cardSets.find((x) => x.id === draftSetId)?.name ?? "") : "";
+      const sName =
+        isCardCategory && draftSetId ? String(cardSets.find((x) => x.id === draftSetId)?.name ?? "") : "";
 
       setFranchiseName(fName);
       setSetName(sName);
@@ -335,6 +365,28 @@ export default function ItemDescription({
       setErr(e?.message ?? "Failed to save.");
     }
   }
+
+  // ✅ layout: Row 1 columns depend on whether card fields are present
+  const row1Cols = useMemo(() => {
+    // Franchise always
+    let cols = 1;
+    if (shouldShowSet) cols += 1;
+    if (shouldShowCardNumber) cols += 1;
+    if (shouldShowPublisher) cols += 1;
+    return cols;
+  }, [shouldShowSet, shouldShowCardNumber, shouldShowPublisher]);
+
+  const row1GridClass = useMemo(() => {
+    // keep it simple and stable with Tailwind known classes
+    // 1 -> md:grid-cols-1
+    // 2 -> md:grid-cols-2
+    // 3 -> md:grid-cols-3
+    // 4 -> md:grid-cols-4
+    if (row1Cols === 1) return "md:grid-cols-1";
+    if (row1Cols === 2) return "md:grid-cols-2";
+    if (row1Cols === 3) return "md:grid-cols-3";
+    return "md:grid-cols-4";
+  }, [row1Cols]);
 
   return (
     <div className="rounded-2xl border border-[#E5E9F2] bg-white shadow-sm overflow-hidden">
@@ -399,8 +451,9 @@ export default function ItemDescription({
 
             {/* Grid */}
             <div className="rounded-2xl border border-[#E5E9F2] bg-white p-4">
-              {/* Row 1: Franchise — Set (conditional) — Card Number — Publisher */}
-              <div className={`grid grid-cols-1 gap-4 ${shouldShowSet ? "md:grid-cols-4" : "md:grid-cols-3"}`}>
+              {/* Row 1: Franchise — (Set) — (Card Number) — (Publisher)
+                  Card fields never render for non-card categories. */}
+              <div className={`grid grid-cols-1 gap-4 ${row1GridClass}`}>
                 {/* Franchise */}
                 <div className="min-w-0">
                   <div className="text-xs font-semibold text-[#64748B]">Franchise</div>
@@ -433,7 +486,7 @@ export default function ItemDescription({
                   )}
                 </div>
 
-                {/* Set (only if editing OR item has card_set_id) */}
+                {/* Set (card-only) */}
                 {shouldShowSet ? (
                   <div className="min-w-0">
                     <div className="text-xs font-semibold text-[#64748B]">Set</div>
@@ -467,18 +520,25 @@ export default function ItemDescription({
                   </div>
                 ) : null}
 
-                <Field
-                  label="Card Number"
-                  value={editing ? draftCardNumber : String(item?.card_number ?? "")}
-                  editing={editing}
-                  onChange={setDraftCardNumber}
-                />
-                <Field
-                  label="Publisher"
-                  value={editing ? draftPublisher : String(item?.publisher ?? "")}
-                  editing={editing}
-                  onChange={setDraftPublisher}
-                />
+                {/* Card Number (card-only) */}
+                {shouldShowCardNumber ? (
+                  <Field
+                    label="Card Number"
+                    value={editing ? draftCardNumber : String(item?.card_number ?? "")}
+                    editing={editing}
+                    onChange={setDraftCardNumber}
+                  />
+                ) : null}
+
+                {/* Publisher (card-only) */}
+                {shouldShowPublisher ? (
+                  <Field
+                    label="Publisher"
+                    value={editing ? draftPublisher : String(item?.publisher ?? "")}
+                    editing={editing}
+                    onChange={setDraftPublisher}
+                  />
+                ) : null}
               </div>
 
               {/* Row 2: Release Date — Production Status — End Date */}
@@ -503,20 +563,31 @@ export default function ItemDescription({
                 />
               </div>
 
-              {/* Row 3: ePID — TCGPlayer — CollectorsHub ID */}
+              {/* Row 3: (ePID) — (TCGPlayer) — CollectorsHub ID
+                  TCGPlayer is card-only, ePID is generic but hidden if empty unless editing */}
               <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
-                <Field
-                  label="ePID (eBay)"
-                  value={editing ? draftEpid : String(item?.epid_ebay ?? "")}
-                  editing={editing}
-                  onChange={setDraftEpid}
-                />
-                <Field
-                  label="TCGPlayer ID"
-                  value={editing ? draftTcgPlayer : String(item?.tcgplayer_id ?? "")}
-                  editing={editing}
-                  onChange={setDraftTcgPlayer}
-                />
+                {shouldShowEpid ? (
+                  <Field
+                    label="ePID (eBay)"
+                    value={editing ? draftEpid : String(item?.epid_ebay ?? "")}
+                    editing={editing}
+                    onChange={setDraftEpid}
+                  />
+                ) : (
+                  <div className="min-w-0" />
+                )}
+
+                {shouldShowTcgPlayer ? (
+                  <Field
+                    label="TCGPlayer ID"
+                    value={editing ? draftTcgPlayer : String(item?.tcgplayer_id ?? "")}
+                    editing={editing}
+                    onChange={setDraftTcgPlayer}
+                  />
+                ) : (
+                  <div className="min-w-0" />
+                )}
+
                 <Field label="CollectorsHub ID" value={collectorsHubId} editing={false} />
               </div>
 
@@ -524,6 +595,13 @@ export default function ItemDescription({
                 Date format accepts <code className="px-1">YYYY</code>, <code className="px-1">YYYY-MM</code>, or{" "}
                 <code className="px-1">YYYY-MM-DD</code>.
               </div>
+
+              {/* Hard safety: if not card category, still allow admins to edit card fields? No. */}
+              {!isCardCategory && editing && isAdmin ? (
+                <div className="mt-3 text-[11px] text-[#64748B]">
+                  Card-only fields are hidden because this item is not in a card category.
+                </div>
+              ) : null}
             </div>
           </>
         ) : null}
