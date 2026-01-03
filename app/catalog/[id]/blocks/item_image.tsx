@@ -3,9 +3,20 @@
 import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
-type PhotoRow = { image_url: string; is_primary: boolean | null; sort_order: number | null };
+type ImgRow = {
+  image_url: string;
+  sort_order: number | null;
+  role?: string | null; // if you use role = 'primary'
+  is_primary?: boolean | null; // if you use is_primary
+};
 
-export default function ItemImage({ catalogItemId, itemName }: { catalogItemId: string; itemName: string }) {
+export default function ItemImage({
+  catalogItemId,
+  itemName,
+}: {
+  catalogItemId: string;
+  itemName: string;
+}) {
   const [url, setUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -17,7 +28,59 @@ export default function ItemImage({ catalogItemId, itemName }: { catalogItemId: 
         return;
       }
 
-      // 1) Try catalog_item_photos first (preferred)
+      /* =========================
+         1) Preferred: catalog_item_images
+         - Primary first (role or is_primary), then sort_order
+         ========================= */
+
+      // Try role-based primary
+      const resImagesRole = await supabase
+        .from("catalog_item_images")
+        .select("image_url, sort_order, role")
+        .eq("catalog_item_id", catalogItemId)
+        .order("role", { ascending: true }) // NOTE: we’ll handle primary via filter below
+        .order("sort_order", { ascending: true })
+        .limit(25);
+
+      if (cancelled) return;
+
+      if (!resImagesRole.error) {
+        const rows = (resImagesRole.data ?? []) as ImgRow[];
+
+        // Pick primary by role first, else first by sort_order
+        const primary =
+          rows.find((r) => (r.role ?? "").toLowerCase() === "primary") ??
+          rows.find((r) => r.sort_order === 0) ??
+          rows[0];
+
+        if (primary?.image_url) {
+          setUrl(primary.image_url);
+          return;
+        }
+      }
+
+      // If your table uses is_primary instead of role, try that too
+      const resImagesPrimary = await supabase
+        .from("catalog_item_images")
+        .select("image_url, sort_order, is_primary")
+        .eq("catalog_item_id", catalogItemId)
+        .order("is_primary", { ascending: false })
+        .order("sort_order", { ascending: true })
+        .limit(1);
+
+      if (cancelled) return;
+
+      if (!resImagesPrimary.error) {
+        const row = (resImagesPrimary.data ?? [])[0] as ImgRow | undefined;
+        if (row?.image_url) {
+          setUrl(row.image_url);
+          return;
+        }
+      }
+
+      /* =========================
+         2) Legacy: catalog_item_photos
+         ========================= */
       const photoRes = await supabase
         .from("catalog_item_photos")
         .select("image_url,is_primary,sort_order")
@@ -28,16 +91,20 @@ export default function ItemImage({ catalogItemId, itemName }: { catalogItemId: 
 
       if (cancelled) return;
 
-      const photoRows = (photoRes.data ?? []) as PhotoRow[];
-      const photoUrl = photoRows[0]?.image_url ?? null;
-
+      const photoUrl = (photoRes.data ?? [])[0]?.image_url ?? null;
       if (photoUrl) {
         setUrl(photoUrl);
         return;
       }
 
-      // 2) Fallback to catalog_items.image_url (your minifig-style storage)
-      const itemRes = await supabase.from("catalog_items").select("image_url").eq("id", catalogItemId).single();
+      /* =========================
+         3) Final fallback: catalog_items.image_url
+         ========================= */
+      const itemRes = await supabase
+        .from("catalog_items")
+        .select("image_url")
+        .eq("id", catalogItemId)
+        .single();
 
       if (cancelled) return;
 
