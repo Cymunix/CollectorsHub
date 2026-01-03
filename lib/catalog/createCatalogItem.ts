@@ -109,10 +109,10 @@ const MOVIE_TABLE = "catalog_item_movies";
 // ✅ unified join table for ALL roles (must exist)
 const ITEM_PEOPLE_TABLE = "catalog_item_people";
 
-// ✅ NEW: multi-image table (must exist)
+// ✅ multi-image table (must exist)
 const IMAGES_TABLE = "catalog_item_images";
 
-// ✅ Storage bucket (you already have this)
+// ✅ Storage bucket
 const IMAGES_BUCKET = "item-images";
 const CATALOG_PREFIX = "catalog-items";
 
@@ -319,6 +319,13 @@ export async function createCatalogItem(itemKind: string, state: CreateCatalogIt
   if (!name) throw new Error("createCatalogItem: name is required");
   if (!category_id) throw new Error("createCatalogItem: category_id is required");
 
+  // ✅ NEW: attach publisher directly to catalog_items
+  // Requires columns on catalog_items:
+  // - game_publisher_id uuid null
+  // - comic_publisher_id uuid null
+  const game_publisher_id = kind === "gaming" ? nullableStr(state?.gamePublisherId) : null;
+  const comic_publisher_id = kind === "comic" ? nullableStr(state?.comicPublisherId) : null;
+
   // 1) INSERT base item
   const { data: inserted, error: insertErr } = await supabase
     .from(CATALOG_TABLE)
@@ -332,7 +339,11 @@ export async function createCatalogItem(itemKind: string, state: CreateCatalogIt
       upc: nullableStr(state?.catalogUPC),
       version: nullableStr(state?.catalogVersion),
       production_status,
-      image_url: null, // we will set to primary image later (legacy compatibility)
+      image_url: null, // legacy compatibility
+
+      // ✅ publish links on catalog_items
+      game_publisher_id,
+      comic_publisher_id,
     })
     .select("id")
     .single();
@@ -372,9 +383,7 @@ export async function createCatalogItem(itemKind: string, state: CreateCatalogIt
 
   // 3) UPLOAD images (multi)
   // Prefer itemImageFiles, fallback to legacy single file
-  const files =
-    (Array.isArray(state?.itemImageFiles) ? state.itemImageFiles : []).filter(Boolean) as File[];
-
+  const files = (Array.isArray(state?.itemImageFiles) ? state.itemImageFiles : []).filter(Boolean) as File[];
   const legacySingle = state?.itemImageFile ?? null;
   const effectiveFiles = files.length ? files : legacySingle ? [legacySingle] : [];
 
