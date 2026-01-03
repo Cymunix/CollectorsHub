@@ -28,10 +28,14 @@ type CatalogItemRow = {
 
   epid_ebay: string | null;
 
-  // card-only
-  card_set_id: string | null;
-  card_number: string | null;
-  tcgplayer_id: string | null;
+  // card-only (may or may not exist depending on schema, so treat as optional at runtime)
+  card_set_id?: string | null;
+  card_number?: string | null;
+  tcgplayer_id?: string | null;
+
+  // non-card (platform) — we support either column name if your schema uses one of these
+  game_platform_id?: string | null;
+  platform_id?: string | null;
 };
 
 type LookupRow = { id: string; name: string };
@@ -111,20 +115,55 @@ function Field({
           onChange={(e) => onChange?.(e.target.value)}
           placeholder="—"
         />
-      ) : (
+      ) : clickable ? (
         <button
           type="button"
-          onClick={clickable ? onClick : undefined}
-          className={`mt-1 text-left text-sm truncate w-full ${
-            clickable ? "text-[#2563EB] hover:underline" : "text-[#0F172A]"
-          }`}
+          onClick={onClick}
+          className="mt-1 text-left text-sm truncate w-full text-[#2563EB] hover:underline"
           title={value}
         >
           {display(value)}
         </button>
+      ) : (
+        <div className="mt-1 text-left text-sm truncate w-full text-[#0F172A]" title={value}>
+          {display(value)}
+        </div>
       )}
     </div>
   );
+}
+
+async function safeLookup(table: string): Promise<LookupRow[]> {
+  try {
+    const res = await supabase.from(table).select("id,name").order("name", { ascending: true });
+    if (res.error) return [];
+    return ((res.data ?? []) as any[]).map((r) => ({ id: String(r.id), name: String(r.name ?? "") })) as LookupRow[];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Update helper that:
+ * - tries with full payload
+ * - if it fails due to unknown columns, retries with a reduced payload
+ */
+async function safeUpdateCatalogItem(
+  catalogItemId: string,
+  payload: Record<string, any>,
+  fallbacks: Array<Record<string, any>>
+) {
+  // attempt 1
+  const first = await supabase.from("catalog_items").update(payload).eq("id", catalogItemId);
+  if (!first.error) return { ok: true as const };
+
+  // attempt fallbacks
+  for (const fb of fallbacks) {
+    const next = await supabase.from("catalog_items").update(fb).eq("id", catalogItemId);
+    if (!next.error) return { ok: true as const };
+  }
+
+  return { ok: false as const, error: first.error };
 }
 
 export default function ItemDescription({
@@ -146,9 +185,11 @@ export default function ItemDescription({
 
   const [franchiseName, setFranchiseName] = useState<string>("");
   const [setName, setSetName] = useState<string>("");
+  const [platformName, setPlatformName] = useState<string>("");
 
   const [franchises, setFranchises] = useState<LookupRow[]>([]);
   const [cardSets, setCardSets] = useState<LookupRow[]>([]);
+  const [platforms, setPlatforms] = useState<LookupRow[]>([]);
 
   const [editing, setEditing] = useState(false);
 
@@ -166,6 +207,9 @@ export default function ItemDescription({
   const [draftSetId, setDraftSetId] = useState<string | null>(null);
   const [draftCardNumber, setDraftCardNumber] = useState<string>("");
   const [draftTcgPlayer, setDraftTcgPlayer] = useState<string>("");
+
+  // platform (non-card) — we don’t know which column you use, so we store one draft value and map it on save.
+  const [draftPlatformId, setDraftPlatformId] = useState<string | null>(null);
 
   const [draftReleaseDate, setDraftReleaseDate] = useState<string>("");
   const [draftProductionStatus, setDraftProductionStatus] = useState<string>("");
@@ -187,11 +231,20 @@ export default function ItemDescription({
     return "Publisher";
   }, [categoryKey]);
 
-  const setOrPlatformLabel = useMemo(() => (isCardCategory ? "Set" : "Set / Platform"), [isCardCategory]);
+  // Row label changes depending on card vs non-card
+  const setOrPlatformLabel = useMemo(() => (isCardCategory ? "Set" : "Platform"), [isCardCategory]);
 
   const identifierLabel = useMemo(() => (isCardCategory ? "Card Number" : "UPC"), [isCardCategory]);
 
   const externalIdLabel = useMemo(() => (isCardCategory ? "TCGPlayer ID" : "External ID"), [isCardCategory]);
+
+  // Decide which platform column exists on the loaded row (if any)
+  const platformCol: "game_platform_id" | "platform_id" | null = useMemo(() => {
+    const it: any = item ?? {};
+    if (Object.prototype.hasOwnProperty.call(it, "game_platform_id")) return "game_platform_id";
+    if (Object.prototype.hasOwnProperty.call(it, "platform_id")) return "platform_id";
+    return null;
+  }, [item]);
 
   const releaseDateDisplay = useMemo(() => {
     if (!item) return "—";
@@ -213,9 +266,16 @@ export default function ItemDescription({
     setDraftEpid(String(nextItem?.epid_ebay ?? ""));
 
     // card-only
-    setDraftSetId(nextItem?.card_set_id ?? null);
-    setDraftCardNumber(String(nextItem?.card_number ?? ""));
-    setDraftTcgPlayer(String(nextItem?.tcgplayer_id ?? ""));
+    setDraftSetId((nextItem as any)?.card_set_id ?? null);
+    setDraftCardNumber(String((nextItem as any)?.card_number ?? ""));
+    setDraftTcgPlayer(String((nextItem as any)?.tcgplayer_id ?? ""));
+
+    // platform (non-card)
+    const pVal =
+      (nextItem as any)?.game_platform_id ??
+      (nextItem as any)?.platform_id ??
+      null;
+    setDraftPlatformId(pVal);
 
     setDraftReleaseDate(
       nextItem
@@ -237,59 +297,41 @@ export default function ItemDescription({
       setEditing(false);
 
       try {
-        const [itemRes, frRes, setRes] = await Promise.all([
-          supabase
-            .from("catalog_items")
-            .select(
-              [
-                "id",
-                "description",
-                "franchise_id",
-                "publisher",
-                "upc",
-                "release_year",
-                "release_month",
-                "release_day",
-                "production_status",
-                "end_year",
-                "end_month",
-                "end_day",
-                "epid_ebay",
-                // card-only
-                "card_set_id",
-                "card_number",
-                "tcgplayer_id",
-              ].join(",")
-            )
-            .eq("id", catalogItemId)
-            .maybeSingle(),
-          supabase.from("franchises").select("id,name").order("name", { ascending: true }),
-          supabase.from("card_sets").select("id,name").order("name", { ascending: true }),
-        ]);
-
+        // Use select("*") so this component doesn't explode when optional columns differ by environment.
+        const itemRes = await supabase.from("catalog_items").select("*").eq("id", catalogItemId).maybeSingle();
         if (itemRes.error) throw itemRes.error;
-        if (frRes.error) throw frRes.error;
-        if (setRes.error) throw setRes.error;
 
         const it = (itemRes.data as any) as CatalogItemRow | null;
 
-        const frs = (frRes.data ?? []) as any as LookupRow[];
-        const sets = (setRes.data ?? []) as any as LookupRow[];
+        // Lookups (safe; empty arrays if table doesn't exist)
+        const [frs, sets, plats] = await Promise.all([
+          safeLookup("franchises"),
+          safeLookup("card_sets"),
+          safeLookup("game_platforms"),
+        ]);
 
+        // Resolve names
         let fName = "";
         if (it?.franchise_id) fName = String(frs.find((x) => x.id === it.franchise_id)?.name ?? "");
 
         let sName = "";
-        if (it?.card_set_id) sName = String(sets.find((x) => x.id === it.card_set_id)?.name ?? "");
+        const cardSetId = (it as any)?.card_set_id ?? null;
+        if (cardSetId) sName = String(sets.find((x) => x.id === cardSetId)?.name ?? "");
+
+        let pName = "";
+        const platId = (it as any)?.game_platform_id ?? (it as any)?.platform_id ?? null;
+        if (platId) pName = String(plats.find((x) => x.id === platId)?.name ?? "");
 
         if (cancelled) return;
 
         setItem(it);
         setFranchises(frs);
         setCardSets(sets);
+        setPlatforms(plats);
 
         setFranchiseName(fName);
         setSetName(sName);
+        setPlatformName(pName);
 
         primeDraftFromLoaded(it);
 
@@ -330,11 +372,11 @@ export default function ItemDescription({
       const rel = parsePartialDate(draftReleaseDate);
       const end = parsePartialDate(draftEndDate);
 
-      const payload = {
+      // Base payload (always safe columns)
+      const basePayload: Record<string, any> = {
         description: normalizeInput(draftDescription),
         franchise_id: draftFranchiseId,
 
-        // generic
         publisher: normalizeInput(draftPublisher),
         upc: normalizeInput(draftUpc),
         epid_ebay: normalizeInput(draftEpid),
@@ -348,24 +390,72 @@ export default function ItemDescription({
         end_year: end.y,
         end_month: end.m,
         end_day: end.d,
+      };
 
-        // card-only (clear when not card category)
+      // Optional payload parts
+      const cardPayload: Record<string, any> = {
         card_set_id: isCardCategory ? draftSetId : null,
         card_number: isCardCategory ? normalizeInput(draftCardNumber) : null,
         tcgplayer_id: isCardCategory ? normalizeInput(draftTcgPlayer) : null,
       };
 
-      const up = await supabase.from("catalog_items").update(payload).eq("id", catalogItemId);
-      if (up.error) throw up.error;
+      // Platform payload (only for non-card)
+      const platformPayloadGame: Record<string, any> = {
+        game_platform_id: !isCardCategory ? draftPlatformId : null,
+      };
+      const platformPayloadGeneric: Record<string, any> = {
+        platform_id: !isCardCategory ? draftPlatformId : null,
+      };
 
-      const newItem: CatalogItemRow = { ...(item as any), ...(payload as any) } as any;
-      setItem(newItem);
+      // Decide what to try first based on what the loaded row seems to have
+      const tryFull = {
+        ...basePayload,
+        ...(isCardCategory ? cardPayload : {}),
+        ...(!isCardCategory
+          ? platformCol === "game_platform_id"
+            ? platformPayloadGame
+            : platformCol === "platform_id"
+              ? platformPayloadGeneric
+              : platformPayloadGame // default guess
+          : {}),
+      };
 
+      // Fallbacks: if unknown columns exist, we retry with less
+      const fallbacks: Array<Record<string, any>> = [];
+
+      // 1) base + card (no platform)
+      fallbacks.push({ ...basePayload, ...(isCardCategory ? cardPayload : {}) });
+
+      // 2) base + platform (game_platform_id)
+      fallbacks.push({ ...basePayload, ...(!isCardCategory ? platformPayloadGame : {}) });
+
+      // 3) base + platform (platform_id)
+      fallbacks.push({ ...basePayload, ...(!isCardCategory ? platformPayloadGeneric : {}) });
+
+      // 4) base only (always works as long as base columns exist)
+      fallbacks.push({ ...basePayload });
+
+      const res = await safeUpdateCatalogItem(catalogItemId, tryFull, fallbacks);
+      if (!res.ok) throw res.error;
+
+      // Locally merge new data
+      const merged: any = { ...(item as any), ...(tryFull as any) };
+      setItem(merged);
+
+      // Update display names
       const fName = draftFranchiseId ? String(franchises.find((x) => x.id === draftFranchiseId)?.name ?? "") : "";
-      const sName = isCardCategory && draftSetId ? String(cardSets.find((x) => x.id === draftSetId)?.name ?? "") : "";
+
+      const sName =
+        isCardCategory && draftSetId ? String(cardSets.find((x) => x.id === draftSetId)?.name ?? "") : "";
+
+      const pName =
+        !isCardCategory && draftPlatformId
+          ? String(platforms.find((x) => x.id === draftPlatformId)?.name ?? "")
+          : "";
 
       setFranchiseName(fName);
       setSetName(sName);
+      setPlatformName(pName);
 
       setEditing(false);
       setSaving(false);
@@ -379,6 +469,12 @@ export default function ItemDescription({
   const row1GridClass = "md:grid-cols-4";
   const row2GridClass = "md:grid-cols-3";
   const row3GridClass = "md:grid-cols-3";
+
+  // Click behavior: match your catalog page expected params.
+  // (These are your current params; if your /catalog uses different keys, change here.)
+  const pushFranchise = (id: string) => router.push(`/catalog?franchise=${id}`);
+  const pushSet = (id: string) => router.push(`/catalog?set=${id}`);
+  const pushPlatform = (id: string) => router.push(`/catalog?platform=${id}`);
 
   return (
     <div className="rounded-2xl border border-[#E5E9F2] bg-white shadow-sm overflow-hidden">
@@ -468,7 +564,7 @@ export default function ItemDescription({
                         item?.franchise_id ? "text-[#2563EB] hover:underline" : "text-[#0F172A]"
                       }`}
                       onClick={() => {
-                        if (item?.franchise_id) router.push(`/catalog?franchise=${item.franchise_id}`);
+                        if (item?.franchise_id) pushFranchise(item.franchise_id);
                       }}
                       title={franchiseName || "—"}
                     >
@@ -477,7 +573,7 @@ export default function ItemDescription({
                   )}
                 </div>
 
-                {/* Set / Platform (we only have Set for cards today) */}
+                {/* Set / Platform */}
                 <div className="min-w-0">
                   <div className="text-xs font-semibold text-[#64748B]">{setOrPlatformLabel}</div>
 
@@ -499,10 +595,11 @@ export default function ItemDescription({
                       <button
                         type="button"
                         className={`mt-1 text-left text-sm truncate w-full ${
-                          item?.card_set_id ? "text-[#2563EB] hover:underline" : "text-[#0F172A]"
+                          (item as any)?.card_set_id ? "text-[#2563EB] hover:underline" : "text-[#0F172A]"
                         }`}
                         onClick={() => {
-                          if (item?.card_set_id) router.push(`/catalog?set=${item.card_set_id}`);
+                          const id = (item as any)?.card_set_id ?? null;
+                          if (id) pushSet(id);
                         }}
                         title={setName || "—"}
                       >
@@ -510,10 +607,34 @@ export default function ItemDescription({
                       </button>
                     )
                   ) : (
-                    // Non-cards: no DB field yet, keep layout consistent
-                    <div className="mt-1 text-sm text-[#0F172A] truncate" title="—">
-                      —
-                    </div>
+                    editing ? (
+                      <select
+                        className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm text-[#0F172A]"
+                        value={draftPlatformId ?? ""}
+                        onChange={(e) => setDraftPlatformId(e.target.value ? e.target.value : null)}
+                      >
+                        <option value="">—</option>
+                        {platforms.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <button
+                        type="button"
+                        className={`mt-1 text-left text-sm truncate w-full ${
+                          draftPlatformId || platformName ? "text-[#2563EB] hover:underline" : "text-[#0F172A]"
+                        }`}
+                        onClick={() => {
+                          const id = (item as any)?.game_platform_id ?? (item as any)?.platform_id ?? null;
+                          if (id) pushPlatform(id);
+                        }}
+                        title={platformName || "—"}
+                      >
+                        {display(platformName)}
+                      </button>
+                    )
                   )}
                 </div>
 
@@ -521,7 +642,7 @@ export default function ItemDescription({
                 {isCardCategory ? (
                   <Field
                     label={identifierLabel}
-                    value={editing ? draftCardNumber : String(item?.card_number ?? "")}
+                    value={editing ? draftCardNumber : String((item as any)?.card_number ?? "")}
                     editing={editing}
                     onChange={setDraftCardNumber}
                   />
@@ -579,12 +700,11 @@ export default function ItemDescription({
                 {isCardCategory ? (
                   <Field
                     label={externalIdLabel}
-                    value={editing ? draftTcgPlayer : String(item?.tcgplayer_id ?? "")}
+                    value={editing ? draftTcgPlayer : String((item as any)?.tcgplayer_id ?? "")}
                     editing={editing}
                     onChange={setDraftTcgPlayer}
                   />
                 ) : (
-                  // Non-cards: no external id field yet (beyond ePID), keep layout consistent
                   <Field label={externalIdLabel} value={""} editing={false} />
                 )}
               </div>
@@ -593,12 +713,6 @@ export default function ItemDescription({
                 Date format accepts <code className="px-1">YYYY</code>, <code className="px-1">YYYY-MM</code>, or{" "}
                 <code className="px-1">YYYY-MM-DD</code>.
               </div>
-
-              {!isCardCategory && editing && isAdmin ? (
-                <div className="mt-3 text-[11px] text-[#64748B]">
-                  Note: “Set / Platform” and “External ID” are placeholders for non-card items until we add real columns for them.
-                </div>
-              ) : null}
             </div>
           </>
         ) : null}
