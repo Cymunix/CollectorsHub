@@ -11,10 +11,10 @@ type CatalogItemRow = {
   description: string | null;
 
   franchise_id: string | null;
-  card_set_id: string | null;
 
+  // generic
   publisher: string | null;
-  card_number: string | null;
+  upc: string | null;
 
   release_year: number | null;
   release_month: number | null;
@@ -27,6 +27,10 @@ type CatalogItemRow = {
   end_day: number | null;
 
   epid_ebay: string | null;
+
+  // card-only
+  card_set_id: string | null;
+  card_number: string | null;
   tcgplayer_id: string | null;
 };
 
@@ -156,24 +160,25 @@ export default function ItemDescription({
   const [draftDescription, setDraftDescription] = useState<string>("");
 
   const [draftFranchiseId, setDraftFranchiseId] = useState<string | null>(null);
-  const [draftSetId, setDraftSetId] = useState<string | null>(null);
 
-  const [draftCardNumber, setDraftCardNumber] = useState<string>("");
+  // generic
   const [draftPublisher, setDraftPublisher] = useState<string>("");
+  const [draftUpc, setDraftUpc] = useState<string>("");
+  const [draftEpid, setDraftEpid] = useState<string>("");
+
+  // card-only
+  const [draftSetId, setDraftSetId] = useState<string | null>(null);
+  const [draftCardNumber, setDraftCardNumber] = useState<string>("");
+  const [draftTcgPlayer, setDraftTcgPlayer] = useState<string>("");
 
   const [draftReleaseDate, setDraftReleaseDate] = useState<string>("");
   const [draftProductionStatus, setDraftProductionStatus] = useState<string>("");
-
   const [draftEndDate, setDraftEndDate] = useState<string>("");
-
-  const [draftEpid, setDraftEpid] = useState<string>("");
-  const [draftTcgPlayer, setDraftTcgPlayer] = useState<string>("");
 
   const collectorsHubId = catalogItemId;
 
   const isCardCategory = useMemo(() => {
     const c = String(categoryName ?? "").toLowerCase();
-    // tighten later if you want, but this stops the leak immediately
     return c.includes("trading") || c.includes("sports card") || c === "cards" || c.includes("tcg");
   }, [categoryName]);
 
@@ -187,32 +192,30 @@ export default function ItemDescription({
     return formatPartialDate(item.end_year, item.end_month, item.end_day);
   }, [item]);
 
-  // ✅ Card-only fields must never show for non-card items.
-  // Admin can see card fields while editing ONLY if category is cards.
-  const canShowCardFields = isCardCategory && (editing || true);
-
-  // ✅ Your rule:
-  // - hide Set unless the item actually has a set id
-  // - BUT allow admins to see it while editing so they can set/clear it
-  // - AND card-only gate
+  // ✅ Card-only visibility rules
   const shouldShowSet = Boolean(isCardCategory && (editing || item?.card_set_id));
-
-  // Card-only: only show when card category AND (editing OR has a value)
   const shouldShowCardNumber = Boolean(isCardCategory && (editing || hasText(item?.card_number)));
-  const shouldShowPublisher = Boolean(isCardCategory && (editing || hasText(item?.publisher)));
   const shouldShowTcgPlayer = Boolean(isCardCategory && (editing || hasText(item?.tcgplayer_id)));
 
-  // ePID: keep it generic, but don’t show an empty row for non-admin view
+  // ✅ Generic visibility rules
+  const shouldShowPublisher = Boolean(editing || hasText(item?.publisher));
   const shouldShowEpid = Boolean(editing || hasText(item?.epid_ebay));
+  const shouldShowUpc = Boolean(editing || hasText(item?.upc));
 
   function primeDraftFromLoaded(nextItem: CatalogItemRow | null) {
     setDraftDescription(String(nextItem?.description ?? ""));
 
     setDraftFranchiseId(nextItem?.franchise_id ?? null);
-    setDraftSetId(nextItem?.card_set_id ?? null);
 
-    setDraftCardNumber(String(nextItem?.card_number ?? ""));
+    // generic
     setDraftPublisher(String(nextItem?.publisher ?? ""));
+    setDraftUpc(String(nextItem?.upc ?? ""));
+    setDraftEpid(String(nextItem?.epid_ebay ?? ""));
+
+    // card-only
+    setDraftSetId(nextItem?.card_set_id ?? null);
+    setDraftCardNumber(String(nextItem?.card_number ?? ""));
+    setDraftTcgPlayer(String(nextItem?.tcgplayer_id ?? ""));
 
     setDraftReleaseDate(
       nextItem
@@ -220,13 +223,9 @@ export default function ItemDescription({
         : ""
     );
     setDraftProductionStatus(String(nextItem?.production_status ?? ""));
-
     setDraftEndDate(
       nextItem ? formatPartialDate(nextItem.end_year, nextItem.end_month, nextItem.end_day).replace("—", "") : ""
     );
-
-    setDraftEpid(String(nextItem?.epid_ebay ?? ""));
-    setDraftTcgPlayer(String(nextItem?.tcgplayer_id ?? ""));
   }
 
   useEffect(() => {
@@ -242,7 +241,25 @@ export default function ItemDescription({
           supabase
             .from("catalog_items")
             .select(
-              "id, description, franchise_id, card_set_id, publisher, card_number, release_year, release_month, release_day, production_status, end_year, end_month, end_day, epid_ebay, tcgplayer_id"
+              [
+                "id",
+                "description",
+                "franchise_id",
+                "publisher",
+                "upc",
+                "release_year",
+                "release_month",
+                "release_day",
+                "production_status",
+                "end_year",
+                "end_month",
+                "end_day",
+                "epid_ebay",
+                // card-only
+                "card_set_id",
+                "card_number",
+                "tcgplayer_id",
+              ].join(",")
             )
             .eq("id", catalogItemId)
             .maybeSingle(),
@@ -313,18 +330,14 @@ export default function ItemDescription({
       const rel = parsePartialDate(draftReleaseDate);
       const end = parsePartialDate(draftEndDate);
 
-      // ✅ If not card category, forcibly clear card-only fields on save
-      // (prevents random items from accidentally keeping card metadata)
       const payload = {
         description: normalizeInput(draftDescription),
-
         franchise_id: draftFranchiseId,
 
-        // card-only
-        card_set_id: isCardCategory ? draftSetId : null,
-        card_number: isCardCategory ? normalizeInput(draftCardNumber) : null,
-        publisher: isCardCategory ? normalizeInput(draftPublisher) : null,
-        tcgplayer_id: isCardCategory ? normalizeInput(draftTcgPlayer) : null,
+        // ✅ generic
+        publisher: normalizeInput(draftPublisher),
+        upc: normalizeInput(draftUpc),
+        epid_ebay: normalizeInput(draftEpid),
 
         release_year: rel.y,
         release_month: rel.m,
@@ -336,19 +349,16 @@ export default function ItemDescription({
         end_month: end.m,
         end_day: end.d,
 
-        // keep as generic
-        epid_ebay: normalizeInput(draftEpid),
+        // ✅ card-only (clear when not card category)
+        card_set_id: isCardCategory ? draftSetId : null,
+        card_number: isCardCategory ? normalizeInput(draftCardNumber) : null,
+        tcgplayer_id: isCardCategory ? normalizeInput(draftTcgPlayer) : null,
       };
 
       const up = await supabase.from("catalog_items").update(payload).eq("id", catalogItemId);
       if (up.error) throw up.error;
 
-      // Update local view
-      const newItem: CatalogItemRow = {
-        ...item,
-        ...payload,
-      } as any;
-
+      const newItem: CatalogItemRow = { ...item, ...payload } as any;
       setItem(newItem);
 
       const fName = draftFranchiseId ? String(franchises.find((x) => x.id === draftFranchiseId)?.name ?? "") : "";
@@ -366,27 +376,36 @@ export default function ItemDescription({
     }
   }
 
-  // ✅ layout: Row 1 columns depend on whether card fields are present
+  // Row 1 columns: Franchise + (Set) + (Card Number)
   const row1Cols = useMemo(() => {
-    // Franchise always
-    let cols = 1;
+    let cols = 1; // Franchise
     if (shouldShowSet) cols += 1;
     if (shouldShowCardNumber) cols += 1;
-    if (shouldShowPublisher) cols += 1;
     return cols;
-  }, [shouldShowSet, shouldShowCardNumber, shouldShowPublisher]);
+  }, [shouldShowSet, shouldShowCardNumber]);
 
   const row1GridClass = useMemo(() => {
-    // keep it simple and stable with Tailwind known classes
-    // 1 -> md:grid-cols-1
-    // 2 -> md:grid-cols-2
-    // 3 -> md:grid-cols-3
-    // 4 -> md:grid-cols-4
     if (row1Cols === 1) return "md:grid-cols-1";
     if (row1Cols === 2) return "md:grid-cols-2";
-    if (row1Cols === 3) return "md:grid-cols-3";
-    return "md:grid-cols-4";
+    return "md:grid-cols-3";
   }, [row1Cols]);
+
+  // Row 3: Publisher + ePID + UPC (generic)
+  const row3Cols = useMemo(() => {
+    let cols = 0;
+    if (shouldShowPublisher) cols += 1;
+    if (shouldShowEpid) cols += 1;
+    if (shouldShowUpc) cols += 1;
+    // keep grid stable in edit mode: if editing, we want all 3 slots visible
+    if (editing) cols = 3;
+    return Math.max(1, cols);
+  }, [shouldShowPublisher, shouldShowEpid, shouldShowUpc, editing]);
+
+  const row3GridClass = useMemo(() => {
+    if (row3Cols === 1) return "md:grid-cols-1";
+    if (row3Cols === 2) return "md:grid-cols-2";
+    return "md:grid-cols-3";
+  }, [row3Cols]);
 
   return (
     <div className="rounded-2xl border border-[#E5E9F2] bg-white shadow-sm overflow-hidden">
@@ -451,8 +470,7 @@ export default function ItemDescription({
 
             {/* Grid */}
             <div className="rounded-2xl border border-[#E5E9F2] bg-white p-4">
-              {/* Row 1: Franchise — (Set) — (Card Number) — (Publisher)
-                  Card fields never render for non-card categories. */}
+              {/* Row 1: Franchise — (Set) — (Card Number) */}
               <div className={`grid grid-cols-1 gap-4 ${row1GridClass}`}>
                 {/* Franchise */}
                 <div className="min-w-0">
@@ -529,16 +547,6 @@ export default function ItemDescription({
                     onChange={setDraftCardNumber}
                   />
                 ) : null}
-
-                {/* Publisher (card-only) */}
-                {shouldShowPublisher ? (
-                  <Field
-                    label="Publisher"
-                    value={editing ? draftPublisher : String(item?.publisher ?? "")}
-                    editing={editing}
-                    onChange={setDraftPublisher}
-                  />
-                ) : null}
               </div>
 
               {/* Row 2: Release Date — Production Status — End Date */}
@@ -563,20 +571,38 @@ export default function ItemDescription({
                 />
               </div>
 
-              {/* Row 3: (ePID) — (TCGPlayer) — CollectorsHub ID
-                  TCGPlayer is card-only, ePID is generic but hidden if empty unless editing */}
-              <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
-                {shouldShowEpid ? (
+              {/* Row 3: Publisher — ePID — UPC (all generic) */}
+              <div className={`mt-4 grid grid-cols-1 gap-4 ${row3GridClass}`}>
+                {shouldShowPublisher || editing ? (
+                  <Field
+                    label="Publisher"
+                    value={editing ? draftPublisher : String(item?.publisher ?? "")}
+                    editing={editing}
+                    onChange={setDraftPublisher}
+                  />
+                ) : null}
+
+                {shouldShowEpid || editing ? (
                   <Field
                     label="ePID (eBay)"
                     value={editing ? draftEpid : String(item?.epid_ebay ?? "")}
                     editing={editing}
                     onChange={setDraftEpid}
                   />
-                ) : (
-                  <div className="min-w-0" />
-                )}
+                ) : null}
 
+                {shouldShowUpc || editing ? (
+                  <Field
+                    label="UPC"
+                    value={editing ? draftUpc : String(item?.upc ?? "")}
+                    editing={editing}
+                    onChange={setDraftUpc}
+                  />
+                ) : null}
+              </div>
+
+              {/* Row 4: (TCGPlayer ID card-only) — CollectorsHub ID */}
+              <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
                 {shouldShowTcgPlayer ? (
                   <Field
                     label="TCGPlayer ID"
@@ -588,6 +614,8 @@ export default function ItemDescription({
                   <div className="min-w-0" />
                 )}
 
+                <div className="min-w-0" />
+
                 <Field label="CollectorsHub ID" value={collectorsHubId} editing={false} />
               </div>
 
@@ -596,7 +624,6 @@ export default function ItemDescription({
                 <code className="px-1">YYYY-MM-DD</code>.
               </div>
 
-              {/* Hard safety: if not card category, still allow admins to edit card fields? No. */}
               {!isCardCategory && editing && isAdmin ? (
                 <div className="mt-3 text-[11px] text-[#64748B]">
                   Card-only fields are hidden because this item is not in a card category.
