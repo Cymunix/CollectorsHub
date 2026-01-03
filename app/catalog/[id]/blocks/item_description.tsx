@@ -197,10 +197,8 @@ export default function ItemDescription({
   const shouldShowCardNumber = Boolean(isCardCategory && (editing || hasText(item?.card_number)));
   const shouldShowTcgPlayer = Boolean(isCardCategory && (editing || hasText(item?.tcgplayer_id)));
 
-  // ✅ Generic visibility rules
-  const shouldShowPublisher = Boolean(editing || hasText(item?.publisher));
-  const shouldShowEpid = Boolean(editing || hasText(item?.epid_ebay));
-  const shouldShowUpc = Boolean(editing || hasText(item?.upc));
+  // ✅ Generic fields should ALWAYS render (consistent layout for every item)
+  const row3GridClass = "md:grid-cols-3";
 
   function primeDraftFromLoaded(nextItem: CatalogItemRow | null) {
     setDraftDescription(String(nextItem?.description ?? ""));
@@ -390,23 +388,6 @@ export default function ItemDescription({
     return "md:grid-cols-3";
   }, [row1Cols]);
 
-  // Row 3: Publisher + ePID + UPC (generic)
-  const row3Cols = useMemo(() => {
-    let cols = 0;
-    if (shouldShowPublisher) cols += 1;
-    if (shouldShowEpid) cols += 1;
-    if (shouldShowUpc) cols += 1;
-    // keep grid stable in edit mode: if editing, we want all 3 slots visible
-    if (editing) cols = 3;
-    return Math.max(1, cols);
-  }, [shouldShowPublisher, shouldShowEpid, shouldShowUpc, editing]);
-
-  const row3GridClass = useMemo(() => {
-    if (row3Cols === 1) return "md:grid-cols-1";
-    if (row3Cols === 2) return "md:grid-cols-2";
-    return "md:grid-cols-3";
-  }, [row3Cols]);
-
   return (
     <div className="rounded-2xl border border-[#E5E9F2] bg-white shadow-sm overflow-hidden">
       <div className="flex items-center justify-between border-b border-[#EEF2F7] px-4 py-3">
@@ -563,42 +544,31 @@ export default function ItemDescription({
                   editing={editing}
                   onChange={setDraftProductionStatus}
                 />
-                <Field
-                  label="End Date"
-                  value={editing ? draftEndDate : endDateDisplay}
-                  editing={editing}
-                  onChange={setDraftEndDate}
-                />
+                <Field label="End Date" value={editing ? draftEndDate : endDateDisplay} editing={editing} onChange={setDraftEndDate} />
               </div>
 
-              {/* Row 3: Publisher — ePID — UPC (all generic) */}
+              {/* Row 3: Publisher — ePID — UPC (ALWAYS visible for consistent layout) */}
               <div className={`mt-4 grid grid-cols-1 gap-4 ${row3GridClass}`}>
-                {shouldShowPublisher || editing ? (
-                  <Field
-                    label="Publisher"
-                    value={editing ? draftPublisher : String(item?.publisher ?? "")}
-                    editing={editing}
-                    onChange={setDraftPublisher}
-                  />
-                ) : null}
+                <Field
+                  label="Publisher"
+                  value={editing ? draftPublisher : String(item?.publisher ?? "")}
+                  editing={editing}
+                  onChange={setDraftPublisher}
+                />
 
-                {shouldShowEpid || editing ? (
-                  <Field
-                    label="ePID (eBay)"
-                    value={editing ? draftEpid : String(item?.epid_ebay ?? "")}
-                    editing={editing}
-                    onChange={setDraftEpid}
-                  />
-                ) : null}
+                <Field
+                  label="ePID (eBay)"
+                  value={editing ? draftEpid : String(item?.epid_ebay ?? "")}
+                  editing={editing}
+                  onChange={setDraftEpid}
+                />
 
-                {shouldShowUpc || editing ? (
-                  <Field
-                    label="UPC"
-                    value={editing ? draftUpc : String(item?.upc ?? "")}
-                    editing={editing}
-                    onChange={setDraftUpc}
-                  />
-                ) : null}
+                <Field
+                  label="UPC"
+                  value={editing ? draftUpc : String(item?.upc ?? "")}
+                  editing={editing}
+                  onChange={setDraftUpc}
+                />
               </div>
 
               {/* Row 4: (TCGPlayer ID card-only) — CollectorsHub ID */}
