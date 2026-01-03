@@ -34,13 +34,25 @@ export type AddItemMeta = {
   [key: string]: any;
 };
 
+function revokeAll(urls: string[]) {
+  urls.forEach((u) => {
+    try {
+      URL.revokeObjectURL(u);
+    } catch {}
+  });
+}
+
 export function useAddItemForm(meta: AddItemMeta) {
   // ---------- core classification ----------
   const [categoryId, setCategoryId] = useState<string>("");
   const [subcategoryId, setSubcategoryId] = useState<string>("");
   const [franchiseId, setFranchiseId] = useState<string>("");
 
-  // ---------- image ----------
+  // ---------- images (NEW multi + legacy single) ----------
+  const [itemImageFiles, setItemImageFiles] = useState<File[]>([]);
+  const [itemImagePreviews, setItemImagePreviews] = useState<string[]>([]);
+
+  // legacy single
   const [itemImageFile, setItemImageFile] = useState<File | null>(null);
   const [itemImagePreview, setItemImagePreview] = useState<string | null>(null);
 
@@ -50,8 +62,7 @@ export function useAddItemForm(meta: AddItemMeta) {
   const [catalogUPC, setCatalogUPC] = useState<string>("");
   const [catalogVersion, setCatalogVersion] = useState<string>("");
 
-  // ✅ NEW: production status
-  // Keep it permissive; DB constraint should enforce allowed values.
+  // ✅ production status
   const [productionStatus, setProductionStatus] = useState<string>("unknown");
 
   // ---------- wiki ----------
@@ -105,7 +116,6 @@ export function useAddItemForm(meta: AddItemMeta) {
   // ---------- derived ----------
   const itemKind: ItemKind = useMemo(() => {
     const catName = meta?.categories?.find((c) => c.id === categoryId)?.name ?? "";
-    // detectKindFromCategoryName expects a string; it returns your app's ItemKind
     return detectKindFromCategoryName(String(catName)) as ItemKind;
   }, [meta, categoryId]);
 
@@ -116,14 +126,119 @@ export function useAddItemForm(meta: AddItemMeta) {
   const toyBrandOptions = useMemo(() => (meta?.toyBrands ?? []) as any[], [meta]);
   const toyLineOptions = useMemo(() => (meta?.toyLines ?? []) as any[], [meta]);
 
-  // ---------- helpers ----------
+  /* =========================
+     Image helpers
+     ========================= */
+
+  const rebuildMultiPreviews = (files: File[]) => {
+    // revoke old URLs
+    setItemImagePreviews((prev) => {
+      revokeAll(prev);
+      return prev;
+    });
+
+    const urls = files.map((f) => URL.createObjectURL(f));
+    setItemImagePreviews(urls);
+  };
+
+  // NEW: pick many (append)
+  const pickItemImages = (files: File[]) => {
+    const incoming = (files ?? []).filter(Boolean);
+    if (!incoming.length) return;
+
+    const next = [...itemImageFiles, ...incoming];
+    setItemImageFiles(next);
+    rebuildMultiPreviews(next);
+
+    // legacy compatibility: set the first image as the single
+    if (!itemImageFile && next[0]) {
+      setItemImageFile(next[0]);
+      // revoke old single preview if any
+      setItemImagePreview((prev) => {
+        if (prev) {
+          try {
+            URL.revokeObjectURL(prev);
+          } catch {}
+        }
+        return prev;
+      });
+      setItemImagePreview(URL.createObjectURL(next[0]));
+    }
+  };
+
+  const removeItemImageAt = (index: number) => {
+    const next = itemImageFiles.filter((_, i) => i !== index);
+    setItemImageFiles(next);
+    rebuildMultiPreviews(next);
+
+    // legacy sync
+    const newPrimary = next[0] ?? null;
+    setItemImageFile(newPrimary);
+
+    setItemImagePreview((prev) => {
+      if (prev) {
+        try {
+          URL.revokeObjectURL(prev);
+        } catch {}
+      }
+      return null;
+    });
+
+    if (newPrimary) {
+      setItemImagePreview(URL.createObjectURL(newPrimary));
+    }
+  };
+
+  const clearItemImages = () => {
+    setItemImageFiles([]);
+    setItemImagePreviews((prev) => {
+      revokeAll(prev);
+      return [];
+    });
+
+    setItemImageFile(null);
+    setItemImagePreview((prev) => {
+      if (prev) {
+        try {
+          URL.revokeObjectURL(prev);
+        } catch {}
+      }
+      return null;
+    });
+  };
+
+  // Legacy single picker (kept so older PhotoSection doesn’t break)
   const pickItemImage = (file: File | null) => {
     setItemImageFile(file);
+
+    setItemImagePreview((prev) => {
+      if (prev) {
+        try {
+          URL.revokeObjectURL(prev);
+        } catch {}
+      }
+      return null;
+    });
+
     if (!file) {
-      setItemImagePreview(null);
+      // also clear multi
+      setItemImageFiles([]);
+      setItemImagePreviews((prev) => {
+        revokeAll(prev);
+        return [];
+      });
       return;
     }
-    setItemImagePreview(URL.createObjectURL(file));
+
+    const singleUrl = URL.createObjectURL(file);
+    setItemImagePreview(singleUrl);
+
+    // sync multi with single
+    setItemImageFiles([file]);
+    setItemImagePreviews((prev) => {
+      revokeAll(prev);
+      return [URL.createObjectURL(file)];
+    });
   };
 
   const reset = () => {
@@ -131,15 +246,14 @@ export function useAddItemForm(meta: AddItemMeta) {
     setSubcategoryId("");
     setFranchiseId("");
 
-    setItemImageFile(null);
-    setItemImagePreview(null);
+    // images
+    clearItemImages();
 
     setCatalogName("");
     setCatalogReleaseYear("");
     setCatalogUPC("");
     setCatalogVersion("");
 
-    // ✅ NEW
     setProductionStatus("unknown");
 
     setWikiSummary("");
@@ -194,6 +308,14 @@ export function useAddItemForm(meta: AddItemMeta) {
     franchiseId,
     setFranchiseId,
 
+    // NEW multi
+    itemImageFiles,
+    itemImagePreviews,
+    pickItemImages,
+    removeItemImageAt,
+    clearItemImages,
+
+    // legacy single (keep until you finish refactor)
     itemImageFile,
     itemImagePreview,
     pickItemImage,
@@ -207,7 +329,6 @@ export function useAddItemForm(meta: AddItemMeta) {
     catalogVersion,
     setCatalogVersion,
 
-    // ✅ NEW
     productionStatus,
     setProductionStatus,
 
