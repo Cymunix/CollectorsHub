@@ -130,6 +130,19 @@ export default function ItemDescription({
   catalogItemId: string;
   isAdmin: boolean;
 }) {
+  const shouldShowSet = useMemo(() => {
+  // If already set, always show it (so you can see/clear it)
+  if (item?.card_set_id) return true;
+
+  const c = (categoryName ?? "").toLowerCase();
+
+  // Adjust these rules to your categories
+  const isCard =
+    c.includes("card") || c.includes("trading") || c.includes("sports card");
+  const isComic = c.includes("comic");
+
+  return isCard || isComic;
+}, [categoryName, item?.card_set_id]);
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);
@@ -522,3 +535,4 @@ export default function ItemDescription({
     </div>
   );
 }
+
