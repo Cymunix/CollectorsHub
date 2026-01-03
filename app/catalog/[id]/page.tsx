@@ -581,4 +581,205 @@ export default function Page({ params }: { params: { id: string } }) {
   return c.includes("comic") || c.includes("trading") || c.includes("sports card") || c.includes("cards");
 }, [category?.name, isBuildingBlocks]);
 
+  const reviewText = useMemo(() => {
+    if (reviewCount > 0) {
+      const avgStr = reviewAvg.toFixed(1);
+      return `${avgStr}/5 (${reviewCount})`;
+    }
+    return "No reviews yet";
+  }, [reviewAvg, reviewCount]);
+
+  const displayName = loadingHeader ? "Loading..." : safeText(isMinifigPage ? minifigItem?.name : item?.name);
+
+  // ✅ IMPORTANT: Decide BB mode WITHOUT relying on bbIsSet
+  const bbMode: "set" | "minifig" = isBuildingBlocks && (isMinifigPage || bbIsMinifig) ? "minifig" : "set";
+
+  const showIncludedItemsTab = !isMinifigPage && !!item?.id && isBundle;
+  const showIncludedInTab = !isMinifigPage && !!item?.id && !isBundle && (includedInBundles?.length ?? 0) > 0;
+
+  return (
+    <main className="min-h-screen w-full bg-[#F4F7FD] text-[#0F172A]">
+      <Header />
+      <SecondaryNav />
+      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
+
+      <div className="px-6 py-6">
+        <div className="mb-3">
+          <button
+            type="button"
+            onClick={() => router.push("/catalog")}
+            className="text-xs text-[#2563EB] hover:underline"
+          >
+            ← Back to Catalog
+          </button>
+        </div>
+
+        {headerErr ? (
+          <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+            {headerErr}
+          </div>
+        ) : null}
+
+        <div className="rounded-2xl border border-[#E5E9F2] bg-white shadow-sm p-5">
+          {/* Title */}
+          <div className="min-w-0">
+            <div className="flex items-center gap-3 flex-wrap">
+              <h1 className="text-2xl font-semibold truncate">{displayName}</h1>
+
+              {!isMinifigPage && isBundle ? (
+                <span className="inline-flex items-center rounded-full border bg-[#F8FAFC] px-3 py-1 text-xs font-semibold text-[#0F172A] border-[#E5E9F2]">
+                  Bundle
+                </span>
+              ) : null}
+
+              <button
+                type="button"
+                onClick={() => setTab("reviews")}
+                className="flex items-center gap-2 rounded-full border border-[#E5E9F2] bg-[#F8FAFC] px-3 py-1 text-xs font-semibold text-[#0F172A] hover:bg-white transition"
+                aria-label="View reviews"
+              >
+                <Stars avg={reviewCount > 0 ? reviewAvg : 0} />
+                <span className="text-[11px] text-[#64748B]">{reviewText}</span>
+              </button>
+            </div>
+
+            <div className="mt-1 text-xs text-[#6B7280]">
+              {safeText(category?.name)}
+              {subcategory?.name ? ` • ${subcategory.name}` : ""}
+              {franchise?.name ? ` • ${franchise.name}` : ""}
+              {isMinifigPage && minifigItem?.minifig_number ? ` • Fig # ${minifigItem.minifig_number}` : ""}
+              {!isMinifigPage && item?.upc ? ` • UPC: ${item.upc}` : ""}
+              {!isMinifigPage && item?.version ? ` • ${item.version}` : ""}
+            </div>
+          </div>
+
+          {/* Layout */}
+          <div className="mt-5 grid grid-cols-1 lg:grid-cols-[340px_1fr_360px] gap-5 items-start">
+            {/* Left: Image */}
+            <div className="min-w-0">
+              {isMinifigPage ? (
+                <div className="rounded-2xl border border-[#E5E9F2] bg-[#F8FAFF] p-4">
+                  <div className="aspect-square w-full rounded-xl bg-white border border-[#E5E9F2] overflow-hidden flex items-center justify-center">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    {minifigItem?.image_url ? (
+                      <img
+                        src={minifigItem.image_url}
+                        alt={safeText(minifigItem?.name)}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <div className="text-xs text-[#94A3B8]">No image</div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <ItemImage catalogItemId={catalogItemId} itemName={item?.name ?? "Item"} />
+              )}
+            </div>
+
+            {/* Middle: Value + Condition */}
+            <div className="min-w-0 space-y-3">
+              <ItemValueBlock
+                catalogItemId={catalogItemId}
+                categoryName={category?.name ?? null}
+                isBuildingBlocks={isBuildingBlocks}
+                isGradableCategory={isGradableCategory}
+                conditionValues={conditionValues}
+                conditionMeta={conditionMeta ?? undefined}
+              />
+
+              {isBuildingBlocks ? (
+                <ItemConditionBuildingBlocks
+                  mode={bbMode}
+                  catalogItemId={catalogItemId}
+                  expectedMinifigs={bbMode === "set" ? bbMinifigs : []}
+                  conditionValues={conditionValues}
+                  conditionMeta={conditionMeta ?? undefined}
+                  onChange={(nextValues, nextMeta) => {
+                    setConditionValues(nextValues);
+                    setConditionMeta(nextMeta);
+                  }}
+                />
+              ) : (
+                <ItemConditionSelector
+                  catalogItemId={catalogItemId}
+                  categoryName={category?.name ?? null}
+                  isBuildingBlocks={isBuildingBlocks}
+                  isGradableCategory={isGradableCategory}
+                  conditionValues={conditionValues}
+                  conditionMeta={conditionMeta ?? undefined}
+                  onChange={(nextValues, nextMeta) => {
+                    setConditionValues(nextValues);
+                    setConditionMeta(nextMeta);
+                  }}
+                />
+              )}
+            </div>
+
+            {/* Right: Actions */}
+            <div className="min-w-0">
+              <ItemAddActions
+                catalogItemId={catalogItemId}
+                userId={userId}
+                onRequireAuth={() => setAuthOpen(true)}
+                conditionValues={conditionValues}
+                onConditionValuesChange={(next) => setConditionValues(next)}
+                seedMinifigs={bbMode === "set" ? bbMinifigs : []}
+              />
+            </div>
+          </div>
+
+          {/* Tabs */}
+          <div className="mt-6 flex items-center gap-2 flex-wrap">
+            <TabButton active={tab === "Item Information"} onClick={() => setTab("Item Information")}>
+              Information
+            </TabButton>
+
+            {showIncludedItemsTab ? (
+              <TabButton active={tab === "included_items"} onClick={() => setTab("included_items")}>
+                Included Items
+              </TabButton>
+            ) : null}
+
+            {showIncludedInTab ? (
+              <TabButton active={tab === "included_in"} onClick={() => setTab("included_in")}>
+                Included In
+              </TabButton>
+            ) : null}
+
+            <TabButton active={tab === "variants"} onClick={() => setTab("variants")}>
+              Variants
+            </TabButton>
+            <TabButton active={tab === "reviews"} onClick={() => setTab("reviews")}>
+              Reviews
+            </TabButton>
+            <TabButton active={tab === "sales_history"} onClick={() => setTab("sales_history")}>
+              Sales History
+            </TabButton>
+            <TabButton active={tab === "listings"} onClick={() => setTab("listings")}>
+              Listings
+            </TabButton>
+          </div>
+
+          {/* Bundle errors */}
+          {bundleErr ? (
+            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+              {bundleErr}
+            </div>
+          ) : null}
+
+          {/* Tab Content */}
+          <div className="mt-4 space-y-4">
+            {tab === "Item Information" ? <ItemDescription catalogItemId={catalogItemId} isAdmin={isAdmin} /> : null}
+
+            {tab === "variants" ? <ItemVariantsTab catalogItemId={catalogItemId} /> : null}
+            {tab === "reviews" ? <ItemReviewsTab catalogItemId={catalogItemId} /> : null}
+            {tab === "sales_history" ? (
+              <ItemSalesHistoryTab catalogItemId={catalogItemId} selectedConditionJson={conditionValues} />
+            ) : null}
+            {tab === "listings" ? (
+              <ItemListingsTab
+                catalogItemId={catalogItemId}
+                categoryName={category?.name ?? null}
+                itemName={isMinifigPage ? (minifigItem?.name ?? "Minifig") : item?.name ?? "Item"}
 
