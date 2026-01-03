@@ -7,16 +7,20 @@ import { supabase } from "@/lib/supabaseClient";
 
 type CatalogItemRow = {
   id: string;
+
+  description: string | null;
+
   franchise_id: string | null;
   card_set_id: string | null;
 
   publisher: string | null;
   card_number: string | null;
-  production_status: string | null;
 
   release_year: number | null;
   release_month: number | null;
   release_day: number | null;
+
+  production_status: string | null;
 
   end_year: number | null;
   end_month: number | null;
@@ -61,7 +65,10 @@ function parsePartialDate(input: string): { y: number | null; m: number | null; 
   if (!raw) return { y: null, m: null, d: null };
 
   const cleaned = raw.replace(/\//g, "-");
-  const parts = cleaned.split("-").map((p) => p.trim()).filter(Boolean);
+  const parts = cleaned
+    .split("-")
+    .map((p) => p.trim())
+    .filter(Boolean);
 
   const y = parts[0] ? Number(parts[0]) : NaN;
   if (!Number.isFinite(y) || y < 0) return { y: null, m: null, d: null };
@@ -137,25 +144,24 @@ export default function ItemDescription({
   const [franchises, setFranchises] = useState<LookupRow[]>([]);
   const [cardSets, setCardSets] = useState<LookupRow[]>([]);
 
-  const [description, setDescription] = useState<string>("");
-
   const [editing, setEditing] = useState(false);
 
   // Draft fields (admin edits)
+  const [draftDescription, setDraftDescription] = useState<string>("");
+
   const [draftFranchiseId, setDraftFranchiseId] = useState<string | null>(null);
   const [draftSetId, setDraftSetId] = useState<string | null>(null);
 
   const [draftCardNumber, setDraftCardNumber] = useState<string>("");
   const [draftPublisher, setDraftPublisher] = useState<string>("");
-  const [draftProductionStatus, setDraftProductionStatus] = useState<string>("");
 
   const [draftReleaseDate, setDraftReleaseDate] = useState<string>("");
+  const [draftProductionStatus, setDraftProductionStatus] = useState<string>("");
+
   const [draftEndDate, setDraftEndDate] = useState<string>("");
 
   const [draftEpid, setDraftEpid] = useState<string>("");
   const [draftTcgPlayer, setDraftTcgPlayer] = useState<string>("");
-
-  const [draftDescription, setDraftDescription] = useState<string>("");
 
   const collectorsHubId = catalogItemId;
 
@@ -170,24 +176,25 @@ export default function ItemDescription({
   }, [item]);
 
   function primeDraftFromLoaded(nextItem: CatalogItemRow | null) {
+    setDraftDescription(String(nextItem?.description ?? ""));
+
     setDraftFranchiseId(nextItem?.franchise_id ?? null);
     setDraftSetId(nextItem?.card_set_id ?? null);
 
     setDraftCardNumber(String(nextItem?.card_number ?? ""));
     setDraftPublisher(String(nextItem?.publisher ?? ""));
-    setDraftProductionStatus(String(nextItem?.production_status ?? ""));
 
     setDraftReleaseDate(
       nextItem ? formatPartialDate(nextItem.release_year, nextItem.release_month, nextItem.release_day).replace("—", "") : ""
     );
+    setDraftProductionStatus(String(nextItem?.production_status ?? ""));
+
     setDraftEndDate(
       nextItem ? formatPartialDate(nextItem.end_year, nextItem.end_month, nextItem.end_day).replace("—", "") : ""
     );
 
     setDraftEpid(String(nextItem?.epid_ebay ?? ""));
     setDraftTcgPlayer(String(nextItem?.tcgplayer_id ?? ""));
-
-    setDraftDescription(description ?? "");
   }
 
   useEffect(() => {
@@ -199,66 +206,42 @@ export default function ItemDescription({
       setEditing(false);
 
       try {
-        // Load catalog item (grid source of truth)
-        const itemRes = await supabase
-          .from("catalog_items")
-          .select(
-            "id, franchise_id, card_set_id, publisher, card_number, production_status, release_year, release_month, release_day, end_year, end_month, end_day, epid_ebay, tcgplayer_id"
-          )
-          .eq("id", catalogItemId)
-          .maybeSingle();
-
-        if (itemRes.error) throw itemRes.error;
-
-        const it = (itemRes.data as any) as CatalogItemRow | null;
-
-        // Load free text description
-        const descRes = await supabase
-          .from("catalog_item_descriptions")
-          .select("description, description_text")
-          .eq("catalog_item_id", catalogItemId)
-          .maybeSingle();
-
-        if (descRes.error) throw descRes.error;
-
-        const descRow: any = descRes.data ?? null;
-        const loadedDesc = String(descRow?.description_text ?? descRow?.description ?? "");
-
-        // Lookups (for dropdown + names)
-        const [frRes, setRes] = await Promise.all([
+        const [itemRes, frRes, setRes] = await Promise.all([
+          supabase
+            .from("catalog_items")
+            .select(
+              "id, description, franchise_id, card_set_id, publisher, card_number, release_year, release_month, release_day, production_status, end_year, end_month, end_day, epid_ebay, tcgplayer_id"
+            )
+            .eq("id", catalogItemId)
+            .maybeSingle(),
           supabase.from("franchises").select("id,name").order("name", { ascending: true }),
           supabase.from("card_sets").select("id,name").order("name", { ascending: true }),
         ]);
 
+        if (itemRes.error) throw itemRes.error;
         if (frRes.error) throw frRes.error;
         if (setRes.error) throw setRes.error;
 
-        // Resolve franchise/set display names
+        const it = (itemRes.data as any) as CatalogItemRow | null;
+
+        const frs = (frRes.data ?? []) as any as LookupRow[];
+        const sets = (setRes.data ?? []) as any as LookupRow[];
+
         let fName = "";
-        if (it?.franchise_id) {
-          const match = (frRes.data ?? []).find((x: any) => x.id === it.franchise_id);
-          fName = String(match?.name ?? "");
-        }
+        if (it?.franchise_id) fName = String(frs.find((x) => x.id === it.franchise_id)?.name ?? "");
 
         let sName = "";
-        if (it?.card_set_id) {
-          const match = (setRes.data ?? []).find((x: any) => x.id === it.card_set_id);
-          sName = String(match?.name ?? "");
-        }
+        if (it?.card_set_id) sName = String(sets.find((x) => x.id === it.card_set_id)?.name ?? "");
 
         if (cancelled) return;
 
         setItem(it);
-        setDescription(loadedDesc);
-
-        setFranchises((frRes.data ?? []) as any);
-        setCardSets((setRes.data ?? []) as any);
+        setFranchises(frs);
+        setCardSets(sets);
 
         setFranchiseName(fName);
         setSetName(sName);
 
-        // Prime drafts
-        setDraftDescription(loadedDesc);
         primeDraftFromLoaded(it);
 
         setLoading(false);
@@ -278,14 +261,12 @@ export default function ItemDescription({
 
   function startEdit() {
     primeDraftFromLoaded(item);
-    setDraftDescription(description ?? "");
     setEditing(true);
     setErr(null);
   }
 
   function cancelEdit() {
     primeDraftFromLoaded(item);
-    setDraftDescription(description ?? "");
     setEditing(false);
     setErr(null);
   }
@@ -300,60 +281,20 @@ export default function ItemDescription({
       const rel = parsePartialDate(draftReleaseDate);
       const end = parsePartialDate(draftEndDate);
 
-      // 1) Update catalog_items (canonical grid data)
-      const up1 = await supabase
-        .from("catalog_items")
-        .update({
-          franchise_id: draftFranchiseId,
-          card_set_id: draftSetId,
+      const payload = {
+        description: normalizeInput(draftDescription),
 
-          card_number: normalizeInput(draftCardNumber),
-          publisher: normalizeInput(draftPublisher),
-          production_status: normalizeInput(draftProductionStatus),
-
-          release_year: rel.y,
-          release_month: rel.m,
-          release_day: rel.d,
-
-          end_year: end.y,
-          end_month: end.m,
-          end_day: end.d,
-
-          epid_ebay: normalizeInput(draftEpid),
-          tcgplayer_id: normalizeInput(draftTcgPlayer),
-        })
-        .eq("id", catalogItemId);
-
-      if (up1.error) throw up1.error;
-
-      // 2) Upsert free text description
-      const desc = (draftDescription ?? "").trim();
-      const up2 = await supabase
-        .from("catalog_item_descriptions")
-        .upsert(
-          {
-            catalog_item_id: catalogItemId,
-            description_text: desc.length ? desc : null,
-            description: desc.length ? desc : null, // keep backward compat
-          },
-          { onConflict: "catalog_item_id" }
-        );
-
-      if (up2.error) throw up2.error;
-
-      // Reload minimal state locally (no refetch needed)
-      const newItem: CatalogItemRow = {
-        ...item,
         franchise_id: draftFranchiseId,
         card_set_id: draftSetId,
 
         card_number: normalizeInput(draftCardNumber),
         publisher: normalizeInput(draftPublisher),
-        production_status: normalizeInput(draftProductionStatus),
 
         release_year: rel.y,
         release_month: rel.m,
         release_day: rel.d,
+
+        production_status: normalizeInput(draftProductionStatus),
 
         end_year: end.y,
         end_month: end.m,
@@ -363,16 +304,19 @@ export default function ItemDescription({
         tcgplayer_id: normalizeInput(draftTcgPlayer),
       };
 
-      setItem(newItem);
-      setDescription(desc);
+      const up = await supabase.from("catalog_items").update(payload).eq("id", catalogItemId);
+      if (up.error) throw up.error;
 
-      // Update display names from lookup arrays
-      const fName = draftFranchiseId
-        ? String(franchises.find((x) => x.id === draftFranchiseId)?.name ?? "")
-        : "";
-      const sName = draftSetId
-        ? String(cardSets.find((x) => x.id === draftSetId)?.name ?? "")
-        : "";
+      // Update local view
+      const newItem: CatalogItemRow = {
+        ...item,
+        ...payload,
+      } as any;
+
+      setItem(newItem);
+
+      const fName = draftFranchiseId ? String(franchises.find((x) => x.id === draftFranchiseId)?.name ?? "") : "";
+      const sName = draftSetId ? String(cardSets.find((x) => x.id === draftSetId)?.name ?? "") : "";
 
       setFranchiseName(fName);
       setSetName(sName);
@@ -439,8 +383,8 @@ export default function ItemDescription({
                   onChange={(e) => setDraftDescription(e.target.value)}
                   placeholder="Write a description..."
                 />
-              ) : description.trim().length ? (
-                <div className="text-sm text-[#0F172A] whitespace-pre-wrap">{description}</div>
+              ) : (item?.description ?? "").trim().length ? (
+                <div className="text-sm text-[#0F172A] whitespace-pre-wrap">{item?.description}</div>
               ) : (
                 <div className="text-sm text-[#64748B]">No description saved yet.</div>
               )}
