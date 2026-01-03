@@ -524,7 +524,7 @@ const row = await insertWithSlugSafe<any>("card_manufacturers", { name }, setBan
         // legacy single franchise
         franchiseId: form.franchiseId || null,
 
-        itemImageFile: form.itemImageFile,
+        itemImageFiles: form.itemImageFiles ?? [],
         catalogName: form.catalogName,
         catalogReleaseYear: form.catalogReleaseYear,
         catalogUPC: form.catalogUPC,
@@ -716,7 +716,12 @@ const row = await insertWithSlugSafe<any>("card_manufacturers", { name }, setBan
             </div>
           ) : null}
 
-          <PhotoSection itemImagePreview={form.itemImagePreview} onPick={form.pickItemImage} />
+          <PhotoSection
+  previews={form.itemImagePreviews ?? []}
+  onPickFiles={form.pickItemImages}
+  onRemoveAt={form.removeItemImageAt}
+  disabled={saving}
+/>
 
           <GlobalDetailsSection {...form} />
 
@@ -1445,6 +1450,7 @@ const row = await insertWithSlugSafe<any>("card_manufacturers", { name }, setBan
     </>
   );
 }
+
 
 
 
