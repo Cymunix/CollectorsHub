@@ -27,8 +27,8 @@ export type CreateCatalogItemState = {
   tcgplayerId?: string | null;
 
   // Gaming (saved onto catalog_items)
-  gamePlatformId?: string | null; // -> catalog_items.platform_id
-  gamePublisherId?: string | null; // -> catalog_items.game_publisher_id
+  gamePlatformId?: string | null; // -> catalog_items.platform_id (or legacy Platform_id)
+  gamePublisherId?: string | null; // -> catalog_items.game_publisher_id (or legacy Publisher_Id / publisher_id)
 
   // Comics (saved onto catalog_items)
   comicPublisherId?: string | null; // -> catalog_items.comic_publisher_id
@@ -159,6 +159,30 @@ async function insertCatalogItemImages(catalogItemId: string, urls: string[]) {
 }
 
 /* =========================
+   Column-safe update helper
+   ========================= */
+
+/**
+ * Tries update(payload). If it errors (unknown column / schema mismatch),
+ * retries fallbacks in order. Throws if all fail.
+ */
+async function safeUpdateCatalogItem(
+  catalogItemId: string,
+  payload: Record<string, any>,
+  fallbacks: Array<Record<string, any>>
+) {
+  const first = await supabase.from(CATALOG_TABLE).update(payload).eq("id", catalogItemId);
+  if (!first.error) return;
+
+  for (const fb of fallbacks) {
+    const next = await supabase.from(CATALOG_TABLE).update(fb).eq("id", catalogItemId);
+    if (!next.error) return;
+  }
+
+  throw first.error;
+}
+
+/* =========================
    Main create
    ========================= */
 
@@ -175,12 +199,6 @@ export async function createCatalogItem(itemKind: string, state: CreateCatalogIt
   if (!name) throw new Error("createCatalogItem: name is required");
   if (!category_id) throw new Error("createCatalogItem: category_id is required");
 
-  // ✅ SINGLE SOURCE OF TRUTH ON catalog_items
-
-  // gaming: use platform_id (NOT game_platform_id)
-  const platform_id = kind === "gaming" ? nullableStr(state?.gamePlatformId) : null;
-  const game_publisher_id = kind === "gaming" ? nullableStr(state?.gamePublisherId) : null;
-
   // cards
   const isCard = kind === "trading_card" || kind === "sports_card";
   const card_set_id = isCard ? nullableStr(state?.cardSetId) : null;
@@ -194,7 +212,13 @@ export async function createCatalogItem(itemKind: string, state: CreateCatalogIt
   const comic_issue_number = isComic ? nullableStr(state?.comicIssueNumber) : null;
   const comic_variant = isComic ? nullableStr(state?.comicVariant) : null;
 
-  // 1) INSERT base item (and all kind fields directly onto catalog_items)
+  // gaming values (we will write via SAFE UPDATE after insert to handle legacy columns)
+  const isGaming = kind === "gaming";
+  const gamePlatformId = isGaming ? nullableStr(state?.gamePlatformId) : null;
+  const gamePublisherId = isGaming ? nullableStr(state?.gamePublisherId) : null;
+
+  // 1) INSERT base item
+  // IMPORTANT: do NOT include platform/publisher id columns here, because insert fails hard if a column doesn't exist.
   const { data: inserted, error: insertErr } = await supabase
     .from(CATALOG_TABLE)
     .insert({
@@ -208,10 +232,6 @@ export async function createCatalogItem(itemKind: string, state: CreateCatalogIt
       version: nullableStr(state?.catalogVersion),
       production_status,
       image_url: null, // legacy compatibility
-
-      // gaming
-      platform_id,
-      game_publisher_id,
 
       // cards
       card_set_id,
@@ -231,6 +251,34 @@ export async function createCatalogItem(itemKind: string, state: CreateCatalogIt
 
   const id = inserted?.id as string | undefined;
   if (!id) throw new Error("createCatalogItem: insert succeeded but no id returned");
+
+  // 1b) Post-insert: write GAMING ids to whichever columns exist in your schema
+  if (isGaming) {
+    // canonical payload (what we *want*)
+    const canonical = {
+      platform_id: gamePlatformId,
+      game_publisher_id: gamePublisherId,
+    };
+
+    // fallbacks for legacy / weird columns observed in your data exports
+    const fallbacks: Array<Record<string, any>> = [
+      // legacy weird casing (seen in your CSV)
+      { Platform_id: gamePlatformId, Publisher_Id: gamePublisherId },
+
+      // possible alt legacy (just in case)
+      { Platform_id: gamePlatformId, publisher_id: gamePublisherId },
+      { platform_id: gamePlatformId, Publisher_Id: gamePublisherId },
+
+      // partials to at least save one side if the other column doesn't exist
+      { platform_id: gamePlatformId },
+      { Platform_id: gamePlatformId },
+      { game_publisher_id: gamePublisherId },
+      { publisher_id: gamePublisherId },
+      { Publisher_Id: gamePublisherId },
+    ];
+
+    await safeUpdateCatalogItem(id, canonical, fallbacks);
+  }
 
   // 2) People links (artists/directors/actors) — keep join table
   const peopleLinks: ItemPersonLink[] = [];
