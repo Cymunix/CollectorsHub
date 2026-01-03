@@ -27,16 +27,16 @@ export type CreateCatalogItemState = {
   tcgplayerId?: string | null;
 
   // Gaming (saved onto catalog_items)
-  gamePlatformId?: string | null;
-  gamePublisherId?: string | null;
+  gamePlatformId?: string | null; // -> catalog_items.platform_id
+  gamePublisherId?: string | null; // -> catalog_items.game_publisher_id
 
-  // Comics (saved onto catalog_items) — requires columns
-  comicPublisherId?: string | null;
-  comicSeries?: string | null;
-  comicIssueNumber?: string | null;
-  comicVariant?: string | null;
+  // Comics (saved onto catalog_items)
+  comicPublisherId?: string | null; // -> catalog_items.comic_publisher_id
+  comicSeries?: string | null; // -> catalog_items.comic_series
+  comicIssueNumber?: string | null; // -> catalog_items.comic_issue_number
+  comicVariant?: string | null; // -> catalog_items.comic_variant
 
-  // People roles (still join table, correct)
+  // People roles (join table)
   musicArtistIds?: string[] | null;
   movieDirectorIds?: string[] | null;
   movieActorIds?: string[] | null;
@@ -175,20 +175,26 @@ export async function createCatalogItem(itemKind: string, state: CreateCatalogIt
   if (!name) throw new Error("createCatalogItem: name is required");
   if (!category_id) throw new Error("createCatalogItem: category_id is required");
 
-  // ✅ Single-source-of-truth fields ON catalog_items
-  const game_platform_id = kind === "gaming" ? nullableStr(state?.gamePlatformId) : null;
+  // ✅ SINGLE SOURCE OF TRUTH ON catalog_items
+
+  // gaming: use platform_id (NOT game_platform_id)
+  const platform_id = kind === "gaming" ? nullableStr(state?.gamePlatformId) : null;
   const game_publisher_id = kind === "gaming" ? nullableStr(state?.gamePublisherId) : null;
 
-  const card_set_id = kind === "trading_card" || kind === "sports_card" ? nullableStr(state?.cardSetId) : null;
-  const card_number = kind === "trading_card" || kind === "sports_card" ? nullableStr(state?.cardNumber) : null;
-  const tcgplayer_id = kind === "trading_card" || kind === "sports_card" ? nullableStr(state?.tcgplayerId) : null;
+  // cards
+  const isCard = kind === "trading_card" || kind === "sports_card";
+  const card_set_id = isCard ? nullableStr(state?.cardSetId) : null;
+  const card_number = isCard ? nullableStr(state?.cardNumber) : null;
+  const tcgplayer_id = isCard ? nullableStr(state?.tcgplayerId) : null;
 
-  const comic_publisher_id = kind === "comic" ? nullableStr(state?.comicPublisherId) : null;
-  const comic_series = kind === "comic" ? nullableStr(state?.comicSeries) : null;
-  const comic_issue_number = kind === "comic" ? nullableStr(state?.comicIssueNumber) : null;
-  const comic_variant = kind === "comic" ? nullableStr(state?.comicVariant) : null;
+  // comics
+  const isComic = kind === "comic";
+  const comic_publisher_id = isComic ? nullableStr(state?.comicPublisherId) : null;
+  const comic_series = isComic ? nullableStr(state?.comicSeries) : null;
+  const comic_issue_number = isComic ? nullableStr(state?.comicIssueNumber) : null;
+  const comic_variant = isComic ? nullableStr(state?.comicVariant) : null;
 
-  // 1) INSERT base item (and ALL kind fields directly onto catalog_items)
+  // 1) INSERT base item (and all kind fields directly onto catalog_items)
   const { data: inserted, error: insertErr } = await supabase
     .from(CATALOG_TABLE)
     .insert({
@@ -204,7 +210,7 @@ export async function createCatalogItem(itemKind: string, state: CreateCatalogIt
       image_url: null, // legacy compatibility
 
       // gaming
-      game_platform_id,
+      platform_id,
       game_publisher_id,
 
       // cards
