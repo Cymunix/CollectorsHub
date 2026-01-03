@@ -28,7 +28,7 @@ export type CreateCatalogItemState = {
 
   // Gaming (saved onto catalog_items)
   gamePlatformId?: string | null; // -> catalog_items.platform_id (or legacy Platform_id)
-  gamePublisherId?: string | null; // -> catalog_items.game_publisher_id (or legacy Publisher_Id / publisher_id)
+  gamePublisherId?: string | null; // -> catalog_items.publisher_id (or legacy Publisher_Id / publisher_id)
 
   // Comics (saved onto catalog_items)
   comicPublisherId?: string | null; // -> catalog_items.comic_publisher_id
@@ -257,7 +257,7 @@ export async function createCatalogItem(itemKind: string, state: CreateCatalogIt
     // canonical payload (what we *want*)
     const canonical = {
       platform_id: gamePlatformId,
-      game_publisher_id: gamePublisherId,
+      publisher_id: gamePublisherId,
     };
 
     // fallbacks for legacy / weird columns observed in your data exports
@@ -272,7 +272,7 @@ export async function createCatalogItem(itemKind: string, state: CreateCatalogIt
       // partials to at least save one side if the other column doesn't exist
       { platform_id: gamePlatformId },
       { Platform_id: gamePlatformId },
-      { game_publisher_id: gamePublisherId },
+      { publisher_id: gamePublisherId },
       { publisher_id: gamePublisherId },
       { Publisher_Id: gamePublisherId },
     ];
@@ -321,3 +321,4 @@ export async function createCatalogItem(itemKind: string, state: CreateCatalogIt
 }
 
 export default createCatalogItem;
+
