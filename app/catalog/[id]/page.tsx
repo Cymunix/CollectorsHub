@@ -778,9 +778,12 @@ export default function Page({ params }: { params: { id: string } }) {
           {/* Tab Content */}
           <div className="mt-4 space-y-4">
             {tab === "Item Information" ? (
-              <ItemDescription catalogItemId={catalogItemId} isAdmin={isAdmin} />
-            ) : null}
-
+  <ItemDescription
+    catalogItemId={catalogItemId}
+    isAdmin={isAdmin}
+    categoryName={category?.name ?? null}
+  />
+) : null}
             {tab === "included_items" && showIncludedItemsTab ? (
               <div className="rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
                 <div className="flex items-center justify-between gap-3">
@@ -869,3 +872,4 @@ export default function Page({ params }: { params: { id: string } }) {
     </main>
   );
 }
+
