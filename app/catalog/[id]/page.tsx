@@ -202,7 +202,12 @@ function PhotoCarousel({ photos, title }: { photos: Photo[]; title: string }) {
     <div className="w-full rounded-2xl border border-[#E5E9F2] bg-[#F8FAFF] p-4">
       <div className="relative aspect-square w-full rounded-xl bg-white border border-[#E5E9F2] overflow-hidden flex items-center justify-center">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={active.url} alt={active.alt ?? title} className="h-full w-full object-contain" draggable={false} />
+        <img
+          src={active.url}
+          alt={active.alt ?? title}
+          className="h-full w-full object-contain"
+          draggable={false}
+        />
 
         {hasMany ? (
           <>
@@ -245,7 +250,12 @@ function PhotoCarousel({ photos, title }: { photos: Photo[]; title: string }) {
                 aria-label={`Photo ${i + 1}`}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={p.url} alt={p.alt ?? title} className="h-full w-full object-contain" draggable={false} />
+                <img
+                  src={p.url}
+                  alt={p.alt ?? title}
+                  className="h-full w-full object-contain"
+                  draggable={false}
+                />
               </button>
             );
           })}
@@ -253,6 +263,32 @@ function PhotoCarousel({ photos, title }: { photos: Photo[]; title: string }) {
       ) : null}
     </div>
   );
+}
+
+/* =========================
+   Tab visibility helpers
+   ========================= */
+
+async function safeCount(table: string, filters: { col: string; value: any }[]): Promise<number> {
+  try {
+    let q = supabase.from(table).select("id", { count: "exact", head: true });
+    for (const f of filters) q = q.eq(f.col, f.value);
+    const res = await q;
+    if (res.error) return 0;
+    return res.count ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function safeCountAny(
+  candidates: Array<{ table: string; filters: { col: string; value: any }[] }>
+): Promise<number> {
+  for (const c of candidates) {
+    const n = await safeCount(c.table, c.filters);
+    if (n > 0) return n;
+  }
+  return 0;
 }
 
 export default function Page({ params }: { params: { id: string } }) {
@@ -289,6 +325,11 @@ export default function Page({ params }: { params: { id: string } }) {
   // Reviews summary for stars beside name
   const [reviewAvg, setReviewAvg] = useState<number>(0);
   const [reviewCount, setReviewCount] = useState<number>(0);
+
+  // ✅ Tab content flags (hide empty tabs except Reviews/Listings)
+  const [hasVariants, setHasVariants] = useState(false);
+  const [hasSalesHistory, setHasSalesHistory] = useState(false);
+  const [listingsCount, setListingsCount] = useState(0);
 
   // ✅ Shared condition state (meta-first)
   const [conditionValues, setConditionValues] = useState<Record<string, any>>({});
@@ -430,6 +471,11 @@ export default function Page({ params }: { params: { id: string } }) {
       // reset photos
       setItemPhotos([]);
 
+      // reset tab flags
+      setHasVariants(false);
+      setHasSalesHistory(false);
+      setListingsCount(0);
+
       try {
         setItem(null);
         setMinifigItem(null);
@@ -479,6 +525,12 @@ export default function Page({ params }: { params: { id: string } }) {
           setBbIsSet(false);
           setBbIsMinifig(true);
           setBbMinifigs([]);
+
+          // Minifig pages: default no variants/sales-history; listings tab still visible but count unknown
+          setHasVariants(false);
+          setHasSalesHistory(false);
+          setListingsCount(0);
+
           return;
         }
 
@@ -524,6 +576,32 @@ export default function Page({ params }: { params: { id: string } }) {
             if (!cancelled) setItemPhotos([]);
           }
 
+          // ✅ Tab probes (hide empty tabs except Reviews/Listings)
+          // NOTE: we try multiple likely table names so this doesn't hard-fail if your schema differs.
+          const [vCount, shCount, lCount] = await Promise.all([
+            safeCountAny([
+              { table: "variant_group_links", filters: [{ col: "catalog_item_id", value: it.id }] },
+              { table: "catalog_item_variant_links", filters: [{ col: "catalog_item_id", value: it.id }] },
+              { table: "catalog_item_variants", filters: [{ col: "catalog_item_id", value: it.id }] },
+            ]),
+            safeCountAny([
+              { table: "catalog_item_sales_history", filters: [{ col: "catalog_item_id", value: it.id }] },
+              { table: "catalog_sales_history", filters: [{ col: "catalog_item_id", value: it.id }] },
+              { table: "item_sales_history", filters: [{ col: "catalog_item_id", value: it.id }] },
+            ]),
+            safeCountAny([
+              { table: "marketplace_listings", filters: [{ col: "catalog_item_id", value: it.id }] },
+              { table: "catalog_item_listings", filters: [{ col: "catalog_item_id", value: it.id }] },
+              { table: "listings", filters: [{ col: "catalog_item_id", value: it.id }] },
+            ]),
+          ]);
+
+          if (!cancelled) {
+            setHasVariants(vCount > 0);
+            setHasSalesHistory(shCount > 0);
+            setListingsCount(lCount);
+          }
+
           // Bundles load
           try {
             const bundleFlag = !!it?.is_bundle;
@@ -554,8 +632,7 @@ export default function Page({ params }: { params: { id: string } }) {
               const count = reviewsRes.count ?? rows.length;
 
               if (count > 0) {
-                const rawAvg =
-                  rows.reduce((sum: number, r: any) => sum + Number(r?.rating ?? 0), 0) / count;
+                const rawAvg = rows.reduce((sum: number, r: any) => sum + Number(r?.rating ?? 0), 0) / count;
                 const avg = Math.round(rawAvg * 10) / 10;
 
                 if (!cancelled) {
@@ -688,6 +765,11 @@ export default function Page({ params }: { params: { id: string } }) {
         setBbIsSet(false);
         setBbIsMinifig(true);
         setBbMinifigs([]);
+
+        // Minifig pages: default no variants/sales-history; listings tab still visible but count unknown
+        setHasVariants(false);
+        setHasSalesHistory(false);
+        setListingsCount(0);
       } catch (e: any) {
         console.error(e);
         if (!cancelled) setHeaderErr(e?.message || "Failed to load item.");
@@ -732,7 +814,92 @@ export default function Page({ params }: { params: { id: string } }) {
   const bbMode: "set" | "minifig" = isBuildingBlocks && (isMinifigPage || bbIsMinifig) ? "minifig" : "set";
 
   const showIncludedItemsTab = !isMinifigPage && !!item?.id && isBundle;
-  const showIncludedInTab = !isMinifigPage && !!item?.id && !isBundle && (includedInBundles?.length ?? 0) > 0;
+  const showIncludedInTab =
+    !isMinifigPage && !!item?.id && !isBundle && (includedInBundles?.length ?? 0) > 0;
+
+  /* =========================
+     Conditional tabs registry
+     Hide if empty EXCEPT: Reviews + Listings
+     ========================= */
+
+  type VisibilityMode = "always" | "hide_if_empty" | "show_even_if_empty";
+  type TabDef = {
+    key: TabKey;
+    label: string;
+    visibility: VisibilityMode;
+    hasContent: () => boolean;
+  };
+
+  const tabDefs: TabDef[] = useMemo(() => {
+    const defs: TabDef[] = [
+      { key: "Item Information", label: "Information", visibility: "always", hasContent: () => true },
+    ];
+
+    if (showIncludedItemsTab) {
+      defs.push({
+        key: "included_items",
+        label: "Included Items",
+        visibility: "hide_if_empty",
+        hasContent: () => bundleComponents.length > 0,
+      });
+    }
+
+    if (showIncludedInTab) {
+      defs.push({
+        key: "included_in",
+        label: "Included In",
+        visibility: "hide_if_empty",
+        hasContent: () => includedInBundles.length > 0,
+      });
+    }
+
+    defs.push(
+      { key: "variants", label: "Variants", visibility: "hide_if_empty", hasContent: () => hasVariants },
+      {
+        key: "reviews",
+        label: "Reviews",
+        visibility: "show_even_if_empty", // ✅ exception
+        hasContent: () => reviewCount > 0,
+      },
+      {
+        key: "sales_history",
+        label: "Sales History",
+        visibility: "hide_if_empty",
+        hasContent: () => hasSalesHistory,
+      },
+      {
+        key: "listings",
+        label: "Listings",
+        visibility: "show_even_if_empty", // ✅ exception
+        hasContent: () => true,
+      }
+    );
+
+    return defs;
+  }, [
+    showIncludedItemsTab,
+    showIncludedInTab,
+    bundleComponents.length,
+    includedInBundles.length,
+    hasVariants,
+    hasSalesHistory,
+    reviewCount,
+  ]);
+
+  const visibleTabs = useMemo(() => {
+    return tabDefs.filter((t) => {
+      if (t.visibility === "always") return true;
+      if (t.visibility === "show_even_if_empty") return true;
+      return t.hasContent(); // hide_if_empty
+    });
+  }, [tabDefs]);
+
+  // ✅ If current tab becomes hidden after async loads, force fallback
+  useEffect(() => {
+    if (!visibleTabs.find((t) => t.key === tab)) {
+      setTab(visibleTabs[0]?.key ?? "Item Information");
+    }
+  }, [tab, visibleTabs]);
 
   return (
     <main className="min-h-screen w-full bg-[#F4F7FD] text-[#0F172A]">
@@ -878,34 +1045,12 @@ export default function Page({ params }: { params: { id: string } }) {
 
           {/* Tabs */}
           <div className="mt-6 flex items-center gap-2 flex-wrap">
-            <TabButton active={tab === "Item Information"} onClick={() => setTab("Item Information")}>
-              Information
-            </TabButton>
-
-            {showIncludedItemsTab ? (
-              <TabButton active={tab === "included_items"} onClick={() => setTab("included_items")}>
-                Included Items
+            {visibleTabs.map((t) => (
+              <TabButton key={t.key} active={tab === t.key} onClick={() => setTab(t.key)}>
+                {t.label}
+                {t.key === "listings" && listingsCount > 0 ? ` (${listingsCount})` : ""}
               </TabButton>
-            ) : null}
-
-            {showIncludedInTab ? (
-              <TabButton active={tab === "included_in"} onClick={() => setTab("included_in")}>
-                Included In
-              </TabButton>
-            ) : null}
-
-            <TabButton active={tab === "variants"} onClick={() => setTab("variants")}>
-              Variants
-            </TabButton>
-            <TabButton active={tab === "reviews"} onClick={() => setTab("reviews")}>
-              Reviews
-            </TabButton>
-            <TabButton active={tab === "sales_history"} onClick={() => setTab("sales_history")}>
-              Sales History
-            </TabButton>
-            <TabButton active={tab === "listings"} onClick={() => setTab("listings")}>
-              Listings
-            </TabButton>
+            ))}
           </div>
 
           {/* Bundle errors */}
