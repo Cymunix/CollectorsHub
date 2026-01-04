@@ -8,8 +8,8 @@ type CatalogItemRow = {
   id: string;
   description: string | null;
   franchise_id: string | null;
-  genre_id?: string | null;
-  age_rating_id?: string | null;
+  genre_ids?: string[] | null;   // Updated to array to match your DB
+  age_rating_id?: string | null; // Added
   publisher: string | null;
   upc: string | null;
   release_year: number | null;
@@ -77,8 +77,7 @@ function formatProductionStatus(raw: string | null | undefined) {
     prototype: "Prototype",
     unknown: "Unknown",
   };
-  if (known[s]) return known[s];
-  return s ? s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, " ") : "—";
+  return known[s] || (s ? s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, " ") : "—");
 }
 
 function Field({ label, value, editing, onChange }: any) {
@@ -104,37 +103,33 @@ function Field({ label, value, editing, onChange }: any) {
 async function safeLookup(table: string): Promise<LookupRow[]> {
   try {
     const res = await supabase.from(table).select("id, name").order("name");
-    // Fallback for age_ratings which might use 'rating' instead of 'name'
-    if (res.error) return [];
-    return (res.data || []).map((r: any) => ({
-      id: String(r.id),
-      name: String(r.name || r.rating || "")
-    }));
+    if (res.error) {
+       // Age ratings table might use 'rating' column instead of 'name'
+       const res2 = await supabase.from(table).select("id, rating").order("rating");
+       if (!res2.error) return (res2.data || []).map((r: any) => ({ id: String(r.id), name: String(r.rating) }));
+       return [];
+    }
+    return (res.data || []).map((r: any) => ({ id: String(r.id), name: String(r.name) }));
   } catch { return []; }
 }
 
-export default function ItemDescription({
-  catalogItemId,
-  isAdmin,
-  categoryName = null,
-}: {
-  catalogItemId: string;
-  isAdmin: boolean;
-  categoryName?: string | null;
-}) {
+export default function ItemDescription({ catalogItemId, isAdmin, categoryName = null }: any) {
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [item, setItem] = useState<CatalogItemRow | null>(null);
   const [editing, setEditing] = useState(false);
 
+  // Lookups
   const [franchises, setFranchises] = useState<LookupRow[]>([]);
   const [genres, setGenres] = useState<LookupRow[]>([]);
   const [ageRatings, setAgeRatings] = useState<LookupRow[]>([]);
 
+  // Drafts
   const [draftDescription, setDraftDescription] = useState("");
   const [draftFranchiseId, setDraftFranchiseId] = useState<string | null>(null);
-  const [draftGenreId, setDraftGenreId] = useState<string | null>(null);
+  const [draftGenreIds, setDraftGenreIds] = useState<string[]>([]);
   const [draftAgeRatingId, setDraftAgeRatingId] = useState<string | null>(null);
   const [draftProductionStatus, setDraftProductionStatus] = useState("");
   const [draftReleaseDate, setDraftReleaseDate] = useState("");
@@ -148,7 +143,9 @@ export default function ItemDescription({
     async function load() {
       setLoading(true);
       try {
-        const { data: it } = await supabase.from("catalog_items").select("*").eq("id", catalogItemId).maybeSingle();
+        const { data: it, error } = await supabase.from("catalog_items").select("*").eq("id", catalogItemId).maybeSingle();
+        if (error) throw error;
+
         const [frs, gen, age] = await Promise.all([
           safeLookup("franchises"),
           safeLookup("genres"),
@@ -163,8 +160,8 @@ export default function ItemDescription({
         if (it) {
           setDraftDescription(it.description || "");
           setDraftFranchiseId(it.franchise_id);
-          setDraftGenreId(it.genre_id || null);
-          setDraftAgeRatingId(it.age_rating_id || null);
+          setDraftGenreIds(it.genre_ids || []);
+          setDraftAgeRatingId(it.age_rating_id);
           setDraftProductionStatus(it.production_status || "");
           setDraftReleaseDate(formatPartialDate(it.release_year, it.release_month, it.release_day).replace("—", ""));
         }
@@ -185,7 +182,7 @@ export default function ItemDescription({
       const payload = {
         description: normalizeInput(draftDescription),
         franchise_id: draftFranchiseId,
-        genre_id: draftGenreId,
+        genre_ids: draftGenreIds, // Updating array column
         age_rating_id: draftAgeRatingId,
         production_status: normalizeInput(draftProductionStatus),
         release_year: rel.y,
@@ -205,9 +202,10 @@ export default function ItemDescription({
     }
   }
 
-  const fName = franchises.find(f => f.id === String(item?.franchise_id))?.name || "—";
-  const gName = genres.find(g => g.id === String(item?.genre_id))?.name || "—";
-  const aName = ageRatings.find(a => a.id === String(item?.age_rating_id))?.name || "—";
+  // Helpers to get names for display
+  const franchiseName = franchises.find(f => f.id === String(item?.franchise_id))?.name || "—";
+  const genreNames = (item?.genre_ids || []).map(id => genres.find(g => g.id === id)?.name).filter(Boolean).join(", ") || "—";
+  const ageRatingName = ageRatings.find(a => a.id === String(item?.age_rating_id))?.name || "—";
 
   return (
     <div className="rounded-2xl border border-[#E5E9F2] bg-white shadow-sm overflow-hidden">
@@ -230,13 +228,13 @@ export default function ItemDescription({
       </div>
 
       <div className="p-4 space-y-4">
-        {loading ? <div className="text-sm text-[#64748B] animate-pulse">Loading info...</div> : (
+        {loading ? <div className="text-sm text-[#64748B]">Loading…</div> : (
           <>
             <div className="rounded-2xl border border-[#E5E9F2] bg-white p-4">
               <div className="text-xs font-semibold text-[#64748B] mb-2">Free Text Description</div>
               {editing ? (
                 <textarea
-                  className="w-full rounded-xl border border-[#E5E9F2] p-3 text-sm text-[#0F172A] outline-none focus:ring-2 focus:ring-[#0F172A]/10"
+                  className="w-full rounded-xl border border-[#E5E9F2] p-3 text-sm text-[#0F172A] outline-none"
                   rows={4}
                   value={draftDescription}
                   onChange={(e) => setDraftDescription(e.target.value)}
@@ -255,22 +253,26 @@ export default function ItemDescription({
                     <option value="">—</option>
                     {franchises.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
                   </select>
-                ) : <div className="text-sm mt-1">{display(fName)}</div>}
+                ) : <div className="text-sm mt-1">{display(franchiseName)}</div>}
               </div>
 
-              {/* Genre */}
+              {/* Genre - Handles multi-select array in data, simple select in UI for now */}
               <div>
                 <div className="text-xs font-semibold text-[#64748B]">Genre</div>
                 {editing ? (
-                  <select className="mt-1 w-full rounded-xl border p-2 text-sm" value={draftGenreId || ""} onChange={(e) => setDraftGenreId(e.target.value || null)}>
+                  <select 
+                    className="mt-1 w-full rounded-xl border p-2 text-sm" 
+                    value={draftGenreIds[0] || ""} 
+                    onChange={(e) => setDraftGenreIds(e.target.value ? [e.target.value] : [])}
+                  >
                     <option value="">—</option>
                     {genres.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
                   </select>
-                ) : <div className="text-sm mt-1">{display(gName)}</div>}
+                ) : <div className="text-sm mt-1">{display(genreNames)}</div>}
               </div>
 
-              <Field label={isCardCategory ? "Card Number" : "UPC"} value={item?.upc} editing={editing} onChange={(v: string) => setItem((p: any) => ({...p, upc: v}))} />
-              <Field label="Publisher" value={item?.publisher} editing={editing} onChange={(v: string) => setItem((p: any) => ({...p, publisher: v}))} />
+              <Field label={isCardCategory ? "Card Number" : "UPC"} value={item?.upc} editing={false} />
+              <Field label="Publisher" value={item?.publisher} editing={false} />
 
               {/* Production Status */}
               <div>
@@ -290,7 +292,7 @@ export default function ItemDescription({
                     <option value="">—</option>
                     {ageRatings.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                   </select>
-                ) : <div className="text-sm mt-1">{display(aName)}</div>}
+                ) : <div className="text-sm mt-1">{display(ageRatingName)}</div>}
               </div>
 
               <Field 
