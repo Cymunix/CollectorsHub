@@ -18,7 +18,7 @@ import { detectKindFromCategoryName } from "@/lib/catalog/utils";
 import CatalogFilters from "@/components/catalog/CatalogFilters";
 import CatalogGrid from "@/components/catalog/CatalogGrid";
 
-// ✅ NEW: Right context panel
+// ✅ Right context panel
 import RightContextPanel from "@/components/catalog/right/RightContextPanel";
 
 function isDuplicateError(msg: string) {
@@ -42,11 +42,23 @@ function buildDefaultConditionJson(tier10: number) {
 export default function CatalogScreen() {
   const up = useUserProfile() as any;
 
-  // ✅ IMPORTANT: profile != auth user
-  const profile = up?.profile ?? up?.userProfile ?? up?.user_profile ?? null;
+  // ✅ Support multiple hook shapes without breaking:
+  // - { user, loading }
+  // - { profile, loading }
+  // - { userProfile, loading }
+  // Some hooks name the profile row "user" which is confusing but common.
+  const profileOrUser =
+    up?.profile ??
+    up?.userProfile ??
+    up?.user_profile ??
+    up?.user ??
+    null;
+
   const profileLoading = Boolean(up?.loading ?? up?.isLoading ?? up?.profileLoading ?? false);
 
-  const role = String(profile?.role ?? "").trim().toLowerCase();
+  const roleRaw = String(profileOrUser?.role ?? profileOrUser?.roleRaw ?? "").trim();
+  const role = roleRaw.toLowerCase();
+
   const isAdmin = role === "admin";
   const isStoreOrPawn = role === "store" || role === "pawn" || role.includes("pawn");
 
@@ -296,10 +308,8 @@ export default function CatalogScreen() {
         if (comicPublisherId && it.comic_publisher_id !== comicPublisherId) return false;
       }
 
-      // ✅ Apply cardSetId globally if it exists
       if (cardSetId && (it as any).card_set_id !== cardSetId) return false;
 
-      // Card-only extras still apply when in card kinds
       if (selectedKind === "trading_card" || selectedKind === "sports_card") {
         if (cardManufacturerId && it.card_manufacturer_id !== cardManufacturerId) return false;
         if (cardTypeId && it.card_type_id !== cardTypeId) return false;
@@ -404,7 +414,6 @@ export default function CatalogScreen() {
     return uid;
   };
 
-  // ✅ Safe wishlist insert: tries to include priority, falls back if the column doesn't exist
   const addToWishlist = async (catalogItemId: string) => {
     setBanner(null);
     const uid = await ensureUserId();
@@ -450,7 +459,6 @@ export default function CatalogScreen() {
     setBanner({ type: "ok", msg: "Added to wishlist." });
   };
 
-  // ✅ Safe collection insert: tries to include condition_score (0–100), condition_json, quantity, visibility
   const addToCollection = async (catalogItemId: string) => {
     setBanner(null);
     const uid = await ensureUserId();
@@ -618,9 +626,7 @@ export default function CatalogScreen() {
         </div>
       ) : null}
 
-      {/* 3-column layout: left filters | main grid | right info */}
       <div className="grid grid-cols-12 gap-6">
-        {/* LEFT FILTERS */}
         <aside className="col-span-12 md:col-span-3 md:sticky md:top-28 self-start">
           <CatalogFilters
             metaLoading={meta.loading}
@@ -630,7 +636,6 @@ export default function CatalogScreen() {
             filteredSubcategories={filteredSubcategories}
             franchises={meta.franchises}
             selectedKind={selectedKind}
-            // base values
             categoryId={categoryId}
             setCategoryId={setCategoryId}
             subcategoryId={subcategoryId}
@@ -641,7 +646,6 @@ export default function CatalogScreen() {
             setMinYear={setMinYear}
             maxYear={maxYear}
             setMaxYear={setMaxYear}
-            // building blocks
             showMinifigs={showMinifigs}
             setShowMinifigs={setShowMinifigs}
             bbThemeId={bbThemeId}
@@ -650,7 +654,6 @@ export default function CatalogScreen() {
             setBbSubthemeId={setBbSubthemeId}
             bbThemeOptions={bbThemeOptions}
             bbSubthemeOptions={bbSubthemeOptions}
-            // toys
             toyManufacturers={meta.toyManufacturers}
             toyBrands={meta.toyBrands}
             toyLines={meta.toyLines}
@@ -662,19 +665,15 @@ export default function CatalogScreen() {
             setToyLineId={setToyLineId}
             toyBrandOptions={toyBrandOptions}
             toyLineOptions={toyLineOptions}
-            // gaming
             gamePlatforms={meta.gamePlatforms}
             gamePlatformId={gamePlatformId}
             setGamePlatformId={setGamePlatformId}
-            // music
             musicArtists={meta.musicArtists}
             musicArtistId={musicArtistId}
             setMusicArtistId={setMusicArtistId}
-            // comics
             comicPublishers={meta.comicPublishers}
             comicPublisherId={comicPublisherId}
             setComicPublisherId={setComicPublisherId}
-            // cards
             cardManufacturers={meta.cardManufacturers}
             cardSets={meta.cardSets}
             cardTypes={meta.cardTypes}
@@ -685,12 +684,10 @@ export default function CatalogScreen() {
             cardTypeId={cardTypeId}
             setCardTypeId={setCardTypeId}
             cardSetOptions={cardSetOptions}
-            // clear
             clearFilters={clearFilters}
           />
         </aside>
 
-        {/* MAIN */}
         <section className="col-span-12 md:col-span-6">
           <CatalogGrid
             loading={cardsState.loading}
@@ -701,11 +698,9 @@ export default function CatalogScreen() {
             rangeEnd={rangeEnd}
             pagedCards={pagedCards}
             onOpenItem={openItem}
-            // pagination
             page={safePage}
             totalPages={totalPages}
             setPage={setPage}
-            // quick add
             quickAddDefault={quickPref.value}
             onAddWishlist={addToWishlist}
             onAddCollection={addToCollection}
@@ -713,7 +708,6 @@ export default function CatalogScreen() {
           />
         </section>
 
-        {/* RIGHT CONTEXT SIDEBAR */}
         <aside className="col-span-12 md:col-span-3 md:sticky md:top-28 self-start">
           <RightContextPanel
             franchiseId={franchiseId}
