@@ -45,7 +45,15 @@ function norm(s: string) {
    Sorting
    ========================= */
 
-type SortMode = "relevance" | "newest" | "oldest" | "az" | "za" | "recently_added";
+type SortMode =
+  | "relevance"
+  | "newest"
+  | "oldest"
+  | "az"
+  | "za"
+  | "recently_added"
+  | "price_high"
+  | "price_low";
 
 function normaliseName(s: string) {
   return String(s ?? "").toLowerCase().trim();
@@ -62,10 +70,50 @@ function safeTimeMs(v: any): number | null {
   return Number.isFinite(t) ? t : null;
 }
 
+function safeNumber(v: any): number | null {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Tier-10 quality pricing reader (we'll sort using tier10=7).
+ * Supports multiple payload shapes.
+ */
+function getPriceCadForTier10(it: CatalogCard, tier10: number): number | null {
+  const anyIt = it as any;
+
+  // 1) Flat field: price_tier10_7_cad
+  const flat = safeNumber(anyIt[`price_tier10_${tier10}_cad`]);
+  if (flat !== null) return flat;
+
+  // 2) Map: price_tier10_cad: { "7": 12.34 } or { 7: 12.34 }
+  const m1 = anyIt.price_tier10_cad;
+  if (m1 && typeof m1 === "object") {
+    const v = safeNumber(m1[tier10] ?? m1[String(tier10)]);
+    if (v !== null) return v;
+  }
+
+  // 3) Map: pricing_tier10: { "7": 12.34 }
+  const m2 = anyIt.pricing_tier10;
+  if (m2 && typeof m2 === "object") {
+    const v = safeNumber(m2[tier10] ?? m2[String(tier10)]);
+    if (v !== null) return v;
+  }
+
+  // 4) Fallbacks (not tiered, but better than nothing)
+  const p =
+    safeNumber(anyIt.price_cad) ??
+    safeNumber(anyIt.market_price_cad) ??
+    safeNumber(anyIt.estimated_price_cad) ??
+    safeNumber(anyIt.latest_sale_price_cad);
+
+  return p ?? null;
+}
+
 function sortCatalogCards(items: CatalogCard[], mode: SortMode): CatalogCard[] {
   const copy = [...items];
 
-  // "Relevance" means: keep whatever order the backend/hook gave us (stable).
+  // Keep backend/hook order as-is
   if (mode === "relevance") return copy;
 
   if (mode === "newest") {
@@ -101,17 +149,43 @@ function sortCatalogCards(items: CatalogCard[], mode: SortMode): CatalogCard[] {
   }
 
   if (mode === "recently_added") {
-    // Works if your payload includes created_at (Supabase default).
-    // Falls back gracefully if it doesn't exist.
     return copy.sort((a: any, b: any) => {
       const at = safeTimeMs(a.created_at);
       const bt = safeTimeMs(b.created_at);
-
       if (at === null && bt === null) return normaliseName(a.name).localeCompare(normaliseName(b.name));
       if (at === null) return 1;
       if (bt === null) return -1;
-
       if (bt !== at) return bt - at;
+      return normaliseName(a.name).localeCompare(normaliseName(b.name));
+    });
+  }
+
+  const DEFAULT_TIER10_FOR_PRICE = 7;
+
+  if (mode === "price_high") {
+    return copy.sort((a, b) => {
+      const ap = getPriceCadForTier10(a, DEFAULT_TIER10_FOR_PRICE);
+      const bp = getPriceCadForTier10(b, DEFAULT_TIER10_FOR_PRICE);
+
+      if (ap === null && bp === null) return normaliseName(a.name).localeCompare(normaliseName(b.name));
+      if (ap === null) return 1;
+      if (bp === null) return -1;
+
+      if (bp !== ap) return bp - ap; // high -> low
+      return normaliseName(a.name).localeCompare(normaliseName(b.name));
+    });
+  }
+
+  if (mode === "price_low") {
+    return copy.sort((a, b) => {
+      const ap = getPriceCadForTier10(a, DEFAULT_TIER10_FOR_PRICE);
+      const bp = getPriceCadForTier10(b, DEFAULT_TIER10_FOR_PRICE);
+
+      if (ap === null && bp === null) return normaliseName(a.name).localeCompare(normaliseName(b.name));
+      if (ap === null) return 1;
+      if (bp === null) return -1;
+
+      if (ap !== bp) return ap - bp; // low -> high
       return normaliseName(a.name).localeCompare(normaliseName(b.name));
     });
   }
@@ -188,7 +262,7 @@ export default function CatalogScreen() {
   const [comicPublisherId, setComicPublisherId] = useState("");
 
   // -------------------- Sorting --------------------
-  // Default: if searching, users usually expect "relevance"; otherwise "newest" is sane.
+  // Default: searching -> relevance, otherwise newest.
   const [sortMode, setSortMode] = useState<SortMode>(() => (urlSearch ? "relevance" : "newest"));
 
   const selectedCategory = useMemo(
@@ -248,17 +322,12 @@ export default function CatalogScreen() {
   }, [urlFranchise, urlSet]);
 
   // -------------------- Header search intent -> focus --------------------
-  // If header search exactly matches a franchise name, automatically focus that franchise.
-  // This "overrides" the left filters so user doesn't have to clear manually.
   useEffect(() => {
     const q = norm(urlSearch);
     if (!q) return;
     if (!meta.franchises || meta.franchises.length === 0) return;
 
-    // exact match first
     const exact = meta.franchises.find((f) => norm(f.name) === q) ?? null;
-
-    // optional prefix match (only when query is >=4 chars to avoid noise)
     const prefix = q.length >= 4 ? meta.franchises.find((f) => norm(f.name).startsWith(q)) ?? null : null;
 
     const hit = exact ?? prefix;
@@ -266,14 +335,9 @@ export default function CatalogScreen() {
 
     if (franchiseId === hit.id) return;
 
-    // ✅ set focus
     setFranchiseId(hit.id);
-
-    // ✅ override the left-side selection that blocks results + sidebar
     setCategoryId("");
     setSubcategoryId("");
-
-    // Optional: do NOT clear years, etc. Those can remain as user intent filters.
   }, [urlSearch, meta.franchises, franchiseId]);
 
   // -------------------- URL helpers --------------------
@@ -452,9 +516,7 @@ export default function CatalogScreen() {
   ]);
 
   // -------------------- Sort (before pagination) --------------------
-  const sortedCards = useMemo(() => {
-    return sortCatalogCards(visibleCards, sortMode);
-  }, [visibleCards, sortMode]);
+  const sortedCards = useMemo(() => sortCatalogCards(visibleCards, sortMode), [visibleCards, sortMode]);
 
   // -------------------- Pagination --------------------
   const ITEMS_PER_PAGE = 25;
@@ -471,7 +533,6 @@ export default function CatalogScreen() {
   useEffect(() => {
     setPage(1);
   }, [
-    // reset page on any major result-shaping input
     sortMode,
     urlSearch,
     categoryId,
@@ -648,12 +709,12 @@ export default function CatalogScreen() {
     <div className="px-6 py-6">
       <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
 
-      <div className="mb-4 flex items-center justify-between">
-        <div>
+      {/* Top header row: keep Sort here so it lines up with Suggest Item */}
+      <div className="mb-4 flex items-start justify-between gap-4">
+        <div className="min-w-0">
           <h1 className="text-xl font-semibold">Catalog</h1>
           <p className="text-xs text-gray-500">Browse items across all categories. Use the left filters to narrow results.</p>
 
-          {/* Optional: show auto-focus hint */}
           {urlSearch && selectedFranchise ? (
             <p className="mt-1 text-[11px] text-gray-500">
               Search matched franchise: <span className="font-semibold text-gray-700">{selectedFranchise.name}</span>
@@ -661,7 +722,27 @@ export default function CatalogScreen() {
           ) : null}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {/* Sort (aligned with buttons) */}
+          <label className="flex items-center gap-2 rounded-full border bg-white px-3 py-2 text-xs text-gray-600">
+            <span className="whitespace-nowrap">Sort</span>
+            <select
+              value={sortMode}
+              onChange={(e) => setSortMode(e.target.value as SortMode)}
+              className="bg-transparent text-xs text-gray-800 outline-none"
+              title="Sort results"
+            >
+              <option value="relevance">Relevance</option>
+              <option value="newest">Newest (year)</option>
+              <option value="oldest">Oldest (year)</option>
+              <option value="az">A → Z</option>
+              <option value="za">Z → A</option>
+              <option value="recently_added">Recently added</option>
+              <option value="price_high">Price (High → Low) — tier 7</option>
+              <option value="price_low">Price (Low → High) — tier 7</option>
+            </select>
+          </label>
+
           <button
             type="button"
             onClick={() => router.push("/catalog/suggest")}
@@ -727,7 +808,9 @@ export default function CatalogScreen() {
       {banner ? (
         <div
           className={`mb-4 rounded-2xl border p-4 text-sm ${
-            banner.type === "ok" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-700"
+            banner.type === "ok"
+              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+              : "border-red-200 bg-red-50 text-red-700"
           }`}
         >
           {banner.msg}
@@ -810,29 +893,6 @@ export default function CatalogScreen() {
 
         {/* MAIN */}
         <section className="col-span-12 md:col-span-6">
-          {/* Sort control lives here (results surface), not inside cards */}
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <div className="text-xs text-gray-500">
-              Showing {rangeStart}-{rangeEnd} of {sortedCards.length}
-            </div>
-
-            <label className="flex items-center gap-2 text-xs text-gray-600">
-              <span>Sort</span>
-              <select
-                value={sortMode}
-                onChange={(e) => setSortMode(e.target.value as SortMode)}
-                className="h-9 rounded-xl border bg-white px-3 text-xs text-gray-700"
-              >
-                <option value="relevance">Relevance</option>
-                <option value="newest">Newest (year)</option>
-                <option value="oldest">Oldest (year)</option>
-                <option value="az">A → Z</option>
-                <option value="za">Z → A</option>
-                <option value="recently_added">Recently added</option>
-              </select>
-            </label>
-          </div>
-
           <CatalogGrid
             loading={cardsState.loading}
             loadError={cardsState.error}
