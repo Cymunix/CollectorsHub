@@ -15,6 +15,7 @@ export type CatalogListRow = {
   production_status: string | null;
   image_url?: string | null;
 
+  // ✅ “description fields without the text”
   publisher: string | null; // legacy text column
   upc: string | null;
 
@@ -28,16 +29,20 @@ export type CatalogListRow = {
 
   epid_ebay: string | null;
 
+  // ✅ card-only identifiers
   card_set_id?: string | null;
   card_number?: string | null;
   tcgplayer_id?: string | null;
 
+  // ✅ normalised platform/publisher (handles weird column names)
   platform_id?: string | null;
   game_publisher_id?: string | null;
 
+  // ✅ names (best-effort; may be null if schema doesn’t join cleanly)
   platform_name?: string | null;
   publisher_name?: string | null;
 
+  // ✅ building blocks (manual merge; do NOT rely on schema relationships)
   building_blocks?: {
     set_number: number | null;
     piece_count: number | null;
@@ -46,7 +51,23 @@ export type CatalogListRow = {
   } | null;
 };
 
-type CatalogListRowRaw = { [key: string]: any };
+// Raw shape from Supabase (optional nested join objects)
+type CatalogListRowRaw = {
+  [key: string]: any;
+  game_platforms?: { name?: any } | null;
+  game_publishers?: { name?: any } | null;
+};
+
+type BuildingBlockRaw = {
+  [key: string]: any;
+  catalog_item_id?: any;
+  catalog_items_id?: any;
+  item_id?: any;
+  set_number?: any;
+  piece_count?: any;
+  retail_cad?: any;
+  retail_usd?: any;
+};
 
 function toNumOrNull(v: any): number | null {
   if (v === null || v === undefined) return null;
@@ -69,20 +90,13 @@ function pickFirst(row: any, keys: string[]) {
   return undefined;
 }
 
-type BuildingBlockRaw = {
-  [key: string]: any;
-  set_number?: any;
-  piece_count?: any;
-  retail_cad?: any;
-  retail_usd?: any;
-};
-
 function pickItemIdFromBB(row: BuildingBlockRaw): string | null {
-  const v = pickFirst(row, ["catalog_item_id", "catalog_items_id", "item_id", "catalogItemId"]);
+  const v = pickFirst(row, ["catalog_item_id", "catalog_items_id", "item_id"]);
   return v ? String(v) : null;
 }
 
 export async function fetchCatalogListRows(params: {
+  // ✅ fetch by specific ids (used by CatalogGrid list toggle)
   ids?: string[] | null;
 
   search?: string | null;
@@ -94,7 +108,9 @@ export async function fetchCatalogListRows(params: {
   const ids = (params.ids ?? []).filter(Boolean);
   const limit = params.limit ?? 100;
 
-  // 1) Fetch catalog items (NO building_blocks join)
+  // IMPORTANT:
+  // - Do NOT join building blocks here (PostgREST relationship missing in schema cache)
+  // - Pull structured fields only (no big description text)
   let q = supabase.from("catalog_items").select(`
     id,
     name,
@@ -157,7 +173,9 @@ export async function fetchCatalogListRows(params: {
   const normalised: CatalogListRow[] = raw.map((r) => {
     const row: any = r as any;
 
+    // Normalise platform/publisher IDs from whatever the table actually has
     const platformId = pickFirst(row, ["platform_id", "Platform_id", "game_platform_id"]) ?? null;
+
     const publisherId =
       pickFirst(row, ["game_publisher_id", "publisher_id", "Publisher_Id", "Publisher_id"]) ?? null;
 
@@ -193,52 +211,50 @@ export async function fetchCatalogListRows(params: {
       platform_id: platformId ? String(platformId) : null,
       game_publisher_id: publisherId ? String(publisherId) : null,
 
+      // Best-effort names from joins (only works if FK is clean)
       platform_name: row.game_platforms?.name ?? null,
       publisher_name: row.game_publishers?.name ?? null,
 
+      // Filled by manual merge below
       building_blocks: null,
     };
   });
 
-  // 2) Fetch building blocks for these items and merge
+  // Manual merge: building blocks (because PostgREST relationship is missing)
   const itemIds = normalised.map((r) => r.id);
 
   if (itemIds.length) {
-    // IMPORTANT: we select possible FK column names because your schema has naming inconsistencies.
-    const { data: bbData, error: bbErr } = await supabase
+    // Try common FK column names. We do a best-effort approach without blowing up the request.
+    const selectBB = `
+      catalog_item_id,
+      catalog_items_id,
+      item_id,
+      set_number,
+      piece_count,
+      retail_cad,
+      retail_usd
+    `;
+
+    let bbRows: BuildingBlockRaw[] = [];
+
+    // Attempt 1: catalog_item_id
+    const { data: bb1, error: bbErr1 } = await supabase
       .from("catalog_building_blocks_rows")
-      .select(`
-        catalog_item_id,
-        catalog_items_id,
-        item_id,
-        set_number,
-        piece_count,
-        retail_cad,
-        retail_usd
-      `)
+      .select(selectBB)
       .in("catalog_item_id", itemIds);
 
-    // If the FK column isn't catalog_item_id, the query above might return 0 rows.
-    // So we do a fallback attempt for other common column names.
-    let bbRows: BuildingBlockRaw[] = (bbData ?? []) as any;
+    // If this errors, your column doesn't exist, etc -> we fall back to other columns
+    if (!bbErr1) {
+      bbRows = (bb1 ?? []) as any[];
+    }
 
-    if (!bbErr && bbRows.length === 0) {
+    // Attempt 2/3 if we got nothing (or attempt 1 errored)
+    if (bbRows.length === 0) {
       const tryCols = ["catalog_items_id", "item_id"] as const;
 
       for (const col of tryCols) {
-        const { data: d2, error: e2 } = await supabase
-          .from("catalog_building_blocks_rows")
-          .select(`
-            catalog_item_id,
-            catalog_items_id,
-            item_id,
-            set_number,
-            piece_count,
-            retail_cad,
-            retail_usd
-          `)
-          // @ts-expect-error - dynamic column name
-          .in(col, itemIds);
+        const builder: any = supabase.from("catalog_building_blocks_rows").select(selectBB);
+        const { data: d2, error: e2 } = await builder.in(col, itemIds);
 
         if (e2) continue;
         const rows2 = (d2 ?? []) as any[];
@@ -249,10 +265,7 @@ export async function fetchCatalogListRows(params: {
       }
     }
 
-    // If there *was* an error on the first attempt, throw it (real failure).
-    if (bbErr) throw bbErr;
-
-    // Map first BB row per item
+    // Map first building block row per item id (if multiples exist, we take the first)
     const bbByItem = new Map<string, BuildingBlockRaw>();
     for (const r of bbRows) {
       const itemId = pickItemIdFromBB(r);
@@ -273,7 +286,7 @@ export async function fetchCatalogListRows(params: {
     }
   }
 
-  // 3) Preserve requested order
+  // ✅ If ids were provided, return rows in the same order as ids
   if (ids.length) {
     const byId = new Map(normalised.map((r) => [r.id, r]));
     return ids.map((id) => byId.get(id)).filter(Boolean) as CatalogListRow[];
