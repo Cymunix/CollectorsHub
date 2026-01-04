@@ -38,6 +38,12 @@ export type CatalogListRow = {
   platform_name?: string | null;
   publisher_name?: string | null;
 
+  // ✅ NEW: Genre + Age Rating (ids + display names)
+  genre_id?: string | null;
+  age_rating_id?: string | null;
+  genre_name?: string | null;
+  age_rating_name?: string | null;
+
   // ✅ persisted wishlist state for this user
   is_wishlisted?: boolean;
 
@@ -51,8 +57,13 @@ export type CatalogListRow = {
 
 type CatalogListRowRaw = {
   [key: string]: any;
+
   game_platforms?: { name?: any } | null;
   game_publishers?: { name?: any } | null;
+
+  // ✅ NEW: joined lookups
+  genres?: { name?: any } | null;
+  age_ratings?: { name?: any } | null;
 };
 
 type BuildingBlockRaw = {
@@ -90,6 +101,11 @@ function pickFirst(row: any, keys: string[]) {
 function pickItemIdFromBB(row: BuildingBlockRaw): string | null {
   const v = pickFirst(row, ["catalog_item_id", "catalog_items_id", "item_id"]);
   return v ? String(v) : null;
+}
+
+function toStrOrNull(v: any): string | null {
+  const s = String(v ?? "").trim();
+  return s.length ? s : null;
 }
 
 async function fetchWishlistedSet(userId: string, itemIds: string[]) {
@@ -152,7 +168,13 @@ export async function fetchCatalogListRows(params: {
     publisher_id,
 
     game_platforms:game_platforms ( name ),
-    game_publishers:game_publishers ( name )
+    game_publishers:game_publishers ( name ),
+
+    -- ✅ NEW: Genre + Age Rating joins
+    genre_id,
+    age_rating_id,
+    genres:genres ( name ),
+    age_ratings:age_ratings ( name )
   `);
 
   if (ids.length) {
@@ -209,8 +231,14 @@ export async function fetchCatalogListRows(params: {
       platform_id: row.platform_id ? String(row.platform_id) : null,
       publisher_id: row.publisher_id ? String(row.publisher_id) : null,
 
-      platform_name: row.game_platforms?.name ?? null,
-      publisher_name: row.game_publishers?.name ?? null,
+      platform_name: toStrOrNull(row.game_platforms?.name ?? null),
+      publisher_name: toStrOrNull(row.game_publishers?.name ?? null),
+
+      // ✅ NEW: genre + age rating
+      genre_id: row.genre_id ? String(row.genre_id) : null,
+      age_rating_id: row.age_rating_id ? String(row.age_rating_id) : null,
+      genre_name: toStrOrNull(row.genres?.name ?? null),
+      age_rating_name: toStrOrNull(row.age_ratings?.name ?? null),
 
       is_wishlisted: false,
 
