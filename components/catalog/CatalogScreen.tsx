@@ -41,6 +41,84 @@ function norm(s: string) {
     .replace(/\s+/g, " ");
 }
 
+/* =========================
+   Sorting
+   ========================= */
+
+type SortMode = "relevance" | "newest" | "oldest" | "az" | "za" | "recently_added";
+
+function normaliseName(s: string) {
+  return String(s ?? "").toLowerCase().trim();
+}
+
+function safeYear(v: any): number | null {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function safeTimeMs(v: any): number | null {
+  if (!v) return null;
+  const t = Date.parse(String(v));
+  return Number.isFinite(t) ? t : null;
+}
+
+function sortCatalogCards(items: CatalogCard[], mode: SortMode): CatalogCard[] {
+  const copy = [...items];
+
+  // "Relevance" means: keep whatever order the backend/hook gave us (stable).
+  if (mode === "relevance") return copy;
+
+  if (mode === "newest") {
+    return copy.sort((a, b) => {
+      const ay = safeYear(a.release_year);
+      const by = safeYear(b.release_year);
+      if (ay === null && by === null) return normaliseName(a.name).localeCompare(normaliseName(b.name));
+      if (ay === null) return 1;
+      if (by === null) return -1;
+      if (by !== ay) return by - ay;
+      return normaliseName(a.name).localeCompare(normaliseName(b.name));
+    });
+  }
+
+  if (mode === "oldest") {
+    return copy.sort((a, b) => {
+      const ay = safeYear(a.release_year);
+      const by = safeYear(b.release_year);
+      if (ay === null && by === null) return normaliseName(a.name).localeCompare(normaliseName(b.name));
+      if (ay === null) return 1;
+      if (by === null) return -1;
+      if (ay !== by) return ay - by;
+      return normaliseName(a.name).localeCompare(normaliseName(b.name));
+    });
+  }
+
+  if (mode === "az") {
+    return copy.sort((a, b) => normaliseName(a.name).localeCompare(normaliseName(b.name)));
+  }
+
+  if (mode === "za") {
+    return copy.sort((a, b) => normaliseName(b.name).localeCompare(normaliseName(a.name)));
+  }
+
+  if (mode === "recently_added") {
+    // Works if your payload includes created_at (Supabase default).
+    // Falls back gracefully if it doesn't exist.
+    return copy.sort((a: any, b: any) => {
+      const at = safeTimeMs(a.created_at);
+      const bt = safeTimeMs(b.created_at);
+
+      if (at === null && bt === null) return normaliseName(a.name).localeCompare(normaliseName(b.name));
+      if (at === null) return 1;
+      if (bt === null) return -1;
+
+      if (bt !== at) return bt - at;
+      return normaliseName(a.name).localeCompare(normaliseName(b.name));
+    });
+  }
+
+  return copy;
+}
+
 export default function CatalogScreen() {
   const up = useUserProfile() as any;
 
@@ -108,6 +186,10 @@ export default function CatalogScreen() {
   const [gamePlatformId, setGamePlatformId] = useState("");
 
   const [comicPublisherId, setComicPublisherId] = useState("");
+
+  // -------------------- Sorting --------------------
+  // Default: if searching, users usually expect "relevance"; otherwise "newest" is sane.
+  const [sortMode, setSortMode] = useState<SortMode>(() => (urlSearch ? "relevance" : "newest"));
 
   const selectedCategory = useMemo(
     () => meta.categories.find((c) => c.id === categoryId) ?? null,
@@ -177,8 +259,7 @@ export default function CatalogScreen() {
     const exact = meta.franchises.find((f) => norm(f.name) === q) ?? null;
 
     // optional prefix match (only when query is >=4 chars to avoid noise)
-    const prefix =
-      q.length >= 4 ? meta.franchises.find((f) => norm(f.name).startsWith(q)) ?? null : null;
+    const prefix = q.length >= 4 ? meta.franchises.find((f) => norm(f.name).startsWith(q)) ?? null : null;
 
     const hit = exact ?? prefix;
     if (!hit) return;
@@ -370,21 +451,28 @@ export default function CatalogScreen() {
     cardTypeId,
   ]);
 
+  // -------------------- Sort (before pagination) --------------------
+  const sortedCards = useMemo(() => {
+    return sortCatalogCards(visibleCards, sortMode);
+  }, [visibleCards, sortMode]);
+
   // -------------------- Pagination --------------------
   const ITEMS_PER_PAGE = 25;
   const [page, setPage] = useState<number>(1);
 
-  const totalPages = useMemo(() => Math.max(1, Math.ceil(visibleCards.length / ITEMS_PER_PAGE)), [visibleCards.length]);
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(sortedCards.length / ITEMS_PER_PAGE)), [sortedCards.length]);
   const safePage = Math.min(Math.max(1, page), totalPages);
 
   const pagedCards = useMemo(() => {
     const start = (safePage - 1) * ITEMS_PER_PAGE;
-    return visibleCards.slice(start, start + ITEMS_PER_PAGE);
-  }, [visibleCards, safePage]);
+    return sortedCards.slice(start, start + ITEMS_PER_PAGE);
+  }, [sortedCards, safePage]);
 
   useEffect(() => {
     setPage(1);
   }, [
+    // reset page on any major result-shaping input
+    sortMode,
     urlSearch,
     categoryId,
     subcategoryId,
@@ -410,8 +498,8 @@ export default function CatalogScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalPages]);
 
-  const rangeStart = visibleCards.length === 0 ? 0 : (safePage - 1) * ITEMS_PER_PAGE + 1;
-  const rangeEnd = Math.min(safePage * ITEMS_PER_PAGE, visibleCards.length);
+  const rangeStart = sortedCards.length === 0 ? 0 : (safePage - 1) * ITEMS_PER_PAGE + 1;
+  const rangeEnd = Math.min(safePage * ITEMS_PER_PAGE, sortedCards.length);
 
   // -------------------- Navigation --------------------
   const openItem = (it: CatalogCard) => {
@@ -438,9 +526,7 @@ export default function CatalogScreen() {
 
     const priority = (quickPref as any)?.defaultWishlistPriority ?? "medium";
 
-    const res1 = await supabase
-      .from("user_wishlist_items")
-      .insert([{ user_id: uid, catalog_item_id: catalogItemId, priority }]);
+    const res1 = await supabase.from("user_wishlist_items").insert([{ user_id: uid, catalog_item_id: catalogItemId, priority }]);
 
     if (res1.error) {
       const msg1 = res1.error.message || "Failed to add to wishlist.";
@@ -490,8 +576,7 @@ export default function CatalogScreen() {
     const qty = Number((quickPref as any)?.defaultQuantity);
     const safeQty = Number.isFinite(qty) ? Math.max(1, Math.min(999, Math.round(qty))) : 1;
 
-    const visibility =
-      String((quickPref as any)?.defaultCollectionVisibility ?? "private") === "public" ? "public" : "private";
+    const visibility = String((quickPref as any)?.defaultCollectionVisibility ?? "private") === "public" ? "public" : "private";
 
     const condition_json = buildDefaultConditionJson(safeTier10);
 
@@ -725,11 +810,34 @@ export default function CatalogScreen() {
 
         {/* MAIN */}
         <section className="col-span-12 md:col-span-6">
+          {/* Sort control lives here (results surface), not inside cards */}
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div className="text-xs text-gray-500">
+              Showing {rangeStart}-{rangeEnd} of {sortedCards.length}
+            </div>
+
+            <label className="flex items-center gap-2 text-xs text-gray-600">
+              <span>Sort</span>
+              <select
+                value={sortMode}
+                onChange={(e) => setSortMode(e.target.value as SortMode)}
+                className="h-9 rounded-xl border bg-white px-3 text-xs text-gray-700"
+              >
+                <option value="relevance">Relevance</option>
+                <option value="newest">Newest (year)</option>
+                <option value="oldest">Oldest (year)</option>
+                <option value="az">A → Z</option>
+                <option value="za">Z → A</option>
+                <option value="recently_added">Recently added</option>
+              </select>
+            </label>
+          </div>
+
           <CatalogGrid
             loading={cardsState.loading}
             loadError={cardsState.error}
             urlSearch={urlSearch}
-            visibleCardsCount={visibleCards.length}
+            visibleCardsCount={sortedCards.length}
             rangeStart={rangeStart}
             rangeEnd={rangeEnd}
             pagedCards={pagedCards}
