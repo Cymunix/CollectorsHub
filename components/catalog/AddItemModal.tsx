@@ -493,6 +493,44 @@ export default function AddItemModal({
     return row;
   };
 
+  /* ---------------- NEW: Genre & Rating Creators ---------------- */
+
+  const createGenre = async () => {
+    const name = promptName("genre");
+    if (!name) return;
+
+    const row = await insertLookupRowSafe<GenreRow>("genres", { name }, setBanner);
+    if (!row) return;
+
+    setMeta((m) => ({
+      ...m,
+      genres: sortByName([...(m.genres ?? []), row]),
+    }));
+    // Auto-select the new genre
+    setLocalGenreIds((prev) => [...prev, row.id]);
+  };
+
+  const createAgeRating = async () => {
+    const system = kind === "movie" ? "MPAA" : kind === "gaming" ? "ESRB" : null;
+    if (!system) {
+      setBanner({ type: "error", msg: "No rating system defined for this item type." });
+      return;
+    }
+    const code = window.prompt(`New ${system} Code (e.g. PG-13):`);
+    if (!code) return;
+    const label = window.prompt("Description/Label (optional):") || "";
+
+    const row = await insertLookupRowSafe<AgeRatingRow>("age_ratings", { system, code, label }, setBanner);
+    if (!row) return;
+
+    setMeta((m) => ({
+      ...m,
+      ageRatings: [...(m.ageRatings ?? []), row],
+    }));
+    // Auto-select the new rating
+    setLocalAgeRatingId(row.id);
+  };
+
   /* ---------------- meta: genres + age ratings ---------------- */
 
   useEffect(() => {
@@ -737,9 +775,9 @@ export default function AddItemModal({
       // ✅ HARD GUARANTEE: selected genre/rating/explicit saved on catalog_items
       await persistMediaMetaOnCatalogItem({
         catalogItemId: id,
-        genreIds: uniqStrings(genreIds ?? []),
-        ageRatingId: ageRatingId ? ageRatingId : null,
-        explicitContent: kind === "music" ? !!explicitContent : null,
+        genreIds: uniqStrings(localGenreIds), // Use local state directly
+        ageRatingId: localAgeRatingId || null, // Use local state directly
+        explicitContent: kind === "music" ? !!localExplicit : null,
       });
 
       // AUTO-SYNC: legacy franchiseId -> join table as PRIMARY
@@ -902,28 +940,38 @@ export default function AddItemModal({
               <div className="space-y-4">
                 {/* Genres */}
                 <div>
-                  <div className="flex items-center justify-between">
-                    <div className="text-xs font-semibold text-[#0F172A]">Genres</div>
-                    <div className="text-[11px] text-[#64748B]">{(genreIds?.length ?? 0) || 0} selected</div>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="text-xs font-semibold text-[#0F172A]">Genres</div>
+                      <CreateLinkButton label="(+ New)" onClick={createGenre} />
+                    </div>
+                    <div className="text-[11px] text-[#64748B]">{localGenreIds.length} selected</div>
                   </div>
 
-                  {genres.length === 0 ? (
+                  {(!meta.genres || meta.genres.length === 0) ? (
                     <div className="mt-2 rounded-xl border bg-[#F8FAFC] p-3 text-xs text-[#64748B]">
-                      No genres found. Seed the <span className="font-mono">genres</span> table.
+                      No genres found.
                     </div>
                   ) : (
-                    <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 max-h-48 overflow-y-auto">
                       {genres.map((g) => {
-                        const checked = (genreIds ?? []).includes(g.id);
+                        const checked = localGenreIds.includes(g.id);
                         return (
                           <label
                             key={g.id}
-                            className="flex items-center gap-2 rounded-xl border border-[#E5E9F2] bg-white p-3 text-sm"
+                            className={`flex items-center gap-2 rounded-xl border p-3 text-sm cursor-pointer transition-colors ${
+                              checked ? "bg-blue-50 border-blue-200" : "bg-white border-[#E5E9F2]"
+                            }`}
                           >
                             <input
                               type="checkbox"
                               checked={checked}
-                              onChange={() => setGenreIds(toggleId(genreIds ?? [], g.id))}
+                              onChange={() => {
+                                const newIds = checked 
+                                  ? localGenreIds.filter(id => id !== g.id)
+                                  : [...localGenreIds, g.id];
+                                setLocalGenreIds(newIds);
+                              }}
                               disabled={saving}
                               className="h-4 w-4"
                             />
@@ -943,8 +991,8 @@ export default function AddItemModal({
                     <label className="mt-3 inline-flex items-center gap-2 text-sm text-[#0F172A]">
                       <input
                         type="checkbox"
-                        checked={!!explicitContent}
-                        onChange={(e) => setExplicitContent(!!e.target.checked)}
+                        checked={localExplicit}
+                        onChange={(e) => setLocalExplicit(!!e.target.checked)}
                         disabled={saving}
                         className="h-4 w-4"
                       />
@@ -956,8 +1004,8 @@ export default function AddItemModal({
                       <div className="mt-4">
                         <div className="text-xs font-semibold text-[#0F172A]">Rating</div>
                         <select
-                          value={ageRatingId ?? ""}
-                          onChange={(e) => setAgeRatingId(e.target.value)}
+                          value={localAgeRatingId}
+                          onChange={(e) => setLocalAgeRatingId(e.target.value)}
                           disabled={saving}
                           className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
                         >
@@ -973,27 +1021,30 @@ export default function AddItemModal({
                   </div>
                 ) : (
                   <div>
-                    <div className="text-xs font-semibold text-[#0F172A]">
-                      Age rating{ratingSystemForKind ? ` (${ratingSystemForKind})` : ""}
-                    </div>
+                     <div className="flex items-center justify-between">
+                        <div className="text-xs font-semibold text-[#0F172A]">
+                          Age rating{ratingSystemForKind ? ` (${ratingSystemForKind})` : ""}
+                        </div>
+                        <CreateLinkButton label="(+ New)" onClick={createAgeRating} />
+                     </div>
+                    
                     <select
-                      value={ageRatingId ?? ""}
-                      onChange={(e) => setAgeRatingId(e.target.value)}
+                      value={localAgeRatingId}
+                      onChange={(e) => setLocalAgeRatingId(e.target.value)}
                       disabled={saving}
                       className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
                     >
                       <option value="">Select rating…</option>
                       {filteredRatings.map((r) => (
                         <option key={r.id} value={r.id}>
-                          {r.label}
+                          {r.code} {r.label ? `— ${r.label}` : ""}
                         </option>
                       ))}
                     </select>
 
                     {ratingSystemForKind && filteredRatings.length === 0 ? (
                       <div className="mt-2 rounded-xl border bg-[#F8FAFC] p-3 text-xs text-[#64748B]">
-                        No ratings found for <b>{ratingSystemForKind}</b>. Seed the{" "}
-                        <span className="font-mono">age_ratings</span> table.
+                        No ratings found for <b>{ratingSystemForKind}</b>. Create one above.
                       </div>
                     ) : null}
                   </div>
