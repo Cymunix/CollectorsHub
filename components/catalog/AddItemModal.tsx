@@ -37,6 +37,8 @@ import ItemFranchiseEditor from "@/components/catalog/ItemFranchiseEditor";
 /* ---------------- types ---------------- */
 
 type NamedRow = { id: string; name: string };
+type GenreRow = { id: string; name: string; kind?: string | null; slug?: string | null };
+type ComicSeriesRow = { id: string; name: string; franchise_id?: string | null; slug?: string | null };
 
 type CatalogMeta = {
   categories: any[];
@@ -62,6 +64,10 @@ type CatalogMeta = {
   gamePublishers: NamedRow[];
 
   comicPublishers: any[];
+
+  // ✅ NEW (if your useCatalogMeta fetches these)
+  genres?: GenreRow[];
+  comicSeries?: ComicSeriesRow[];
 
   [key: string]: any;
 };
@@ -107,10 +113,6 @@ function clampQty(v: any) {
 
 function sortByName<T extends { name: string }>(arr: T[]) {
   return [...arr].sort((a, b) => String(a.name ?? "").localeCompare(String(b.name ?? "")));
-}
-
-function uniqStrings(xs: string[]) {
-  return Array.from(new Set(xs.filter(Boolean)));
 }
 
 function toggleId(list: string[], id: string) {
@@ -210,12 +212,7 @@ async function insertWithSlugSafe<T extends { id: string; name: string }>(
     const base = slugify(payload?.name);
 
     // attempt 1
-    let { data, error } = await supabase
-      .from(table)
-      .insert({ ...payload, slug: base })
-      .select("*")
-      .single();
-
+    let { data, error } = await supabase.from(table).insert({ ...payload, slug: base }).select("*").single();
     if (!error) return data as T;
 
     // attempt 2 (collision safe)
@@ -273,7 +270,23 @@ export default function AddItemModal({
   const [bundleResults, setBundleResults] = useState<CatalogSearchRow[]>([]);
   const [bundleUiErr, setBundleUiErr] = useState<string | null>(null);
 
+  // ✅ NEW: Genres + Comic series (safe even if hooks aren't updated yet)
+  const [localGenreIds, setLocalGenreIds] = useState<string[]>([]);
+  const [localComicSeriesId, setLocalComicSeriesId] = useState<string>("");
+
   const kind = String(form.itemKind || "building_blocks");
+
+  const genreIds: string[] = (form.genreIds ?? localGenreIds) as string[];
+  const setGenreIds = (ids: string[]) => {
+    if (typeof form.setGenreIds === "function") form.setGenreIds(ids);
+    else setLocalGenreIds(ids);
+  };
+
+  const comicSeriesId: string = String(form.comicSeriesId ?? localComicSeriesId ?? "");
+  const setComicSeriesId = (id: string) => {
+    if (typeof form.setComicSeriesId === "function") form.setComicSeriesId(id);
+    else setLocalComicSeriesId(id);
+  };
 
   const title = useMemo(() => {
     const k = String(form.itemKind || "building_blocks").replace(/_/g, " ");
@@ -300,6 +313,9 @@ export default function AddItemModal({
     setBundleQuery("");
     setBundleResults([]);
     setBundleUiErr(null);
+
+    setLocalGenreIds([]);
+    setLocalComicSeriesId("");
 
     setBanner(null);
     setCreatedCatalogItemId(null);
@@ -339,11 +355,7 @@ export default function AddItemModal({
       return;
     }
 
-    const row = await insertLookupRowSafe<any>(
-      "bb_themes",
-      { name, subcategory_id: form.subcategoryId },
-      setBanner
-    );
+    const row = await insertLookupRowSafe<any>("bb_themes", { name, subcategory_id: form.subcategoryId }, setBanner);
     if (!row) return;
 
     setMeta((m) => ({ ...m, bbThemes: sortByName([...(m.bbThemes ?? []), row]) }));
@@ -359,11 +371,7 @@ export default function AddItemModal({
       return;
     }
 
-    const row = await insertLookupRowSafe<any>(
-      "bb_subthemes",
-      { name, theme_id: form.bbThemeId },
-      setBanner
-    );
+    const row = await insertLookupRowSafe<any>("bb_subthemes", { name, theme_id: form.bbThemeId }, setBanner);
     if (!row) return;
 
     setMeta((m) => ({ ...m, bbSubthemes: sortByName([...(m.bbSubthemes ?? []), row]) }));
@@ -374,7 +382,7 @@ export default function AddItemModal({
     const name = promptName("card manufacturer");
     if (!name) return;
 
-const row = await insertWithSlugSafe<any>("card_manufacturers", { name }, setBanner);
+    const row = await insertWithSlugSafe<any>("card_manufacturers", { name }, setBanner);
     if (!row) return;
 
     setMeta((m) => ({ ...m, cardManufacturers: sortByName([...(m.cardManufacturers ?? []), row]) }));
@@ -391,10 +399,10 @@ const row = await insertWithSlugSafe<any>("card_manufacturers", { name }, setBan
     }
 
     const row = await insertWithSlugSafe<any>(
-  "card_sets",
-  { name, manufacturer_id: form.cardManufacturerId },
-  setBanner
-);
+      "card_sets",
+      { name, manufacturer_id: form.cardManufacturerId },
+      setBanner
+    );
     if (!row) return;
 
     setMeta((m) => ({ ...m, cardSets: sortByName([...(m.cardSets ?? []), row]) }));
@@ -423,15 +431,37 @@ const row = await insertWithSlugSafe<any>("card_manufacturers", { name }, setBan
     form.setMusicArtistId?.(row.id);
   };
 
-  const createPerson = async () => {
-    const name = promptName("person");
-    if (!name) return null;
+  // ✅ NEW: genre + comic series creators
+  const createGenre = async (genreKind: "movie" | "music") => {
+    const name = promptName(`${genreKind} genre`);
+    if (!name) return;
 
-    const row = await insertLookupRowSafe<any>("people", { name }, setBanner);
-    if (!row) return null;
+    const row = await insertWithSlugSafe<GenreRow>("genres", { name, kind: genreKind }, setBanner);
+    if (!row) return;
 
-    setMeta((m) => ({ ...m, people: sortByName([...(m.people ?? []), row]) }));
-    return row;
+    setMeta((m) => ({
+      ...m,
+      genres: sortByName([...(m.genres ?? []), row]),
+    }));
+  };
+
+  const createComicSeries = async () => {
+    const name = promptName("comic series");
+    if (!name) return;
+
+    // If you want to tie series to franchise, this uses the legacy franchiseId as a hint.
+    const payload: any = { name };
+    if (form.franchiseId) payload.franchise_id = form.franchiseId;
+
+    const row = await insertWithSlugSafe<ComicSeriesRow>("comic_series", payload, setBanner);
+    if (!row) return;
+
+    setMeta((m) => ({
+      ...m,
+      comicSeries: sortByName([...(m.comicSeries ?? []), row]),
+    }));
+
+    setComicSeriesId(row.id);
   };
 
   /* ---------------- bundle helpers ---------------- */
@@ -540,6 +570,9 @@ const row = await insertWithSlugSafe<any>("card_manufacturers", { name }, setBan
 
         linkedVariants: variants.linkedVariants,
 
+        // ✅ NEW: genres (movies + music)
+        genreIds: (kind === "movie" || kind === "music") ? genreIds : [],
+
         // building blocks
         bbThemeId: form.bbThemeId,
         bbSubthemeId: form.bbSubthemeId,
@@ -575,9 +608,9 @@ const row = await insertWithSlugSafe<any>("card_manufacturers", { name }, setBan
         gamePlatformId: form.gamePlatformId,
         gamePublisherId: form.gamePublisherId,
 
-        // comics
+        // comics (✅ change: series becomes ID)
         comicPublisherId: form.comicPublisherId,
-        comicSeries: form.comicSeries,
+        comicSeriesId: kind === "comic" ? (comicSeriesId || null) : null,
         comicIssueNumber: form.comicIssueNumber,
         comicVariant: form.comicVariant,
       });
@@ -669,6 +702,19 @@ const row = await insertWithSlugSafe<any>("card_manufacturers", { name }, setBan
     return cardSets.filter((s: any) => String(s.manufacturer_id) === manId);
   }, [cardSets, form.cardManufacturerId]);
 
+  // ✅ NEW: genres filtered by kind
+  const allGenres = (meta.genres ?? []) as GenreRow[];
+  const movieGenres = useMemo(
+    () => sortByName(allGenres.filter((g) => (g.kind ?? "any") === "movie" || (g.kind ?? "any") === "any")),
+    [allGenres]
+  );
+  const musicGenres = useMemo(
+    () => sortByName(allGenres.filter((g) => (g.kind ?? "any") === "music" || (g.kind ?? "any") === "any")),
+    [allGenres]
+  );
+
+  const comicSeries = useMemo(() => sortByName((meta.comicSeries ?? []) as ComicSeriesRow[]), [meta.comicSeries]);
+
   /* ---------------- render ---------------- */
 
   return (
@@ -717,11 +763,11 @@ const row = await insertWithSlugSafe<any>("card_manufacturers", { name }, setBan
           ) : null}
 
           <PhotoSection
-  previews={form.itemImagePreviews ?? []}
-  onPickFiles={form.pickItemImages}
-  onRemoveAt={form.removeItemImageAt}
-  disabled={saving}
-/>
+            previews={form.itemImagePreviews ?? []}
+            onPickFiles={form.pickItemImages}
+            onRemoveAt={form.removeItemImageAt}
+            disabled={saving}
+          />
 
           <GlobalDetailsSection {...form} />
 
@@ -999,184 +1045,247 @@ const row = await insertWithSlugSafe<any>("card_manufacturers", { name }, setBan
           ) : null}
 
           {kind === "music" ? (
-            <SectionShell title="Music" subtitle="Artist selection + create artist.">
-              <div>
-                <div className="flex items-center justify-between">
-                  <div className="text-xs font-semibold text-[#0F172A]">Artist</div>
-                  <CreateLinkButton onClick={createMusicArtist} disabled={saving} />
+            <SectionShell title="Music" subtitle="Artist + genres (identity). Formats belong in variants later.">
+              <div className="space-y-4">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-semibold text-[#0F172A]">Artist</div>
+                    <CreateLinkButton onClick={createMusicArtist} disabled={saving} />
+                  </div>
+                  <select
+                    value={form.musicArtistId ?? ""}
+                    onChange={(e) => form.setMusicArtistId?.(e.target.value)}
+                    disabled={saving}
+                    className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+                  >
+                    <option value="">Select artist…</option>
+                    {(meta.musicArtists ?? []).map((x: any) => (
+                      <option key={x.id} value={x.id}>
+                        {x.name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
-                <select
-                  value={form.musicArtistId ?? ""}
-                  onChange={(e) => form.setMusicArtistId?.(e.target.value)}
-                  disabled={saving}
-                  className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
-                >
-                  <option value="">Select artist…</option>
-                  {(meta.musicArtists ?? []).map((x: any) => (
-                    <option key={x.id} value={x.id}>
-                      {x.name}
-                    </option>
-                  ))}
-                </select>
+
+                <div className="rounded-2xl border border-[#E5E9F2] bg-white p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-semibold text-[#0F172A]">Genres</div>
+                    <CreateLinkButton onClick={() => createGenre("music")} disabled={saving} />
+                  </div>
+
+                  {musicGenres.length === 0 ? (
+                    <div className="mt-2 rounded-xl border bg-[#F8FAFC] p-3 text-xs text-[#64748B]">
+                      No music genres yet. Create one.
+                    </div>
+                  ) : (
+                    <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      {musicGenres.map((g) => {
+                        const checked = genreIds.includes(g.id);
+                        return (
+                          <label
+                            key={g.id}
+                            className="flex items-center gap-2 rounded-xl border border-[#E5E9F2] bg-white p-2 text-sm"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => setGenreIds(toggleId(genreIds, g.id))}
+                              disabled={saving}
+                              className="h-4 w-4"
+                            />
+                            <span className="truncate">{g.name}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <div className="mt-2 text-[11px] text-[#64748B]">
+                    Genres are core identity. Don’t use platform/format here.
+                  </div>
+                </div>
               </div>
             </SectionShell>
           ) : null}
 
-{kind === "movie" ? (
-  <SectionShell title="Movie" subtitle="Search people and add them as Directors / Actors.">
-    <div className="space-y-4">
-      {(people as any).peopleUiErr ? (
-        <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800">
-          {(people as any).peopleUiErr}
-        </div>
-      ) : null}
-
-      {/* Search */}
-      <div>
-        <div className="text-xs font-semibold text-[#0F172A]">Find person</div>
-        <div className="mt-2 flex items-center gap-2">
-          <input
-            value={(people as any).peopleQuery ?? ""}
-            onChange={(e) => (people as any).setPeopleQuery?.(e.target.value)}
-            placeholder="Search people... (min 2 chars)"
-            disabled={saving}
-            className="w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
-          />
-          <button
-            type="button"
-            onClick={() => (people as any).searchPeople?.()}
-            disabled={saving || !!(people as any).peopleSearching || String((people as any).peopleQuery ?? "").trim().length < 2}
-            className="rounded-xl bg-[#0F172A] px-3 py-2 text-xs font-semibold text-white disabled:bg-gray-200 disabled:text-gray-600"
-          >
-            {(people as any).peopleSearching ? "Searching..." : "Search"}
-          </button>
-          <button
-            type="button"
-            onClick={async () => {
-              const name = (window.prompt("New person name:") || "").trim();
-              if (!name) return;
-
-              const row = await (people as any).createPerson?.(name);
-              if (!row) {
-                setBanner({ type: "error", msg: "Failed to create person." });
-                return;
-              }
-
-              // Put them into results so they show immediately
-              const prev = (people as any).peopleResults ?? [];
-              (people as any).setPeopleQuery?.("");
-              // best-effort: just prepend into local results (no DB re-fetch needed)
-              // (hook doesn't expose setPeopleResults; so just run a new search if you want)
-              setBanner({ type: "success", msg: `Created ${row.name}. Now add them as Director/Actor.` });
-            }}
-            disabled={saving}
-            className="rounded-xl border px-3 py-2 text-xs font-semibold hover:bg-[#F8FAFC] disabled:opacity-50"
-          >
-            Create
-          </button>
-        </div>
-
-        {/* Results */}
-        <div className="mt-3 space-y-2">
-          {((people as any).peopleResults ?? []).map((r: any) => (
-            <div
-              key={r.id}
-              className="flex items-center justify-between gap-3 rounded-xl border border-[#E5E9F2] bg-white p-3"
-            >
-              <div className="min-w-0">
-                <div className="truncate text-sm font-semibold text-[#0F172A]">{safeText(r.name)}</div>
-                <div className="text-[11px] text-[#64748B]">{r.id}</div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => (people as any).addDirector?.(r.id)}
-                  disabled={saving}
-                  className="rounded-lg border px-3 py-1 text-xs font-semibold hover:bg-[#F8FAFC]"
-                >
-                  Add Director
-                </button>
-                <button
-                  type="button"
-                  onClick={() => (people as any).addActor?.(r.id)}
-                  disabled={saving}
-                  className="rounded-lg border px-3 py-1 text-xs font-semibold hover:bg-[#F8FAFC]"
-                >
-                  Add Actor
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Selected Directors */}
-      <div className="rounded-2xl border border-[#E5E9F2] bg-white p-4">
-        <div className="text-sm font-semibold text-[#0F172A]">Directors</div>
-        <div className="mt-2 space-y-2">
-          {(((people as any).movieDirectorIds ?? []) as string[]).length === 0 ? (
-            <div className="rounded-xl border bg-[#F8FAFC] p-3 text-xs text-[#64748B]">None selected.</div>
-          ) : (
-            ((people as any).movieDirectorIds ?? []).map((id: string) => {
-              const r = (people as any).resultsById?.get?.(id);
-              return (
-                <div key={id} className="flex items-center justify-between rounded-xl border border-[#E5E9F2] p-3">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-semibold text-[#0F172A]">{r?.name ?? id}</div>
-                    <div className="text-[11px] text-[#64748B]">{id}</div>
+          {kind === "movie" ? (
+            <SectionShell title="Movie" subtitle="People + genres (identity). Formats belong in variants later.">
+              <div className="space-y-4">
+                {(people as any).peopleUiErr ? (
+                  <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800">
+                    {(people as any).peopleUiErr}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => (people as any).removeDirector?.(id)}
-                    disabled={saving}
-                    className="rounded-lg border px-2 py-1 text-xs font-semibold hover:bg-[#F8FAFC]"
-                  >
-                    Remove
-                  </button>
-                </div>
-              );
-            })
-          )}
-        </div>
-      </div>
+                ) : null}
 
-      {/* Selected Actors */}
-      <div className="rounded-2xl border border-[#E5E9F2] bg-white p-4">
-        <div className="text-sm font-semibold text-[#0F172A]">Actors</div>
-        <div className="mt-2 space-y-2">
-          {(((people as any).movieActorIds ?? []) as string[]).length === 0 ? (
-            <div className="rounded-xl border bg-[#F8FAFC] p-3 text-xs text-[#64748B]">None selected.</div>
-          ) : (
-            ((people as any).movieActorIds ?? []).map((id: string) => {
-              const r = (people as any).resultsById?.get?.(id);
-              return (
-                <div key={id} className="flex items-center justify-between rounded-xl border border-[#E5E9F2] p-3">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-semibold text-[#0F172A]">{r?.name ?? id}</div>
-                    <div className="text-[11px] text-[#64748B]">{id}</div>
+                {/* Genres */}
+                <div className="rounded-2xl border border-[#E5E9F2] bg-white p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-semibold text-[#0F172A]">Genres</div>
+                    <CreateLinkButton onClick={() => createGenre("movie")} disabled={saving} />
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => (people as any).removeActor?.(id)}
-                    disabled={saving}
-                    className="rounded-lg border px-2 py-1 text-xs font-semibold hover:bg-[#F8FAFC]"
-                  >
-                    Remove
-                  </button>
-                </div>
-              );
-            })
-          )}
-        </div>
-      </div>
-    </div>
-  </SectionShell>
-) : null}
 
+                  {movieGenres.length === 0 ? (
+                    <div className="mt-2 rounded-xl border bg-[#F8FAFC] p-3 text-xs text-[#64748B]">
+                      No movie genres yet. Create one.
+                    </div>
+                  ) : (
+                    <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      {movieGenres.map((g) => {
+                        const checked = genreIds.includes(g.id);
+                        return (
+                          <label
+                            key={g.id}
+                            className="flex items-center gap-2 rounded-xl border border-[#E5E9F2] bg-white p-2 text-sm"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => setGenreIds(toggleId(genreIds, g.id))}
+                              disabled={saving}
+                              className="h-4 w-4"
+                            />
+                            <span className="truncate">{g.name}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <div className="mt-2 text-[11px] text-[#64748B]">
+                    Genres are core identity. Don’t use platform/format here.
+                  </div>
+                </div>
+
+                {/* People search */}
+                <div>
+                  <div className="text-xs font-semibold text-[#0F172A]">Find person</div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <input
+                      value={(people as any).peopleQuery ?? ""}
+                      onChange={(e) => (people as any).setPeopleQuery?.(e.target.value)}
+                      placeholder="Search people... (min 2 chars)"
+                      disabled={saving}
+                      className="w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => (people as any).searchPeople?.()}
+                      disabled={
+                        saving ||
+                        !!(people as any).peopleSearching ||
+                        String((people as any).peopleQuery ?? "").trim().length < 2
+                      }
+                      className="rounded-xl bg-[#0F172A] px-3 py-2 text-xs font-semibold text-white disabled:bg-gray-200 disabled:text-gray-600"
+                    >
+                      {(people as any).peopleSearching ? "Searching..." : "Search"}
+                    </button>
+                  </div>
+
+                  <div className="mt-3 space-y-2">
+                    {((people as any).peopleResults ?? []).map((r: any) => (
+                      <div
+                        key={r.id}
+                        className="flex items-center justify-between gap-3 rounded-xl border border-[#E5E9F2] bg-white p-3"
+                      >
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-semibold text-[#0F172A]">{safeText(r.name)}</div>
+                          <div className="text-[11px] text-[#64748B]">{r.id}</div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => (people as any).addDirector?.(r.id)}
+                            disabled={saving}
+                            className="rounded-lg border px-3 py-1 text-xs font-semibold hover:bg-[#F8FAFC]"
+                          >
+                            Add Director
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => (people as any).addActor?.(r.id)}
+                            disabled={saving}
+                            className="rounded-lg border px-3 py-1 text-xs font-semibold hover:bg-[#F8FAFC]"
+                          >
+                            Add Actor
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Selected Directors */}
+                <div className="rounded-2xl border border-[#E5E9F2] bg-white p-4">
+                  <div className="text-sm font-semibold text-[#0F172A]">Directors</div>
+                  <div className="mt-2 space-y-2">
+                    {(((people as any).movieDirectorIds ?? []) as string[]).length === 0 ? (
+                      <div className="rounded-xl border bg-[#F8FAFC] p-3 text-xs text-[#64748B]">None selected.</div>
+                    ) : (
+                      ((people as any).movieDirectorIds ?? []).map((id: string) => {
+                        const r = (people as any).resultsById?.get?.(id);
+                        return (
+                          <div
+                            key={id}
+                            className="flex items-center justify-between rounded-xl border border-[#E5E9F2] p-3"
+                          >
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-semibold text-[#0F172A]">{r?.name ?? id}</div>
+                              <div className="text-[11px] text-[#64748B]">{id}</div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => (people as any).removeDirector?.(id)}
+                              disabled={saving}
+                              className="rounded-lg border px-2 py-1 text-xs font-semibold hover:bg-[#F8FAFC]"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+
+                {/* Selected Actors */}
+                <div className="rounded-2xl border border-[#E5E9F2] bg-white p-4">
+                  <div className="text-sm font-semibold text-[#0F172A]">Actors</div>
+                  <div className="mt-2 space-y-2">
+                    {(((people as any).movieActorIds ?? []) as string[]).length === 0 ? (
+                      <div className="rounded-xl border bg-[#F8FAFC] p-3 text-xs text-[#64748B]">None selected.</div>
+                    ) : (
+                      ((people as any).movieActorIds ?? []).map((id: string) => {
+                        const r = (people as any).resultsById?.get?.(id);
+                        return (
+                          <div
+                            key={id}
+                            className="flex items-center justify-between rounded-xl border border-[#E5E9F2] p-3"
+                          >
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-semibold text-[#0F172A]">{r?.name ?? id}</div>
+                              <div className="text-[11px] text-[#64748B]">{id}</div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => (people as any).removeActor?.(id)}
+                              disabled={saving}
+                              className="rounded-lg border px-2 py-1 text-xs font-semibold hover:bg-[#F8FAFC]"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              </div>
+            </SectionShell>
+          ) : null}
 
           {kind === "comic" ? (
-            <SectionShell title="Comics" subtitle="Publisher and issue details.">
+            <SectionShell title="Comics" subtitle="Publisher + series (required) + issue details.">
               <div className="space-y-3">
                 <div>
                   <div className="text-xs font-semibold text-[#0F172A]">Publisher</div>
@@ -1197,15 +1306,26 @@ const row = await insertWithSlugSafe<any>("card_manufacturers", { name }, setBan
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <div>
-                    <div className="text-xs font-semibold text-[#0F172A]">Series</div>
-                    <input
-                      value={form.comicSeries ?? ""}
-                      onChange={(e) => form.setComicSeries?.(e.target.value)}
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-semibold text-[#0F172A]">Series</div>
+                      <CreateLinkButton onClick={createComicSeries} disabled={saving} />
+                    </div>
+                    <select
+                      value={comicSeriesId}
+                      onChange={(e) => setComicSeriesId(e.target.value)}
                       disabled={saving}
-                      className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
-                      placeholder="e.g., Amazing Spider-Man"
-                    />
+                      className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+                    >
+                      <option value="">Select series…</option>
+                      {comicSeries.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="mt-1 text-[11px] text-[#64748B]">Series is identity (Batman, Superman, etc.).</div>
                   </div>
+
                   <div>
                     <div className="text-xs font-semibold text-[#0F172A]">Issue #</div>
                     <input
@@ -1216,6 +1336,7 @@ const row = await insertWithSlugSafe<any>("card_manufacturers", { name }, setBan
                       placeholder="e.g., 129"
                     />
                   </div>
+
                   <div>
                     <div className="text-xs font-semibold text-[#0F172A]">Variant</div>
                     <input
@@ -1227,6 +1348,12 @@ const row = await insertWithSlugSafe<any>("card_manufacturers", { name }, setBan
                     />
                   </div>
                 </div>
+
+                {!comicSeriesId ? (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                    Pick a <b>Series</b> (or create one). Comics without series are basically junk data.
+                  </div>
+                ) : null}
               </div>
             </SectionShell>
           ) : null}
@@ -1450,7 +1577,3 @@ const row = await insertWithSlugSafe<any>("card_manufacturers", { name }, setBan
     </>
   );
 }
-
-
-
-
