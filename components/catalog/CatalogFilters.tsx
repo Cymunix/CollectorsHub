@@ -70,6 +70,10 @@ type Props = {
   gamePlatformId: string;
   setGamePlatformId: (v: string) => void;
 
+  // ✅ ADD: optional mirror state used elsewhere (platform_id)
+  platformId?: string;
+  setPlatformId?: (v: string) => void;
+
   // Music
   musicArtists: MusicArtist[];
   musicArtistId: string;
@@ -113,6 +117,7 @@ export default function CatalogFilters(p: Props) {
 
   const clearGaming = () => {
     p.setGamePlatformId("");
+    p.setPlatformId?.("");
   };
 
   const clearMusic = () => {
@@ -279,11 +284,7 @@ export default function CatalogFilters(p: Props) {
                 <p className="font-medium text-xs">Show Minifigs</p>
                 <p className="text-[10px] text-gray-500">Display minifigs as catalog cards</p>
               </div>
-              <input
-                type="checkbox"
-                checked={p.showMinifigs}
-                onChange={(e) => p.setShowMinifigs(e.target.checked)}
-              />
+              <input type="checkbox" checked={p.showMinifigs} onChange={(e) => p.setShowMinifigs(e.target.checked)} />
             </div>
 
             <div className="space-y-1">
@@ -339,7 +340,6 @@ export default function CatalogFilters(p: Props) {
                 onChange={(e) => {
                   const v = e.target.value;
                   p.setToyManufacturerId(v);
-                  // reset downstream
                   p.setToyBrandId("");
                   p.setToyLineId("");
                 }}
@@ -361,7 +361,6 @@ export default function CatalogFilters(p: Props) {
                 onChange={(e) => {
                   const v = e.target.value;
                   p.setToyBrandId(v);
-                  // reset downstream
                   p.setToyLineId("");
                 }}
                 className="w-full rounded-xl border bg-white px-3 py-2"
@@ -406,7 +405,11 @@ export default function CatalogFilters(p: Props) {
               <label className="font-medium">Platform</label>
               <select
                 value={p.gamePlatformId}
-                onChange={(e) => p.setGamePlatformId(e.target.value)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  p.setGamePlatformId(v);
+                  p.setPlatformId?.(v);
+                }}
                 className="w-full rounded-xl border bg-white px-3 py-2"
               >
                 <option value="">All</option>
@@ -484,7 +487,6 @@ export default function CatalogFilters(p: Props) {
                 onChange={(e) => {
                   const v = e.target.value;
                   p.setCardManufacturerId(v);
-                  // reset downstream
                   p.setCardSetId("");
                 }}
                 className="w-full rounded-xl border bg-white px-3 py-2"
