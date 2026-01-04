@@ -63,13 +63,12 @@ export async function fetchCatalogListRows(params: {
   const limit = params.limit ?? 50;
   const ids = (params.ids ?? []).filter(Boolean);
 
-  // ✅ FIXED: Changed age_ratings join to only select 'rating' 
-  // because the database confirmed 'name' does not exist.
+  // ✅ FIXED: Using 'code' and 'label' based on your age_ratings_rows.csv
   const select = `
     *,
     franchises:franchise_id ( name ),
     card_sets:card_set_id ( name ),
-    age_ratings:age_rating_id ( rating )
+    age_ratings:age_rating_id ( code, label )
   `;
 
   let q = supabase.from("catalog_items").select(select);
@@ -130,8 +129,8 @@ export async function fetchCatalogListRows(params: {
       genre_ids: gIds,
       genre_names: gIds.map(id => genreMap.get(id)).filter(Boolean) as string[],
       
-      // ✅ FIXED: Using .rating only here
-      age_rating_name: r.age_ratings?.rating || null,
+      // ✅ FIXED: Pulling from the 'code' column (e.g., "18A", "PG-13")
+      age_rating_name: r.age_ratings?.code || r.age_ratings?.label || null,
 
       building_blocks: bb ? {
         set_number: bb.set_number,
