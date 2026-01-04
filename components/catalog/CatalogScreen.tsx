@@ -18,6 +18,9 @@ import { detectKindFromCategoryName } from "@/lib/catalog/utils";
 import CatalogFilters from "@/components/catalog/CatalogFilters";
 import CatalogGrid from "@/components/catalog/CatalogGrid";
 
+// ✅ NEW: Right context panel
+import RightContextPanel from "@/components/catalog/right/RightContextPanel";
+
 function isDuplicateError(msg: string) {
   const m = (msg || "").toLowerCase();
   return m.includes("duplicate") || m.includes("unique") || m.includes("already exists");
@@ -39,16 +42,11 @@ function buildDefaultConditionJson(tier10: number) {
 export default function CatalogScreen() {
   const up = useUserProfile() as any;
 
-  // Support multiple hook shapes without breaking:
-  // - { user, loading }
-  // - { profile, loading }
-  // - { userProfile, loading }
-  const user = up?.user ?? up?.profile ?? up?.userProfile ?? up?.user_profile ?? null;
+  // ✅ IMPORTANT: profile != auth user
+  const profile = up?.profile ?? up?.userProfile ?? up?.user_profile ?? null;
   const profileLoading = Boolean(up?.loading ?? up?.isLoading ?? up?.profileLoading ?? false);
 
-  const roleRaw = String(user?.role ?? user?.roleRaw ?? "").trim();
-  const role = roleRaw.toLowerCase();
-
+  const role = String(profile?.role ?? "").trim().toLowerCase();
   const isAdmin = role === "admin";
   const isStoreOrPawn = role === "store" || role === "pawn" || role.includes("pawn");
 
@@ -56,10 +54,9 @@ export default function CatalogScreen() {
   const sp = useSearchParams();
 
   // ✅ Support BOTH "search" (your current header behavior) AND "q" (common pattern)
-  // Item pages / future links can use either and it will still work.
   const urlSearch = (sp.get("search") || sp.get("q") || "").trim();
 
-  // ✅ NEW: URL-driven context filters coming from item page clicks
+  // ✅ URL-driven context filters coming from item page clicks
   const urlFranchise = (sp.get("franchise") || "").trim();
   const urlSet = (sp.get("set") || "").trim();
 
@@ -161,21 +158,14 @@ export default function CatalogScreen() {
   );
 
   // -------------------- URL Context -> Local Filter State --------------------
-  // This is the critical fix: when you navigate to /catalog?franchise=... or /catalog?set=...,
-  // the filters actually get set.
   useEffect(() => {
-    // Franchise click from item page
     if (urlFranchise) {
       setFranchiseId(urlFranchise);
     }
 
-    // Set click from item page: this should drive cardSetId
     if (urlSet) {
       setCardSetId(urlSet);
     }
-    // We intentionally DO NOT clear local values when params are missing, because:
-    // - user might be using sidebar filters without URL params
-    // - clearing should be an explicit action (Reset / Clear)
   }, [urlFranchise, urlSet]);
 
   // -------------------- URL helpers --------------------
@@ -213,12 +203,10 @@ export default function CatalogScreen() {
 
     setComicPublisherId("");
 
-    // ✅ ALSO clear URL-driven context so it doesn't "stick" on refresh/back
     removeUrlKeys(["franchise", "set"]);
   };
 
   const clearSearch = () => {
-    // ✅ clear BOTH search keys we support
     removeUrlKeys(["search", "q"]);
   };
 
@@ -277,7 +265,6 @@ export default function CatalogScreen() {
       if (categoryId && it.category_id !== categoryId) return false;
       if (subcategoryId && it.subcategory_id !== subcategoryId) return false;
 
-      // ✅ Franchise filter (either sidebar state OR URL-driven param)
       if (franchiseId && it.franchise_id !== franchiseId) return false;
 
       if (minY !== null || maxY !== null) {
@@ -309,9 +296,7 @@ export default function CatalogScreen() {
         if (comicPublisherId && it.comic_publisher_id !== comicPublisherId) return false;
       }
 
-      // ✅ IMPORTANT FIX:
-      // "set" from item page should filter the catalog even if category isn't set to cards.
-      // So apply cardSetId globally if it exists.
+      // ✅ Apply cardSetId globally if it exists
       if (cardSetId && (it as any).card_set_id !== cardSetId) return false;
 
       // Card-only extras still apply when in card kinds
@@ -427,23 +412,18 @@ export default function CatalogScreen() {
 
     const priority = (quickPref as any)?.defaultWishlistPriority ?? "medium";
 
-    // Try with priority first
     const res1 = await supabase
       .from("user_wishlist_items")
       .insert([{ user_id: uid, catalog_item_id: catalogItemId, priority }]);
 
     if (res1.error) {
       const msg1 = res1.error.message || "Failed to add to wishlist.";
-
-      // If the error smells like "column doesn't exist", retry without priority
       const m = msg1.toLowerCase();
       const maybeMissingCol =
         m.includes("column") && (m.includes("priority") || m.includes("does not exist") || m.includes("unknown"));
 
       if (maybeMissingCol) {
-        const res2 = await supabase
-          .from("user_wishlist_items")
-          .insert([{ user_id: uid, catalog_item_id: catalogItemId }]);
+        const res2 = await supabase.from("user_wishlist_items").insert([{ user_id: uid, catalog_item_id: catalogItemId }]);
 
         if (res2.error) {
           const msg2 = res2.error.message || "Failed to add to wishlist.";
@@ -476,7 +456,6 @@ export default function CatalogScreen() {
     const uid = await ensureUserId();
     if (!uid) return;
 
-    // Defaults from preferences (with sane fallbacks)
     const score100 = Number((quickPref as any)?.defaultConditionScore100);
     const safeScore100 = Number.isFinite(score100) ? Math.max(0, Math.min(100, Math.round(score100))) : 80;
 
@@ -490,14 +469,13 @@ export default function CatalogScreen() {
 
     const condition_json = buildDefaultConditionJson(safeTier10);
 
-    // Try full insert first
     const res1 = await supabase.from("user_collection_items").insert([
       {
         user_id: uid,
         catalog_item_id: catalogItemId,
         quantity: safeQty,
-        condition_score: safeScore100, // ✅ 0–100
-        condition_json, // ✅ new shape
+        condition_score: safeScore100,
+        condition_json,
         visibility,
       },
     ]);
@@ -506,7 +484,6 @@ export default function CatalogScreen() {
       const msg1 = res1.error.message || "Failed to add to collection.";
       const m = msg1.toLowerCase();
 
-      // If it looks like missing columns, retry with the bare minimum
       const maybeMissingCol =
         m.includes("column") &&
         (m.includes("condition_score") ||
@@ -553,7 +530,6 @@ export default function CatalogScreen() {
       await addToCollection(catalogItemId);
       return;
     }
-    // "ask" isn't wired here (that would require a UI prompt). Defaulting to collection.
     return addToCollection(catalogItemId);
   };
 
@@ -737,108 +713,21 @@ export default function CatalogScreen() {
           />
         </section>
 
-        {/* RIGHT INFO SIDEBAR */}
+        {/* RIGHT CONTEXT SIDEBAR */}
         <aside className="col-span-12 md:col-span-3 md:sticky md:top-28 self-start">
-          <div className="rounded-2xl border bg-white p-4 shadow-sm">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-semibold text-[#0F172A]">Search &amp; Context</h3>
-                <p className="mt-0.5 text-xs text-gray-500">Quick info about what you’re viewing.</p>
-              </div>
-
-              {(urlSearch || categoryId || subcategoryId || franchiseId || cardSetId) && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    clearFilters();
-                    clearSearch();
-                  }}
-                  className="rounded-full border bg-white px-3 py-1.5 text-[11px] font-semibold text-gray-700 hover:bg-gray-50"
-                >
-                  Reset
-                </button>
-              )}
-            </div>
-
-            <div className="mt-4 space-y-3 text-sm">
-              <div className="rounded-xl border bg-gray-50 p-3">
-                <div className="text-[11px] font-semibold text-gray-600">Search</div>
-                <div className="mt-1 text-sm font-semibold text-[#0F172A]">
-                  {urlSearch ? `“${urlSearch}”` : <span className="text-gray-400">None</span>}
-                </div>
-                {urlSearch ? (
-                  <button
-                    type="button"
-                    onClick={clearSearch}
-                    className="mt-2 text-[11px] font-semibold text-indigo-600 hover:underline"
-                  >
-                    Clear search
-                  </button>
-                ) : null}
-              </div>
-
-              <div className="rounded-xl border bg-white p-3">
-                <div className="text-[11px] font-semibold text-gray-600">Selected</div>
-                <ul className="mt-2 space-y-1 text-xs text-gray-700">
-                  <li>
-                    <span className="font-semibold">Category:</span>{" "}
-                    {selectedCategory?.name ?? <span className="text-gray-400">Any</span>}
-                  </li>
-                  <li>
-                    <span className="font-semibold">Subcategory:</span>{" "}
-                    {selectedSubcategory?.name ?? <span className="text-gray-400">Any</span>}
-                  </li>
-                  <li>
-                    <span className="font-semibold">Franchise:</span>{" "}
-                    {selectedFranchise?.name ?? <span className="text-gray-400">Any</span>}
-                  </li>
-                  {cardSetId ? (
-                    <li>
-                      <span className="font-semibold">Set:</span> <span className="text-gray-800">{cardSetId}</span>
-                    </li>
-                  ) : null}
-                  {selectedKind === "building_blocks" ? (
-                    <li>
-                      <span className="font-semibold">Minifigs:</span> {showMinifigs ? "Shown" : "Hidden"}
-                    </li>
-                  ) : null}
-                </ul>
-
-                {(categoryId || subcategoryId || franchiseId || cardSetId) && (
-                  <button
-                    type="button"
-                    onClick={clearFilters}
-                    className="mt-2 text-[11px] font-semibold text-indigo-600 hover:underline"
-                  >
-                    Clear filters
-                  </button>
-                )}
-              </div>
-
-              <div className="rounded-xl border bg-white p-3">
-                <div className="text-[11px] font-semibold text-gray-600">Results</div>
-                <div className="mt-1 text-sm font-semibold text-[#0F172A]">{visibleCards.length}</div>
-                <div className="mt-1 text-xs text-gray-500">
-                  {visibleCards.length === 0 ? "No matches." : `Showing ${rangeStart}-${rangeEnd}`}
-                </div>
-              </div>
-
-              <div className="rounded-xl border bg-white p-3">
-                <div className="text-[11px] font-semibold text-gray-600">Data</div>
-                <div className="mt-1 text-xs text-gray-500">
-                  Loaded: <span className="font-semibold text-gray-700">{cardsState.cards?.length ?? 0}</span> items
-                </div>
-                <button
-                  type="button"
-                  onClick={() => cardsState.reload()}
-                  className="mt-2 rounded-full border bg-white px-3 py-1.5 text-[11px] font-semibold text-gray-700 hover:bg-gray-50"
-                  disabled={cardsState.loading}
-                >
-                  Refresh data
-                </button>
-              </div>
-            </div>
-          </div>
+          <RightContextPanel
+            franchiseId={franchiseId}
+            categoryId={categoryId}
+            subcategoryId={subcategoryId}
+            toyBrandId={toyBrandId}
+            franchises={meta.franchises as any}
+            toyBrands={meta.toyBrands as any}
+            categories={meta.categories as any}
+            subcategories={meta.subcategories as any}
+            setCategoryId={setCategoryId}
+            setSubcategoryId={setSubcategoryId}
+            isAdmin={isAdmin}
+          />
         </aside>
       </div>
 
