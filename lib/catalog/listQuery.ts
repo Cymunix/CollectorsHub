@@ -13,18 +13,33 @@ export type CatalogListRow = {
   franchise_id: string | null;
 
   production_status: string | null;
-
   image_url?: string | null;
 
-  // ✅ games
+  // ✅ structured "description" fields (NO free text description)
+  publisher: string | null; // legacy text column
+  upc: string | null;
+
+  release_year: number | null;
+  release_month: number | null;
+  release_day: number | null;
+
+  end_year: number | null;
+  end_month: number | null;
+  end_day: number | null;
+
+  epid_ebay: string | null;
+
+  // ✅ card-only ids (optional)
+  card_set_id?: string | null;
+  card_number?: string | null;
+  tcgplayer_id?: string | null;
+
+  // ✅ game platform / publisher ids + names (optional)
   platform_id?: string | null;
   platform_name?: string | null;
 
   game_publisher_id?: string | null;
   publisher_name?: string | null;
-
-  // ✅ common meta
-  release_year?: number | null;
 
   // Normalised 1:1-ish join
   building_blocks?: {
@@ -35,8 +50,8 @@ export type CatalogListRow = {
   } | null;
 };
 
-// Raw join shape from Supabase (arrays + nested objects)
-type CatalogListRowRaw = Omit<CatalogListRow, "building_blocks"> & {
+// Raw join shape from Supabase (arrays)
+type CatalogListRowRaw = Omit<CatalogListRow, "building_blocks" | "platform_name" | "publisher_name"> & {
   building_blocks?: Array<{
     set_number: any;
     piece_count: any;
@@ -83,7 +98,23 @@ export async function fetchCatalogListRows(params: {
         franchise_id,
         production_status,
         image_url,
+
+        publisher,
+        upc,
+
         release_year,
+        release_month,
+        release_day,
+
+        end_year,
+        end_month,
+        end_day,
+
+        epid_ebay,
+
+        card_set_id,
+        card_number,
+        tcgplayer_id,
 
         platform_id,
         game_publisher_id,
@@ -134,12 +165,27 @@ export async function fetchCatalogListRows(params: {
       production_status: (r as any).production_status ?? null,
       image_url: (r as any).image_url ?? null,
 
+      publisher: (r as any).publisher ?? null,
+      upc: (r as any).upc ?? null,
+
       release_year: toIntOrNull((r as any).release_year),
+      release_month: toIntOrNull((r as any).release_month),
+      release_day: toIntOrNull((r as any).release_day),
+
+      end_year: toIntOrNull((r as any).end_year),
+      end_month: toIntOrNull((r as any).end_month),
+      end_day: toIntOrNull((r as any).end_day),
+
+      epid_ebay: (r as any).epid_ebay ?? null,
+
+      card_set_id: (r as any).card_set_id ?? null,
+      card_number: (r as any).card_number ?? null,
+      tcgplayer_id: (r as any).tcgplayer_id ?? null,
 
       platform_id: (r as any).platform_id ?? null,
-      platform_name: (r as any).game_platforms?.name ?? null,
-
       game_publisher_id: (r as any).game_publisher_id ?? null,
+
+      platform_name: (r as any).game_platforms?.name ?? null,
       publisher_name: (r as any).game_publishers?.name ?? null,
 
       building_blocks: bb0
