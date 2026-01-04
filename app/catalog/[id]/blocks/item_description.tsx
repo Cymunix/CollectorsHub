@@ -5,6 +5,14 @@ import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { formatProductionStatus } from "@/lib/catalog/statusFormat";
 
+type Props = {
+  catalogItemId: string;
+
+  // page.tsx passes these; accept them so build doesn’t fail
+  isAdmin?: boolean;
+  categoryName?: string | null;
+};
+
 type Row = {
   id: string;
   description: string | null;
@@ -12,15 +20,6 @@ type Row = {
 
   genre_name: string | null;
   age_rating_name: string | null;
-};
-
-type Props = {
-  catalogItemId?: string;
-  id?: string;
-
-  // page.tsx passes these; we accept them (even if unused)
-  isAdmin?: boolean;
-  categoryName?: string | null;
 };
 
 function toStrOrNull(v: any): string | null {
@@ -48,11 +47,10 @@ function pickDisplayName(obj: any): string | null {
 }
 
 export default function ItemDescription(p: Props) {
-  const itemId = p.catalogItemId ?? p.id ?? "";
+  const itemId = p.catalogItemId;
 
   const [row, setRow] = useState<Row | null>(null);
   const [loading, setLoading] = useState(true);
-  const [errMsg, setErrMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (!itemId) return;
@@ -61,9 +59,7 @@ export default function ItemDescription(p: Props) {
 
     async function load() {
       setLoading(true);
-      setErrMsg(null);
 
-      // IMPORTANT: no comments in PostgREST select strings
       const select = `
         id,
         description,
@@ -77,8 +73,8 @@ export default function ItemDescription(p: Props) {
       if (cancelled) return;
 
       if (error || !data) {
+        console.error("ItemDescription load error:", error);
         setRow(null);
-        setErrMsg(error?.message ?? "Unknown error");
         setLoading(false);
         return;
       }
@@ -105,21 +101,21 @@ export default function ItemDescription(p: Props) {
 
   const prod = useMemo(() => formatProductionStatus(row?.production_status ?? null), [row?.production_status]);
 
-  if (!itemId) return <div className="text-sm text-slate-500">Missing item id.</div>;
-  if (loading) return <div className="text-sm text-slate-500">Loading…</div>;
+  if (loading) return null;
 
-  if (!row) {
-    return (
-      <div className="text-sm text-red-600">
-        Failed to load description{errMsg ? `: ${errMsg}` : "."}
-      </div>
-    );
-  }
+  // If it fails to load, don’t blow up the page — just render nothing (matches prior behaviour).
+  if (!row) return null;
 
   return (
-    <div className="space-y-3">
-      {/* Meta badges (only when present) */}
+    <div>
+      {/* Badges row (this won’t break layout; it’s additive) */}
       <div className="flex flex-wrap gap-2">
+        {prod?.label && prod.label !== "—" ? (
+          <span className="inline-flex items-center rounded-full border bg-white px-2 py-0.5 text-[11px] text-slate-700">
+            Production: {prod.label}
+          </span>
+        ) : null}
+
         {row.genre_name ? (
           <span className="inline-flex items-center rounded-full border bg-white px-2 py-0.5 text-[11px] text-slate-700">
             Genre: {row.genre_name}
@@ -131,23 +127,12 @@ export default function ItemDescription(p: Props) {
             Age rating: {row.age_rating_name}
           </span>
         ) : null}
-
-        {prod?.label && prod.label !== "—" ? (
-          <span className="inline-flex items-center rounded-full border bg-white px-2 py-0.5 text-[11px] text-slate-700">
-            Production: {prod.label}
-          </span>
-        ) : null}
       </div>
 
-      {/* Description body — ALWAYS render (no “No description provided.” spam) */}
-      <div className="min-h-[120px] rounded-2xl border bg-white p-4">
-        {row.description ? (
-          <div className="text-sm text-slate-800 whitespace-pre-wrap">{row.description}</div>
-        ) : (
-          // Keep the block height/shape, but show nothing.
-          <div className="text-sm text-slate-500">&nbsp;</div>
-        )}
-      </div>
+      {/* Description text — only render if present (NO empty-state text) */}
+      {row.description ? (
+        <div className="mt-3 text-sm text-slate-800 whitespace-pre-wrap">{row.description}</div>
+      ) : null}
     </div>
   );
 }
