@@ -8,8 +8,8 @@ type CatalogItemRow = {
   id: string;
   description: string | null;
   franchise_id: string | null;
-  genre_id?: string | null;      // Added
-  age_rating_id?: string | null; // Added
+  genre_id?: string | null;
+  age_rating_id?: string | null;
   publisher: string | null;
   upc: string | null;
   release_year: number | null;
@@ -27,7 +27,6 @@ type CatalogItemRow = {
 
 type LookupRow = { id: string; name: string };
 
-// Helper functions (kept from your working code)
 function normalizeInput(s: string) {
   const t = (s ?? "").trim();
   return t.length ? t : null;
@@ -48,11 +47,11 @@ function formatPartialDate(y: number | null, m: number | null, d: number | null)
   return `${yy}-${mm}-${dd}`;
 }
 
-function parsePartialDate(input: string) {
+function parsePartialDate(input: string): { y: number | null; m: number | null; d: number | null } {
   const raw = (input ?? "").trim();
   if (!raw) return { y: null, m: null, d: null };
   const cleaned = raw.replace(/\//g, "-");
-  const parts = cleaned.split("-").map(p => p.trim()).filter(Boolean);
+  const parts = cleaned.split("-").map((p) => p.trim()).filter(Boolean);
   const y = parts[0] ? Number(parts[0]) : NaN;
   if (!Number.isFinite(y) || y < 0) return { y: null, m: null, d: null };
   const m = parts[1] ? Number(parts[1]) : null;
@@ -69,12 +68,8 @@ const PRODUCTION_STATUS_OPTIONS = [
   { value: "unknown", label: "Unknown" },
 ];
 
-function normaliseProductionStatus(raw: string | null | undefined) {
-  return String(raw ?? "").trim().toLowerCase().replace(/[-\s]+/g, "_");
-}
-
 function formatProductionStatus(raw: string | null | undefined) {
-  const cleaned = normaliseProductionStatus(raw);
+  const s = String(raw ?? "").trim().toLowerCase().replace(/[-\s]+/g, "_");
   const known: Record<string, string> = {
     in_production: "In production",
     out_of_production: "Out of production",
@@ -82,24 +77,21 @@ function formatProductionStatus(raw: string | null | undefined) {
     prototype: "Prototype",
     unknown: "Unknown",
   };
-  return known[cleaned] || (cleaned ? cleaned.charAt(0).toUpperCase() + cleaned.slice(1).replace(/_/g, " ") : "—");
+  if (known[s]) return known[s];
+  return s ? s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, " ") : "—";
 }
 
-function Field({ label, value, editing, onChange, onClick, clickable }: any) {
+function Field({ label, value, editing, onChange }: any) {
   return (
     <div className="min-w-0">
       <div className="text-xs font-semibold text-[#64748B]">{label}</div>
       {editing ? (
         <input
           className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm text-[#0F172A] outline-none focus:ring-2 focus:ring-[#0F172A]/10"
-          value={value}
+          value={value || ""}
           onChange={(e) => onChange?.(e.target.value)}
           placeholder="—"
         />
-      ) : clickable ? (
-        <button type="button" onClick={onClick} className="mt-1 text-left text-sm truncate w-full text-[#2563EB] hover:underline" title={value}>
-          {display(value)}
-        </button>
       ) : (
         <div className="mt-1 text-left text-sm truncate w-full text-[#0F172A]" title={value}>
           {display(value)}
@@ -110,76 +102,75 @@ function Field({ label, value, editing, onChange, onClick, clickable }: any) {
 }
 
 async function safeLookup(table: string): Promise<LookupRow[]> {
-  const res = await supabase.from(table).select("id, name").order("name");
-  return (res.data || []).map((r: any) => ({ id: String(r.id), name: String(r.name || r.rating || "") }));
+  try {
+    const res = await supabase.from(table).select("id, name").order("name");
+    // Fallback for age_ratings which might use 'rating' instead of 'name'
+    if (res.error) return [];
+    return (res.data || []).map((r: any) => ({
+      id: String(r.id),
+      name: String(r.name || r.rating || "")
+    }));
+  } catch { return []; }
 }
 
-export default function ItemDescription({ catalogItemId, isAdmin, categoryName = null }: any) {
-  const router = useRouter();
+export default function ItemDescription({
+  catalogItemId,
+  isAdmin,
+  categoryName = null,
+}: {
+  catalogItemId: string;
+  isAdmin: boolean;
+  categoryName?: string | null;
+}) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [item, setItem] = useState<CatalogItemRow | null>(null);
   const [editing, setEditing] = useState(false);
 
-  // Lookups
   const [franchises, setFranchises] = useState<LookupRow[]>([]);
   const [genres, setGenres] = useState<LookupRow[]>([]);
   const [ageRatings, setAgeRatings] = useState<LookupRow[]>([]);
-  const [cardSets, setCardSets] = useState<LookupRow[]>([]);
 
-  // Display Names
-  const [franchiseName, setFranchiseName] = useState("");
-  const [genreName, setGenreName] = useState("");
-  const [ageRatingName, setAgeRatingName] = useState("");
-
-  // Drafts
   const [draftDescription, setDraftDescription] = useState("");
   const [draftFranchiseId, setDraftFranchiseId] = useState<string | null>(null);
   const [draftGenreId, setDraftGenreId] = useState<string | null>(null);
   const [draftAgeRatingId, setDraftAgeRatingId] = useState<string | null>(null);
-  const [draftReleaseDate, setDraftReleaseDate] = useState("");
   const [draftProductionStatus, setDraftProductionStatus] = useState("");
+  const [draftReleaseDate, setDraftReleaseDate] = useState("");
 
-  const categoryKey = String(categoryName ?? "").toLowerCase();
-  const isCardCategory = categoryKey.includes("card") || categoryKey.includes("tcg");
+  const isCardCategory = useMemo(() => {
+    const c = String(categoryName ?? "").toLowerCase();
+    return c.includes("card") || c.includes("tcg");
+  }, [categoryName]);
 
   useEffect(() => {
     async function load() {
       setLoading(true);
       try {
-        const { data: it, error } = await supabase.from("catalog_items").select("*").eq("id", catalogItemId).maybeSingle();
-        if (error) throw error;
-
-        const [frs, gen, age, sets] = await Promise.all([
+        const { data: it } = await supabase.from("catalog_items").select("*").eq("id", catalogItemId).maybeSingle();
+        const [frs, gen, age] = await Promise.all([
           safeLookup("franchises"),
           safeLookup("genres"),
           safeLookup("age_ratings"),
-          safeLookup("card_sets"),
         ]);
 
         setFranchises(frs);
         setGenres(gen);
         setAgeRatings(age);
-        setCardSets(sets);
         setItem(it);
 
-        // Set initial display names
-        setFranchiseName(frs.find(f => f.id === String(it?.franchise_id))?.name || "");
-        setGenreName(gen.find(g => g.id === String(it?.genre_id))?.name || "");
-        setAgeRatingName(age.find(a => a.id === String(it?.age_rating_id))?.name || "");
-
-        // Prime drafts
-        setDraftDescription(it?.description || "");
-        setDraftFranchiseId(it?.franchise_id || null);
-        setDraftGenreId(it?.genre_id || null);
-        setDraftAgeRatingId(it?.age_rating_id || null);
-        setDraftProductionStatus(normaliseProductionStatus(it?.production_status));
-        setDraftReleaseDate(formatPartialDate(it?.release_year, it?.release_month, it?.release_day).replace("—", ""));
-
-        setLoading(false);
+        if (it) {
+          setDraftDescription(it.description || "");
+          setDraftFranchiseId(it.franchise_id);
+          setDraftGenreId(it.genre_id || null);
+          setDraftAgeRatingId(it.age_rating_id || null);
+          setDraftProductionStatus(it.production_status || "");
+          setDraftReleaseDate(formatPartialDate(it.release_year, it.release_month, it.release_day).replace("—", ""));
+        }
       } catch (e: any) {
         setErr(e.message);
+      } finally {
         setLoading(false);
       }
     }
@@ -188,6 +179,7 @@ export default function ItemDescription({ catalogItemId, isAdmin, categoryName =
 
   async function save() {
     setSaving(true);
+    setErr(null);
     try {
       const rel = parsePartialDate(draftReleaseDate);
       const payload = {
@@ -204,11 +196,7 @@ export default function ItemDescription({ catalogItemId, isAdmin, categoryName =
       const { error } = await supabase.from("catalog_items").update(payload).eq("id", catalogItemId);
       if (error) throw error;
 
-      setItem({ ...item, ...payload } as any);
-      setFranchiseName(franchises.find(f => f.id === draftFranchiseId)?.name || "");
-      setGenreName(genres.find(g => g.id === draftGenreId)?.name || "");
-      setAgeRatingName(ageRatings.find(a => a.id === draftAgeRatingId)?.name || "");
-      
+      setItem((prev) => (prev ? { ...prev, ...payload } : null));
       setEditing(false);
     } catch (e: any) {
       setErr(e.message);
@@ -217,28 +205,38 @@ export default function ItemDescription({ catalogItemId, isAdmin, categoryName =
     }
   }
 
+  const fName = franchises.find(f => f.id === String(item?.franchise_id))?.name || "—";
+  const gName = genres.find(g => g.id === String(item?.genre_id))?.name || "—";
+  const aName = ageRatings.find(a => a.id === String(item?.age_rating_id))?.name || "—";
+
   return (
     <div className="rounded-2xl border border-[#E5E9F2] bg-white shadow-sm overflow-hidden">
       <div className="flex items-center justify-between border-b border-[#EEF2F7] px-4 py-3">
         <div className="text-sm font-semibold text-[#0F172A]">Description</div>
         {isAdmin && (
-          <button
-            onClick={editing ? save : () => setEditing(true)}
-            className="rounded-xl bg-[#0F172A] px-3 py-1.5 text-sm font-semibold text-white"
-          >
-            {editing ? (saving ? "Saving..." : "Save") : "Edit"}
-          </button>
+          <div className="flex gap-2">
+            {editing ? (
+              <>
+                <button onClick={save} disabled={saving} className="rounded-xl bg-[#0F172A] px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50">
+                  {saving ? "Saving..." : "Save"}
+                </button>
+                <button onClick={() => setEditing(false)} className="rounded-xl border border-[#E5E9F2] px-3 py-1.5 text-sm font-semibold">Cancel</button>
+              </>
+            ) : (
+              <button onClick={() => setEditing(true)} className="rounded-xl border border-[#E5E9F2] px-3 py-1.5 text-sm font-semibold">Edit</button>
+            )}
+          </div>
         )}
       </div>
 
       <div className="p-4 space-y-4">
-        {loading ? <div className="text-sm text-[#64748B]">Loading…</div> : (
+        {loading ? <div className="text-sm text-[#64748B] animate-pulse">Loading info...</div> : (
           <>
             <div className="rounded-2xl border border-[#E5E9F2] bg-white p-4">
               <div className="text-xs font-semibold text-[#64748B] mb-2">Free Text Description</div>
               {editing ? (
                 <textarea
-                  className="w-full rounded-xl border border-[#E5E9F2] p-3 text-sm text-[#0F172A] outline-none"
+                  className="w-full rounded-xl border border-[#E5E9F2] p-3 text-sm text-[#0F172A] outline-none focus:ring-2 focus:ring-[#0F172A]/10"
                   rows={4}
                   value={draftDescription}
                   onChange={(e) => setDraftDescription(e.target.value)}
@@ -257,7 +255,7 @@ export default function ItemDescription({ catalogItemId, isAdmin, categoryName =
                     <option value="">—</option>
                     {franchises.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
                   </select>
-                ) : <div className="text-sm mt-1">{display(franchiseName)}</div>}
+                ) : <div className="text-sm mt-1">{display(fName)}</div>}
               </div>
 
               {/* Genre */}
@@ -268,14 +266,11 @@ export default function ItemDescription({ catalogItemId, isAdmin, categoryName =
                     <option value="">—</option>
                     {genres.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
                   </select>
-                ) : <div className="text-sm mt-1">{display(genreName)}</div>}
+                ) : <div className="text-sm mt-1">{display(gName)}</div>}
               </div>
 
-              {/* UPC / Identifier */}
-              <Field label={isCardCategory ? "Card Number" : "UPC"} value={item?.upc} editing={false} />
-
-              {/* Publisher */}
-              <Field label="Publisher" value={item?.publisher} editing={false} />
+              <Field label={isCardCategory ? "Card Number" : "UPC"} value={item?.upc} editing={editing} onChange={(v: string) => setItem((p: any) => ({...p, upc: v}))} />
+              <Field label="Publisher" value={item?.publisher} editing={editing} onChange={(v: string) => setItem((p: any) => ({...p, publisher: v}))} />
 
               {/* Production Status */}
               <div>
@@ -295,10 +290,14 @@ export default function ItemDescription({ catalogItemId, isAdmin, categoryName =
                     <option value="">—</option>
                     {ageRatings.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                   </select>
-                ) : <div className="text-sm mt-1">{display(ageRatingName)}</div>}
+                ) : <div className="text-sm mt-1">{display(aName)}</div>}
               </div>
 
-              <Field label="Release Date" value={formatPartialDate(item?.release_year, item?.release_month, item?.release_day)} editing={false} />
+              <Field 
+                label="Release Date" 
+                value={formatPartialDate(item?.release_year ?? null, item?.release_month ?? null, item?.release_day ?? null)} 
+                editing={false} 
+              />
               <Field label="CollectorsHub ID" value={catalogItemId} editing={false} />
             </div>
           </>
