@@ -52,6 +52,7 @@ function toNumOrNull(v: any): number | null {
 }
 
 export async function fetchCatalogListRows(params: {
+  ids?: string[] | null; // Added back to fix the Vercel build error
   search?: string | null;
   categoryId?: string | null;
   subcategoryId?: string | null;
@@ -60,8 +61,8 @@ export async function fetchCatalogListRows(params: {
   userId?: string | null;
 }) {
   const limit = params.limit ?? 50;
+  const ids = (params.ids ?? []).filter(Boolean);
 
-  // We select the base item and join names for franchise, set, and age rating
   const select = `
     *,
     franchises:franchise_id ( name ),
@@ -71,24 +72,30 @@ export async function fetchCatalogListRows(params: {
 
   let q = supabase.from("catalog_items").select(select);
 
-  if (params.categoryId) q = q.eq("category_id", params.categoryId);
-  if (params.subcategoryId) q = q.eq("subcategory_id", params.subcategoryId);
-  if (params.franchiseId) q = q.eq("franchise_id", params.franchiseId);
-  if (params.search?.trim()) q = q.ilike("name", `%${params.search.trim()}%`);
+  // If specific IDs are requested, prioritize those
+  if (ids.length > 0) {
+    q = q.in("id", ids);
+  } else {
+    if (params.categoryId) q = q.eq("category_id", params.categoryId);
+    if (params.subcategoryId) q = q.eq("subcategory_id", params.subcategoryId);
+    if (params.franchiseId) q = q.eq("franchise_id", params.franchiseId);
+    if (params.search?.trim()) q = q.ilike("name", `%${params.search.trim()}%`);
+    q = q.limit(limit);
+  }
 
-  const { data, error } = await q.limit(limit);
+  const { data, error } = await q;
   if (error) throw error;
 
-  // 1. Fetch all genres to map the genre_ids array manually
+  // Fetch all genres to map the genre_ids array manually
   const { data: allGenres } = await supabase.from("genres").select("id, name");
   const genreMap = new Map((allGenres || []).map(g => [g.id, g.name]));
 
-  // 2. Fetch Building Blocks for these items
-  const itemIds = data.map(r => r.id);
+  // Fetch Building Blocks for these items
+  const foundIds = (data ?? []).map(r => r.id);
   const { data: bbData } = await supabase
     .from("catalog_building_blocks_rows")
     .select("*")
-    .in("catalog_item_id", itemIds);
+    .in("catalog_item_id", foundIds);
 
   const normalised: CatalogListRow[] = data.map((r) => {
     const bb = bbData?.find(b => b.catalog_item_id === r.id);
@@ -118,7 +125,6 @@ export async function fetchCatalogListRows(params: {
       epid_ebay: r.epid_ebay,
       tcgplayer_id: r.tcgplayer_id,
 
-      // Pricing Logic: Fallback to whatever price column is populated
       avg_value_cad: toNumOrNull(r.market_value_cad || r.avg_overall_price_cad),
       market_price_cad: toNumOrNull(r.ch_avg_30d_price_cad || r.market_price_cad),
 
