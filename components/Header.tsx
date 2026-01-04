@@ -39,13 +39,22 @@ export default function Header() {
     router.refresh();
   };
 
-  // Header search submit: send to catalog
+  // Header search submit: send to catalog AND force-reset left-side filters
   const handleSearchSubmit = (e: FormEvent) => {
     e.preventDefault();
     const q = searchText.trim();
     if (!q) return;
+
+    // Close menus so UI doesn't feel "stuck"
+    setMenuOpen(false);
+    setLangMenuOpen(false);
+
+    // reset=1 tells Catalog page to clear left-side filters
     // open=1 tells Catalog page to auto-open if exactly one match
-    router.push(`/catalog?search=${encodeURIComponent(q)}&open=1`);
+    router.push(`/catalog?search=${encodeURIComponent(q)}&open=1&reset=1`);
+
+    // Optional: clear the box after searching
+    setSearchText("");
   };
 
   // Display Name
@@ -95,7 +104,7 @@ export default function Header() {
             </span>
           </Link>
 
-          {/* CENTER: Location + Search */}
+          {/* CENTRE: Location + Search */}
           <div className="flex flex-1 items-center justify-center gap-3 px-6">
             {/* Location pill uses mailing/shipping address from profile */}
             <button className="hidden md:inline-flex items-center rounded-full bg-[#16A34A] px-4 py-1.5 text-xs font-semibold text-white shadow-sm max-w-xs truncate">
