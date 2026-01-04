@@ -195,10 +195,7 @@ function slugify(input: any) {
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "");
 
-  const slug = s
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80);
+  const slug = s.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80);
 
   return slug || "item";
 }
@@ -217,11 +214,7 @@ async function insertWithSlugSafe<T extends { id: string; name: string }>(
     const base = slugify(payload?.name);
 
     // attempt 1
-    let { data, error } = await supabase
-      .from(table)
-      .insert({ ...payload, slug: base })
-      .select("*")
-      .single();
+    let { data, error } = await supabase.from(table).insert({ ...payload, slug: base }).select("*").single();
 
     if (!error) return data as T;
 
@@ -240,6 +233,60 @@ async function insertWithSlugSafe<T extends { id: string; name: string }>(
     console.error("insertWithSlugSafe failed:", table, payload, e);
     return null;
   }
+}
+
+/* ---------------- REQUIRED: force-write meta onto catalog_items ---------------- */
+/**
+ * You told me clearly:
+ * - "genres" is the lookup list table
+ * - the selected genres for an item are stored ON catalog_items
+ *
+ * So we persist after we have the created item id.
+ *
+ * NOTE: This supports the most common column names. If your DB uses different ones,
+ * you'll see the banner error immediately and we can lock it to the exact names.
+ */
+async function persistMediaMetaOnCatalogItem(args: {
+  catalogItemId: string;
+  genreIds: string[];
+  ageRatingId: string | null;
+  explicitContent: boolean | null;
+}) {
+  const { catalogItemId, genreIds, ageRatingId, explicitContent } = args;
+
+  const gids = Array.from(new Set((genreIds ?? []).filter(Boolean)));
+  const arId = ageRatingId ? String(ageRatingId) : null;
+  const exp = explicitContent === null ? null : !!explicitContent;
+
+  // Attempt common schema: genre_ids (text[]), age_rating_id (uuid), explicit_content (bool)
+  const attempt1 = await supabase
+    .from("catalog_items")
+    .update({
+      genre_ids: gids.length ? gids : null,
+      age_rating_id: arId,
+      explicit_content: exp,
+    } as any)
+    .eq("id", catalogItemId);
+
+  if (!attempt1.error) return;
+
+  const msg = String((attempt1.error as any)?.message ?? "").toLowerCase();
+  const looksLikeMissingColumn = msg.includes("column") && msg.includes("does not exist");
+
+  // If it's not a "column missing", it's a real failure: RLS, type mismatch, permission etc.
+  if (!looksLikeMissingColumn) throw attempt1.error;
+
+  // Fallback: alternate naming (if your schema differs)
+  const attempt2 = await supabase
+    .from("catalog_items")
+    .update({
+      genres: gids.length ? gids : null,
+      ageRatingId: arId,
+      explicitContent: exp,
+    } as any)
+    .eq("id", catalogItemId);
+
+  if (attempt2.error) throw attempt2.error;
 }
 
 /* ---------------- component ---------------- */
@@ -456,6 +503,7 @@ export default function AddItemModal({
     (async () => {
       try {
         const [{ data: g, error: gErr }, { data: ar, error: arErr }] = await Promise.all([
+          // ✅ genres lookup list table
           supabase.from("genres").select("id,name").order("name", { ascending: true }),
           supabase
             .from("age_ratings")
@@ -532,46 +580,6 @@ export default function AddItemModal({
     if (!found) setAgeRatingId("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind]);
-
-  /* ---------------- ✅ persist genres + rating to correct tables ---------------- */
-
-  const persistGenresAndRating = useCallback(
-    async (catalogItemId: string) => {
-      const gids = uniqStrings((genreIds ?? []).filter(Boolean));
-      const arId = String(ageRatingId ?? "").trim();
-
-      // 1) catalog_items: rating + explicit
-      const patch: Record<string, any> = {
-        age_rating_id: arId ? arId : null,
-        explicit_content: kind === "music" ? !!explicitContent : null,
-      };
-
-      const { error: upErr } = await supabase.from("catalog_items").update(patch).eq("id", catalogItemId);
-      if (upErr) throw upErr;
-
-      // 2) join table: replace all genre links
-      // CHANGE THESE NAMES IF YOUR SCHEMA DIFFERS:
-      // table: catalog_item_genres
-      // columns: catalog_item_id, genre_id
-      const { error: delErr } = await supabase
-        .from("catalog_item_genres")
-        .delete()
-        .eq("catalog_item_id", catalogItemId);
-
-      if (delErr) throw delErr;
-
-      if (gids.length) {
-        const rows = gids.map((gid) => ({
-          catalog_item_id: catalogItemId,
-          genre_id: gid,
-        }));
-
-        const { error: insErr } = await supabase.from("catalog_item_genres").insert(rows);
-        if (insErr) throw insErr;
-      }
-    },
-    [ageRatingId, explicitContent, genreIds, kind]
-  );
 
   /* ---------------- bundle helpers ---------------- */
 
@@ -671,7 +679,7 @@ export default function AddItemModal({
 
         productionStatus: form.productionStatus ?? "unknown",
 
-        // ✅ NEW: (still passed through for compatibility)
+        // ✅ NEW: Save to catalog_items (still passed through for createCatalogItem if it supports it)
         genreIds: uniqStrings(genreIds ?? []),
         ageRatingId: ageRatingId ? ageRatingId : null,
         explicitContent: kind === "music" ? !!explicitContent : null,
@@ -726,8 +734,13 @@ export default function AddItemModal({
         comicVariant: form.comicVariant,
       });
 
-      // ✅ ACTUAL write to correct tables (catalog_items + catalog_item_genres)
-      await persistGenresAndRating(id);
+      // ✅ HARD GUARANTEE: selected genre/rating/explicit saved on catalog_items
+      await persistMediaMetaOnCatalogItem({
+        catalogItemId: id,
+        genreIds: uniqStrings(genreIds ?? []),
+        ageRatingId: ageRatingId ? ageRatingId : null,
+        explicitContent: kind === "music" ? !!explicitContent : null,
+      });
 
       // AUTO-SYNC: legacy franchiseId -> join table as PRIMARY
       if (form.franchiseId) {
@@ -882,8 +895,8 @@ export default function AddItemModal({
                 kind === "movie"
                   ? "Pick genres (multi) and an MPAA rating."
                   : kind === "gaming"
-                    ? "Pick genres (multi) and an ESRB rating."
-                    : "Pick genres (multi) and mark explicit content."
+                  ? "Pick genres (multi) and an ESRB rating."
+                  : "Pick genres (multi) and mark explicit content."
               }
             >
               <div className="space-y-4">
@@ -938,6 +951,7 @@ export default function AddItemModal({
                       Explicit content
                     </label>
 
+                    {/* Optional: allow MUSIC CLEAN/EXPLICIT rating too if you want */}
                     {filteredRatings.length ? (
                       <div className="mt-4">
                         <div className="text-xs font-semibold text-[#0F172A]">Rating</div>
@@ -1287,6 +1301,7 @@ export default function AddItemModal({
 
           {kind === "movie" ? (
             <SectionShell title="Movie" subtitle="Search people and add them as Directors / Actors.">
+              {/* ... unchanged movie section ... */}
               <div className="space-y-4">
                 {(people as any).peopleUiErr ? (
                   <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800">
