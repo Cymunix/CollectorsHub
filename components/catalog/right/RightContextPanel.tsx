@@ -68,6 +68,20 @@ export default function RightContextPanel(p: Props) {
     setErr(null);
   }, [focusKey]);
 
+  async function fetchBaseFranchiseDescription(franchiseId: string): Promise<string | null> {
+    // Do NOT rely on p.franchises having description. It often won’t after refresh.
+    const { data, error } = await supabase
+      .from("franchises")
+      .select("description")
+      .eq("id", franchiseId)
+      .single();
+
+    if (error) throw error;
+
+    const base = (data?.description ?? null) as string | null;
+    return base && base.trim().length ? base : null;
+  }
+
   async function loadContext() {
     if (!p.franchiseId) {
       setCountsByCategory([]);
@@ -81,7 +95,8 @@ export default function RightContextPanel(p: Props) {
     setErr(null);
 
     try {
-      const base = (franchise as any)?.description ?? null;
+      // Always pull the base description from DB so refresh works.
+      const base = await fetchBaseFranchiseDescription(p.franchiseId);
 
       // override lookup (scope = toy brand)
       const { data: ovRows, error: ovErr } = await supabase.rpc("get_franchise_description_override", {
@@ -98,8 +113,8 @@ export default function RightContextPanel(p: Props) {
       if (override && override.trim()) {
         setDescText(override);
         setDescSource("override");
-      } else if (base && String(base).trim()) {
-        setDescText(String(base));
+      } else if (base) {
+        setDescText(base);
         setDescSource("inherited");
       } else {
         setDescText(null);
@@ -163,9 +178,10 @@ export default function RightContextPanel(p: Props) {
           setDescText(value);
           setDescSource("override");
         } else {
-          const base2 = (franchise as any)?.description ?? null;
-          if (base2 && String(base2).trim()) {
-            setDescText(String(base2));
+          // Override cleared — re-read base from DB (don’t trust props).
+          const base = await fetchBaseFranchiseDescription(p.franchiseId);
+          if (base) {
+            setDescText(base);
             setDescSource("inherited");
           } else {
             setDescText(null);
@@ -241,7 +257,7 @@ export default function RightContextPanel(p: Props) {
         </div>
 
         {!editing ? (
-          <div className="mt-2 text-sm text-[#0F172A] whitespace-pre-wrap">
+          <div className="mt-2 whitespace-pre-wrap text-sm text-[#0F172A]">
             {descText?.trim() ? descText : <span className="text-gray-400">No description yet.</span>}
           </div>
         ) : (
