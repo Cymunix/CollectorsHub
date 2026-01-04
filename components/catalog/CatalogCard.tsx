@@ -44,7 +44,7 @@ function normalise(s: string) {
   return String(s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-/** Edition / variant text */
+/** Edition / variant text: prefer item.version, else item.secondary if it isn't just repeating the name. */
 function computeEdition(item: CatalogCard): string | null {
   const name = String(item.name ?? "").trim();
   const secondary = String(item.secondary ?? "").trim();
@@ -66,18 +66,18 @@ function safeNumber(v: any): number | null {
 }
 
 /**
- * Default price = Complete / unsealed average (your “default” when opening an item).
- * Primary source: default_price_cad
+ * Default price = Complete / unsealed average (the default when opening an item).
+ * Primary: default_price_cad
  * Fallbacks: tier-7 fields if present, else generic price fields.
  */
 function getDefaultPriceCad(item: CatalogCard): number | null {
   const anyIt = item as any;
 
-  // ✅ the one you actually want everywhere
+  // ✅ desired canonical field
   const dp = safeNumber(anyIt.default_price_cad);
   if (dp !== null) return dp;
 
-  // fallback: tier-7 map/field (if you have it)
+  // fallback: tier 7
   const tier10 = 7;
 
   const flat = safeNumber(anyIt[`price_tier10_${tier10}_cad`]);
@@ -109,8 +109,10 @@ function formatMoneyCAD(n: number) {
   return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD" }).format(n);
 }
 
-function kindLabel(kind: CatalogCard["kind"]) {
-  const k = String(kind ?? "").toLowerCase();
+function categoryLabel(item: CatalogCard) {
+  // If you later add category_name, use it here.
+  // For now, you were showing kind (gaming/building blocks) — keep that behaviour.
+  const k = String(item.kind ?? "").toLowerCase();
   if (k === "minifig") return "MINIFIG";
   return k.replace(/_/g, " ").toUpperCase();
 }
@@ -135,7 +137,7 @@ export default function CatalogCardTile({
   const showExplicitCollection = quickAddDefault !== "collection";
 
   const edition = useMemo(() => computeEdition(item), [item]);
-  const kindText = useMemo(() => kindLabel(item.kind), [item.kind]);
+  const category = useMemo(() => categoryLabel(item), [item]);
   const defaultPrice = useMemo(() => getDefaultPriceCad(item), [item]);
 
   const year =
@@ -163,7 +165,7 @@ export default function CatalogCardTile({
 
             {/* PRICE pill (top-left over image) */}
             <div className="absolute left-2 top-2">
-              <div className="max-w-[100px] rounded-full border border-white/40 bg-white/90 px-2 py-1">
+              <div className="max-w-[110px] rounded-full border border-white/40 bg-white/90 px-2 py-1">
                 <div className="text-[10px] font-semibold text-slate-900 truncate">{pricePill}</div>
               </div>
             </div>
@@ -173,15 +175,16 @@ export default function CatalogCardTile({
           <div className="min-w-0">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
+                {/* Item Name */}
+                <div className="text-sm font-semibold text-[#0F172A] line-clamp-2">{item.name}</div>
+
                 {/* Edition */}
-                <div className="text-[11px] text-slate-600 line-clamp-2">{edition || "—"}</div>
+                <div className="mt-1 text-[11px] text-slate-600 line-clamp-2">{edition || "—"}</div>
 
-                {/* Category/kind UNDER edition */}
-                <div className="mt-1 text-[10px] font-semibold text-slate-500">{kindText}</div>
+                {/* Category */}
+                <div className="mt-1 text-[10px] font-semibold text-slate-500">{category}</div>
 
-                {/* Catalog name */}
-                <div className="mt-2 text-sm font-semibold text-[#0F172A] line-clamp-2">{item.name}</div>
-
+                {/* Year */}
                 <div className="mt-3 flex items-center gap-3 text-[11px] text-[#94A3B8]">
                   {year ? <span>{year}</span> : <span className="text-[#CBD5E1]">—</span>}
                 </div>
@@ -284,7 +287,7 @@ export default function CatalogCardTile({
           </IconButton>
         </div>
 
-        {/* PRICE pill (top-left over image). Reserve space so it can't run under the buttons */}
+        {/* PRICE pill (top-left). Reserve space so it can’t run under the buttons */}
         <div className="absolute left-2 top-2 pr-[110px]">
           <div className="max-w-full rounded-full border border-white/40 bg-white/90 px-2 py-1">
             <div className="text-[10px] font-semibold text-slate-900 truncate">{pricePill}</div>
@@ -293,14 +296,14 @@ export default function CatalogCardTile({
       </div>
 
       <div className="p-3">
+        {/* Item Name */}
+        <p className="text-xs font-semibold text-slate-900 line-clamp-2">{item.name}</p>
+
         {/* Edition */}
-        <p className="text-[11px] text-slate-600 line-clamp-2">{edition || "—"}</p>
+        <p className="mt-1 text-[11px] text-slate-600 line-clamp-2">{edition || "—"}</p>
 
-        {/* Category/kind UNDER edition */}
-        <p className="mt-1 text-[10px] font-semibold text-slate-500">{kindText}</p>
-
-        {/* Catalog name */}
-        <p className="mt-2 text-xs font-semibold text-slate-900 line-clamp-2">{item.name}</p>
+        {/* Category */}
+        <p className="mt-1 text-[10px] font-semibold text-slate-500">{category}</p>
 
         {/* Year */}
         <div className="mt-2">
