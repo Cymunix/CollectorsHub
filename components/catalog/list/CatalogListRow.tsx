@@ -39,36 +39,18 @@ function display(v: any) {
   return s.length ? s : null;
 }
 
-function formatPartialDate(
-  y: number | null | undefined,
-  m: number | null | undefined,
-  d: number | null | undefined
-) {
-  if (!y) return null;
-  const yy = String(y).padStart(4, "0");
-  if (!m) return yy;
-  const mm = String(m).padStart(2, "0");
-  if (!d) return `${yy}-${mm}`;
-  const dd = String(d).padStart(2, "0");
-  return `${yy}-${mm}-${dd}`;
-}
-
 type BuyLink = { label: string; href: string };
 
 function buildBuyLinks(args: {
   name: string;
   upc?: string | null;
   epid?: string | null;
-  tcgplayerId?: string | null;
-  isLego: boolean;
-  setNumber?: string | number | null;
 }): BuyLink[] {
   const nameQ = encodeURIComponent(args.name);
   const upcQ = args.upc ? encodeURIComponent(args.upc) : null;
 
   const links: BuyLink[] = [];
 
-  // eBay: prefer ePID if available, else UPC/name search.
   if (args.epid) {
     links.push({
       label: "eBay",
@@ -80,25 +62,6 @@ function buildBuyLinks(args: {
     links.push({ label: "eBay", href: `https://www.ebay.ca/sch/i.html?_nkw=${nameQ}` });
   }
 
-  // TCGPlayer: if we have an ID, link to product search (safe); otherwise omit.
-  if (args.tcgplayerId) {
-    links.push({
-      label: "TCGPlayer",
-      href: `https://www.tcgplayer.com/search/all/product?q=${encodeURIComponent(args.tcgplayerId)}`,
-    });
-  }
-
-  // LEGO: Bricklink set number search when we have it
-  if (args.isLego && args.setNumber) {
-    links.push({
-      label: "BrickLink",
-      href: `https://www.bricklink.com/v2/catalog/catalogitem.page?S=${encodeURIComponent(
-        String(args.setNumber)
-      )}`,
-    });
-  }
-
-  // Google as a catch-all “Buy” jump
   if (upcQ) {
     links.push({ label: "Buy", href: `https://www.google.com/search?q=${upcQ}+buy` });
   } else {
@@ -116,7 +79,7 @@ export default function CatalogListRowView(p: Props) {
   const pieces = bb?.piece_count ?? null;
   const retailCad = p.isLego ? moneyCAD(bb?.retail_cad ?? null) : null;
 
-  // TODO: wire real avg default when list rows include pricing summary
+  // TODO: wire real avg default when pricing summary exists on list rows
   const avgDefaultCad: string | null = null;
 
   const { label: prodLabel } = formatProductionStatus(item.production_status);
@@ -128,47 +91,35 @@ export default function CatalogListRowView(p: Props) {
     return "";
   }, [p.categoryName, p.subcategoryName]);
 
-  const year = item.release_year ?? null;
+  const releaseYear = item.release_year ?? null;
 
-  const startDate = useMemo(
-    () => formatPartialDate(item.release_year, item.release_month, item.release_day),
-    [item.release_year, item.release_month, item.release_day]
-  );
+  const endDate = useMemo(() => {
+    if (!item.end_year) return null;
+    const yy = String(item.end_year).padStart(4, "0");
+    if (!item.end_month) return yy;
+    const mm = String(item.end_month).padStart(2, "0");
+    if (!item.end_day) return `${yy}-${mm}`;
+    const dd = String(item.end_day).padStart(2, "0");
+    return `${yy}-${mm}-${dd}`;
+  }, [item.end_year, item.end_month, item.end_day]);
 
-  const endDate = useMemo(
-    () => formatPartialDate(item.end_year, item.end_month, item.end_day),
-    [item.end_year, item.end_month, item.end_day]
-  );
-
-  // Names best-effort
   const systemName = useMemo(() => display(item.platform_name ?? null), [item.platform_name]);
   const publisherName = useMemo(
     () => display(item.publisher_name ?? item.publisher ?? null),
     [item.publisher_name, item.publisher]
   );
 
-  // IDs
   const upc = useMemo(() => display(item.upc ?? null), [item.upc]);
   const epid = useMemo(() => display(item.epid_ebay ?? null), [item.epid_ebay]);
   const tcg = useMemo(() => display(item.tcgplayer_id ?? null), [item.tcgplayer_id]);
   const cardNo = useMemo(() => display(item.card_number ?? null), [item.card_number]);
 
+  const hasIds = !!(upc || epid || tcg || cardNo);
+
   const buyLinks = useMemo(
-    () =>
-      buildBuyLinks({
-        name: item.name,
-        upc,
-        epid,
-        tcgplayerId: tcg,
-        isLego: p.isLego,
-        setNumber: setNo,
-      }),
-    [item.name, upc, epid, tcg, p.isLego, setNo]
+    () => buildBuyLinks({ name: item.name, upc, epid }),
+    [item.name, upc, epid]
   );
-
-  const setOrPlatform = p.isLego && setNo ? `Set: ${String(setNo)}` : systemName ? `Platform: ${systemName}` : null;
-
-  const hasKeyLine = !!(setOrPlatform || publisherName || upc || epid || tcg || cardNo);
 
   return (
     <div className="rounded-2xl border bg-white p-4 shadow-sm hover:bg-slate-50">
@@ -196,7 +147,6 @@ export default function CatalogListRowView(p: Props) {
 
         {/* MAIN CONTENT */}
         <div className="min-w-0 flex-1">
-          {/* TITLE */}
           <button
             type="button"
             onClick={() => p.onOpen?.(item.id)}
@@ -206,7 +156,6 @@ export default function CatalogListRowView(p: Props) {
             {item.name}
           </button>
 
-          {/* VERSION + CATEGORY */}
           <div className="mt-0.5 max-w-full truncate text-sm text-slate-700">
             {item.version ? item.version : <span className="text-slate-400"> </span>}
           </div>
@@ -215,14 +164,13 @@ export default function CatalogListRowView(p: Props) {
             {categoryLine ? categoryLine : <span className="text-slate-400"> </span>}
           </div>
 
-          {/* BADGES */}
+          {/* BADGES (single source of truth for platform/publisher) */}
           <div className="mt-3 flex flex-wrap gap-2">
-            {year ? <Badge>Year: {String(year)}</Badge> : null}
+            {releaseYear ? <Badge>Release Year: {String(releaseYear)}</Badge> : null}
 
             {systemName ? <Badge>Platform: {systemName}</Badge> : null}
             {publisherName ? <Badge>Publisher: {publisherName}</Badge> : null}
 
-            {startDate ? <Badge>Start: {startDate}</Badge> : null}
             {endDate ? <Badge>End: {endDate}</Badge> : null}
 
             {p.isLego && setNo ? <Badge>Set: {String(setNo)}</Badge> : null}
@@ -295,44 +243,27 @@ export default function CatalogListRowView(p: Props) {
         </div>
       </div>
 
-      {/* BOTTOM RAIL: KEY META + BUY BOX */}
+      {/* BOTTOM RAIL: IDs + BUY LINKS ONLY (no platform/publisher duplication) */}
       <div className="mt-4 border-t pt-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          {/* Key identifiers */}
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-700">
-            {hasKeyLine ? (
+            {hasIds ? (
               <>
-                {setOrPlatform ? (
-                  <span>
-                    <span className="text-slate-500">{p.isLego && setNo ? "Set:" : "Platform:"}</span>{" "}
-                    {p.isLego && setNo ? String(setNo) : systemName}
-                  </span>
-                ) : null}
-
-                {publisherName ? (
-                  <span>
-                    <span className="text-slate-500">Publisher:</span> {publisherName}
-                  </span>
-                ) : null}
-
                 {upc ? (
                   <span>
                     <span className="text-slate-500">UPC:</span> {upc}
                   </span>
                 ) : null}
-
                 {epid ? (
                   <span>
                     <span className="text-slate-500">ePID:</span> {epid}
                   </span>
                 ) : null}
-
                 {cardNo ? (
                   <span>
                     <span className="text-slate-500">Card #:</span> {cardNo}
                   </span>
                 ) : null}
-
                 {tcg ? (
                   <span>
                     <span className="text-slate-500">TCG:</span> {tcg}
@@ -344,7 +275,6 @@ export default function CatalogListRowView(p: Props) {
             )}
           </div>
 
-          {/* Buy links */}
           <div className="flex flex-wrap justify-end gap-2">
             {buyLinks.map((l) => (
               <a
