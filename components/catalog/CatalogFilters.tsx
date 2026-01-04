@@ -1,6 +1,8 @@
+// components/catalog/CatalogFilters.tsx
 "use client";
 
 import React, { useEffect, useRef } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import type {
   BbSubtheme,
   BbTheme,
@@ -100,6 +102,9 @@ type Props = {
 };
 
 export default function CatalogFilters(p: Props) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
   /* -----------------------------
      Reset helpers
      ----------------------------- */
@@ -142,6 +147,37 @@ export default function CatalogFilters(p: Props) {
     clearComics();
     clearCards();
   };
+
+  /* -----------------------------
+     ✅ Header search reset hook
+     If URL has ?search=...&reset=1
+     then nuke all left-side filters.
+     Then remove reset=1 so it only
+     happens once.
+     ----------------------------- */
+  const lastResetSigRef = useRef<string>("");
+
+  useEffect(() => {
+    const q = (searchParams.get("search") ?? "").trim();
+    const reset = searchParams.get("reset") === "1";
+    if (!reset || !q) return;
+
+    // Prevent double-firing if Next re-renders with same params
+    const sig = `${q}::${searchParams.toString()}`;
+    if (lastResetSigRef.current === sig) return;
+    lastResetSigRef.current = sig;
+
+    // Clear *everything* on the left
+    p.clearFilters();
+    // Belt + braces: ensure kind-specific fields are cleared even if clearFilters misses them
+    clearKindSpecific();
+
+    // Remove reset=1 so it doesn't keep wiping state on back/forward/refresh
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete("reset");
+    router.replace(`/catalog?${next.toString()}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, router]);
 
   /* -----------------------------
      When kind changes, clear
@@ -188,12 +224,18 @@ export default function CatalogFilters(p: Props) {
     <div className="rounded-2xl border bg-white p-4 shadow-sm max-h-[calc(100vh-8rem)] overflow-y-auto">
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-sm font-semibold">Filters</h2>
-        <button type="button" onClick={p.clearFilters} className="text-[11px] text-blue-600 hover:underline">
+        <button
+          type="button"
+          onClick={p.clearFilters}
+          className="text-[11px] text-blue-600 hover:underline"
+        >
           Clear
         </button>
       </div>
 
-      {p.metaLoading && <p className="text-[11px] text-gray-500">Loading filters…</p>}
+      {p.metaLoading && (
+        <p className="text-[11px] text-gray-500">Loading filters…</p>
+      )}
       {p.metaError && <p className="text-[11px] text-red-600">{p.metaError}</p>}
 
       <div className="mt-3 space-y-3 text-xs">
@@ -224,7 +266,9 @@ export default function CatalogFilters(p: Props) {
             className="w-full rounded-xl border bg-white px-3 py-2"
             disabled={!p.categoryId}
           >
-            <option value="">{p.categoryId ? "All" : "Select category first"}</option>
+            <option value="">
+              {p.categoryId ? "All" : "Select category first"}
+            </option>
             {p.filteredSubcategories.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}
@@ -277,14 +321,22 @@ export default function CatalogFilters(p: Props) {
            ----------------------------- */}
         {p.selectedKind === "building_blocks" && (
           <div className="pt-2 border-t space-y-3">
-            <p className="text-[11px] text-gray-500">Building Blocks filters</p>
+            <p className="text-[11px] text-gray-500">
+              Building Blocks filters
+            </p>
 
             <div className="flex items-center justify-between rounded-xl border bg-white px-3 py-2">
               <div>
                 <p className="font-medium text-xs">Show Minifigs</p>
-                <p className="text-[10px] text-gray-500">Display minifigs as catalog cards</p>
+                <p className="text-[10px] text-gray-500">
+                  Display minifigs as catalog cards
+                </p>
               </div>
-              <input type="checkbox" checked={p.showMinifigs} onChange={(e) => p.setShowMinifigs(e.target.checked)} />
+              <input
+                type="checkbox"
+                checked={p.showMinifigs}
+                onChange={(e) => p.setShowMinifigs(e.target.checked)}
+              />
             </div>
 
             <div className="space-y-1">
@@ -298,7 +350,9 @@ export default function CatalogFilters(p: Props) {
                 className="w-full rounded-xl border bg-white px-3 py-2"
                 disabled={!p.subcategoryId}
               >
-                <option value="">{p.subcategoryId ? "All" : "Select subcategory first"}</option>
+                <option value="">
+                  {p.subcategoryId ? "All" : "Select subcategory first"}
+                </option>
                 {p.bbThemeOptions.map((t) => (
                   <option key={t.id} value={t.id}>
                     {t.name}
@@ -315,7 +369,9 @@ export default function CatalogFilters(p: Props) {
                 className="w-full rounded-xl border bg-white px-3 py-2"
                 disabled={!p.bbThemeId}
               >
-                <option value="">{p.bbThemeId ? "All" : "Select theme first"}</option>
+                <option value="">
+                  {p.bbThemeId ? "All" : "Select theme first"}
+                </option>
                 {p.bbSubthemeOptions.map((st) => (
                   <option key={st.id} value={st.id}>
                     {st.name}
@@ -366,7 +422,9 @@ export default function CatalogFilters(p: Props) {
                 className="w-full rounded-xl border bg-white px-3 py-2"
                 disabled={!p.toyManufacturerId}
               >
-                <option value="">{p.toyManufacturerId ? "All" : "Select manufacturer first"}</option>
+                <option value="">
+                  {p.toyManufacturerId ? "All" : "Select manufacturer first"}
+                </option>
                 {p.toyBrandOptions.map((b) => (
                   <option key={b.id} value={b.id}>
                     {b.name}
@@ -383,7 +441,9 @@ export default function CatalogFilters(p: Props) {
                 className="w-full rounded-xl border bg-white px-3 py-2"
                 disabled={!p.toyBrandId}
               >
-                <option value="">{p.toyBrandId ? "All" : "Select brand first"}</option>
+                <option value="">
+                  {p.toyBrandId ? "All" : "Select brand first"}
+                </option>
                 {p.toyLineOptions.map((l) => (
                   <option key={l.id} value={l.id}>
                     {l.name}
@@ -476,7 +536,8 @@ export default function CatalogFilters(p: Props) {
         {/* -----------------------------
             Cards
            ----------------------------- */}
-        {(p.selectedKind === "trading_card" || p.selectedKind === "sports_card") && (
+        {(p.selectedKind === "trading_card" ||
+          p.selectedKind === "sports_card") && (
           <div className="pt-2 border-t space-y-3">
             <p className="text-[11px] text-gray-500">Cards filters</p>
 
@@ -508,7 +569,9 @@ export default function CatalogFilters(p: Props) {
                 className="w-full rounded-xl border bg-white px-3 py-2"
                 disabled={!p.cardManufacturerId}
               >
-                <option value="">{p.cardManufacturerId ? "All" : "Select manufacturer first"}</option>
+                <option value="">
+                  {p.cardManufacturerId ? "All" : "Select manufacturer first"}
+                </option>
                 {p.cardSetOptions.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name}
