@@ -41,7 +41,7 @@ function quickLabel(pref: QuickAddDefault) {
 }
 
 /**
- * Make the results scannable even with limited fields.
+ * Make results scannable even with limited fields.
  * - primary: short, non-repeated title
  * - variant: the differentiator (edition/bundle/etc.)
  */
@@ -49,15 +49,8 @@ function computeDisplay(item: CatalogCard): { primary: string; variant: string |
   const rawName = String(item.name ?? "").trim();
   const rawSecondary = String(item.secondary ?? "").trim();
 
-  // Prefer secondary as the differentiator (it’s already “the second line” conceptually).
-  // But if it’s empty or useless, try to pull a variant out of the name.
   const secondary = rawSecondary && rawSecondary !== "—" ? rawSecondary : "";
 
-  // Heuristic split of the name into “franchise-ish” + “variant-ish”
-  // Examples:
-  // - "Call of Duty: Black Ops" => primary "Black Ops"
-  // - "Call of Duty: Black Ops II" => primary "Black Ops II"
-  // - "Turtle Beach Ear Force X-RAY Headset" => primary stays as-is
   const hasColon = rawName.includes(":");
   const hasDash = rawName.includes(" - ") || rawName.includes(" — ") || rawName.includes(" – ");
 
@@ -65,12 +58,10 @@ function computeDisplay(item: CatalogCard): { primary: string; variant: string |
   let extractedVariant: string | null = null;
 
   if (hasColon) {
-    // Use the right side of the colon as the primary (usually the unique bit)
     const parts = rawName.split(":");
     const rhs = parts.slice(1).join(":").trim();
     if (rhs.length) primary = rhs;
   } else if (hasDash) {
-    // "Thing — Variant" or "Thing - Variant"
     const parts = rawName.split(/ — | – | - /);
     const left = parts[0]?.trim();
     const right = parts.slice(1).join(" - ").trim();
@@ -78,14 +69,12 @@ function computeDisplay(item: CatalogCard): { primary: string; variant: string |
     if (right) extractedVariant = right || null;
   }
 
-  // If secondary looks like it just repeats the primary, drop it.
   const normalise = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
   const nPrimary = normalise(primary);
   const nSecondary = normalise(secondary);
 
   const secondaryRepeatsPrimary =
-    !!secondary &&
-    (nSecondary === nPrimary || nSecondary.includes(nPrimary) || nPrimary.includes(nSecondary));
+    !!secondary && (nSecondary === nPrimary || nSecondary.includes(nPrimary) || nPrimary.includes(nSecondary));
 
   let variant: string | null = null;
 
@@ -97,17 +86,13 @@ function computeDisplay(item: CatalogCard): { primary: string; variant: string |
     variant = null;
   }
 
-  // Hard clamp so variants don’t become novels.
   if (variant && variant.length > 80) variant = variant.slice(0, 77) + "…";
-
-  // If primary is still very long, clamp it too.
   if (primary.length > 80) primary = primary.slice(0, 77) + "…";
 
   return { primary, variant };
 }
 
 function kindBadge(kind: CatalogCard["kind"]): { label: string; tone: string } {
-  // You can tune this mapping to your domain language.
   const k = String(kind ?? "").toLowerCase();
 
   if (k === "minifig") return { label: "MINIFIG", tone: "bg-white/90 text-slate-800 border-white/40" };
@@ -123,7 +108,6 @@ function kindBadge(kind: CatalogCard["kind"]): { label: string; tone: string } {
     return { label: "ACCESSORY", tone: "bg-white/90 text-slate-800 border-white/40" };
   }
 
-  // Fallback: turn snake_case into badge text
   const label = k.replace(/_/g, " ").toUpperCase();
   return { label, tone: "bg-white/90 text-slate-800 border-white/40" };
 }
@@ -153,8 +137,6 @@ export default function CatalogCardTile({
   const year =
     typeof item.release_year === "number" && Number.isFinite(item.release_year) ? String(item.release_year) : "";
 
-  const kindText = item.kind === "minifig" ? "minifig" : String(item.kind ?? "").replace(/_/g, " ");
-
   // ===== LIST / RECTANGLE LAYOUT =====
   if (layout === "list") {
     return (
@@ -168,15 +150,19 @@ export default function CatalogCardTile({
           <div className="relative h-28 w-28 rounded-xl bg-gray-100 overflow-hidden shrink-0 border flex items-center justify-center">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             {item.image_url ? (
-              <img src={item.image_url} alt={item.name} className="h-full w-full object-cover" />
+              <img
+                src={item.image_url}
+                alt={item.name}
+                className="h-full w-full object-contain p-2 bg-white"
+              />
             ) : (
               <div className="text-[11px] text-gray-400">No image</div>
             )}
 
-            {/* Image overlay for legibility */}
-            <div className="absolute inset-0 bg-gradient-to-t from-black/25 via-black/0 to-black/0 pointer-events-none" />
+            {/* Soft gradient for legibility (kept subtle) */}
+            <div className="absolute inset-0 bg-gradient-to-t from-black/15 via-black/0 to-black/0 pointer-events-none" />
 
-            {/* Kind badge */}
+            {/* Kind badge (only place we show kind) */}
             <div
               className={`absolute left-2 top-2 text-[10px] font-semibold px-2 py-1 rounded-full border ${badge.tone}`}
             >
@@ -196,10 +182,9 @@ export default function CatalogCardTile({
                   <div className="mt-1 text-[11px] text-[#94A3B8]">—</div>
                 )}
 
+                {/* Meta row: year only (kind is already in badge) */}
                 <div className="mt-3 flex items-center gap-3 text-[11px] text-[#94A3B8]">
                   {year ? <span>{year}</span> : <span className="text-[#CBD5E1]">—</span>}
-                  <span className="h-1 w-1 rounded-full bg-[#CBD5E1]" />
-                  <span>{kindText}</span>
                 </div>
               </div>
 
@@ -257,16 +242,19 @@ export default function CatalogCardTile({
       <div className="relative aspect-square bg-gray-100 overflow-hidden">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         {item.image_url ? (
-          <img src={item.image_url} alt={item.name} className="h-full w-full object-cover" />
+          <img
+            src={item.image_url}
+            alt={item.name}
+            className="h-full w-full object-contain p-3 bg-white"
+          />
         ) : (
           <div className="h-full w-full flex items-center justify-center text-[11px] text-gray-400">No image</div>
         )}
 
-        {/* Dim + gradient for legibility */}
-        <div className="absolute inset-0 bg-black/10 pointer-events-none" />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/30 via-black/0 to-black/0 pointer-events-none" />
+        {/* Very light overlay so badges/buttons read cleanly */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/10 via-black/0 to-black/0 pointer-events-none" />
 
-        {/* Kind badge */}
+        {/* Kind badge (only place we show kind) */}
         <div className={`absolute left-2 top-2 text-[10px] font-semibold px-2 py-1 rounded-full border ${badge.tone}`}>
           {badge.label}
         </div>
@@ -321,10 +309,9 @@ export default function CatalogCardTile({
           <p className="mt-1 text-[11px] text-slate-400">—</p>
         )}
 
-        {/* Meta row (keep short) */}
-        <div className="mt-2 flex items-center justify-between">
+        {/* Meta: year only (kind already in badge) */}
+        <div className="mt-2">
           <span className="text-[10px] text-gray-400">{year}</span>
-          <span className="text-[10px] text-gray-400">{kindText}</span>
         </div>
       </div>
     </button>
