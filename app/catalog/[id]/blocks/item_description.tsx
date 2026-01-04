@@ -29,7 +29,11 @@ type Row = {
 
 type Props = {
   catalogItemId?: string;
-  id?: string; // allow either prop name (defensive)
+  id?: string;
+
+  // ✅ accept whatever page.tsx passes
+  isAdmin?: boolean;
+  categoryName?: string | null;
 };
 
 function pickLookup(v: any): Lookup | null {
@@ -42,7 +46,6 @@ function pickLookup(v: any): Lookup | null {
       name: String(first.name ?? ""),
     };
   }
-  // object form
   return {
     id: String(v.id ?? ""),
     name: String(v.name ?? ""),
@@ -83,7 +86,6 @@ export default function ItemDescription(p: Props) {
           end_month,
           end_day,
 
-          -- These embeds may come back as OBJECT or ARRAY depending on relationship config:
           genre:genres(id,name),
           age_rating:age_ratings(id,name)
         `
