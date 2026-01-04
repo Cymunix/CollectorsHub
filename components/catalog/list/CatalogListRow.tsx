@@ -14,7 +14,7 @@ type Props = {
 
   onOpen?: (id: string) => void;
 
-  // If provided, we sync to it. If not, checkbox still works locally.
+  // optional override, otherwise we use item.is_wishlisted
   isWishlisted?: boolean;
   onToggleWishlist?: (id: string) => void;
 
@@ -69,20 +69,20 @@ function buildBuyLinks(args: { name: string; upc?: string | null; epid?: string 
 export default function CatalogListRowView(p: Props) {
   const item = p.item;
 
-  // ✅ Optimistic wishlist state (works even if parent doesn't update immediately)
-  const [wish, setWish] = useState<boolean>(!!p.isWishlisted);
+  const persistedWish = typeof p.isWishlisted === "boolean" ? p.isWishlisted : !!item.is_wishlisted;
 
-  // ✅ Sync from parent when it changes (e.g., after refetch)
+  // optimistic UI that still syncs to persisted truth
+  const [wish, setWish] = useState<boolean>(persistedWish);
+
   useEffect(() => {
-    if (typeof p.isWishlisted === "boolean") setWish(p.isWishlisted);
-  }, [p.isWishlisted]);
+    setWish(persistedWish);
+  }, [persistedWish]);
 
   const bb = item.building_blocks ?? null;
   const setNo = bb?.set_number ?? null;
   const pieces = bb?.piece_count ?? null;
   const retailCad = p.isLego ? moneyCAD(bb?.retail_cad ?? null) : null;
 
-  // TODO: wire pricing engine summary into list rows
   const avgDefaultCad: string | null = null;
 
   const { label: prodLabel } = formatProductionStatus(item.production_status);
@@ -129,7 +129,6 @@ export default function CatalogListRowView(p: Props) {
           )}
         </button>
 
-        {/* MAIN CONTENT */}
         <div className="min-w-0 flex-1">
           <button
             type="button"
@@ -148,7 +147,6 @@ export default function CatalogListRowView(p: Props) {
             {categoryLine || <span className="text-slate-400"> </span>}
           </div>
 
-          {/* BADGES */}
           <div className="mt-3 flex flex-wrap gap-2">
             {releaseYear ? <Badge>Release Year: {releaseYear}</Badge> : null}
             {systemName ? <Badge>Platform: {systemName}</Badge> : null}
@@ -161,7 +159,6 @@ export default function CatalogListRowView(p: Props) {
           </div>
         </div>
 
-        {/* VALUE + ACTIONS */}
         <div className="flex w-[240px] shrink-0 flex-col items-end justify-between gap-3">
           <div className="w-full text-right">
             <div className="text-[11px] uppercase tracking-wide text-slate-500">Value</div>
@@ -182,7 +179,6 @@ export default function CatalogListRowView(p: Props) {
           </div>
 
           <div className="flex w-full justify-end items-center gap-3">
-            {/* Wishlist = STATE (optimistic) */}
             {p.onToggleWishlist ? (
               <label
                 className="flex items-center gap-2 text-xs font-medium text-slate-800 cursor-pointer select-none"
@@ -193,7 +189,6 @@ export default function CatalogListRowView(p: Props) {
                   checked={wish}
                   onClick={(e) => e.stopPropagation()}
                   onChange={() => {
-                    // optimistic tick immediately
                     setWish((v) => !v);
                     p.onToggleWishlist?.(item.id);
                   }}
@@ -203,7 +198,6 @@ export default function CatalogListRowView(p: Props) {
               </label>
             ) : null}
 
-            {/* Collection = ACTION */}
             {p.onAddToCollection ? (
               <button
                 type="button"
@@ -233,7 +227,6 @@ export default function CatalogListRowView(p: Props) {
         </div>
       </div>
 
-      {/* BOTTOM RAIL: IDs + BUY LINKS */}
       <div className="mt-4 border-t pt-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-700">
