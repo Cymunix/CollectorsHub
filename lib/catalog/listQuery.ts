@@ -12,21 +12,21 @@ export type CatalogListRow = {
   subcategory_id: string | null;
   franchise_id: string | null;
 
-  // ✅ names for list display (so UI isn't doing join-math)
-  category_name?: string | null;
-  subcategory_name?: string | null;
-  franchise_name?: string | null;
-
   production_status: string | null;
+
+  image_url?: string | null;
+
+  // ✅ games
+  platform_id?: string | null;
+  platform_name?: string | null;
+
+  game_publisher_id?: string | null;
+  publisher_name?: string | null;
 
   // ✅ common meta
   release_year?: number | null;
 
-  // ✅ gaming meta
-  platform_name?: string | null;
-
-  image_url?: string | null;
-
+  // Normalised 1:1-ish join
   building_blocks?: {
     set_number: number | null;
     piece_count: number | null;
@@ -37,17 +37,15 @@ export type CatalogListRow = {
 
 // Raw join shape from Supabase (arrays + nested objects)
 type CatalogListRowRaw = Omit<CatalogListRow, "building_blocks"> & {
-  categories?: { name?: any } | null;
-  subcategories?: { name?: any } | null;
-  franchises?: { name?: any } | null;
-  game_platforms?: { name?: any } | null;
-
   building_blocks?: Array<{
     set_number: any;
     piece_count: any;
     retail_cad: any;
     retail_usd: any;
   }> | null;
+
+  game_platforms?: { name?: any } | null;
+  game_publishers?: { name?: any } | null;
 };
 
 function toNumOrNull(v: any): number | null {
@@ -87,11 +85,11 @@ export async function fetchCatalogListRows(params: {
         image_url,
         release_year,
 
-        categories:categories ( name ),
-        subcategories:subcategories ( name ),
-        franchises:franchises ( name ),
+        platform_id,
+        game_publisher_id,
 
         game_platforms:game_platforms ( name ),
+        game_publishers:game_publishers ( name ),
 
         building_blocks:catalog_building_blocks_rows (
           set_number,
@@ -133,17 +131,16 @@ export async function fetchCatalogListRows(params: {
       subcategory_id: (r as any).subcategory_id ?? null,
       franchise_id: (r as any).franchise_id ?? null,
 
-      category_name: (r as any).categories?.name ?? null,
-      subcategory_name: (r as any).subcategories?.name ?? null,
-      franchise_name: (r as any).franchises?.name ?? null,
-
       production_status: (r as any).production_status ?? null,
+      image_url: (r as any).image_url ?? null,
 
       release_year: toIntOrNull((r as any).release_year),
 
+      platform_id: (r as any).platform_id ?? null,
       platform_name: (r as any).game_platforms?.name ?? null,
 
-      image_url: (r as any).image_url ?? null,
+      game_publisher_id: (r as any).game_publisher_id ?? null,
+      publisher_name: (r as any).game_publishers?.name ?? null,
 
       building_blocks: bb0
         ? {
