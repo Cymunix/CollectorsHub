@@ -34,9 +34,9 @@ export type CatalogListRow = {
   card_number?: string | null;
   tcgplayer_id?: string | null;
 
-  // ✅ normalised platform/publisher (handles weird column names)
+  // ✅ normalised ids (based on YOUR actual columns)
   platform_id?: string | null;
-  game_publisher_id?: string | null;
+  publisher_id?: string | null;
 
   // ✅ names (best-effort; may be null if schema doesn’t join cleanly)
   platform_name?: string | null;
@@ -51,7 +51,6 @@ export type CatalogListRow = {
   } | null;
 };
 
-// Raw shape from Supabase (optional nested join objects)
 type CatalogListRowRaw = {
   [key: string]: any;
   game_platforms?: { name?: any } | null;
@@ -96,7 +95,6 @@ function pickItemIdFromBB(row: BuildingBlockRaw): string | null {
 }
 
 export async function fetchCatalogListRows(params: {
-  // ✅ fetch by specific ids (used by CatalogGrid list toggle)
   ids?: string[] | null;
 
   search?: string | null;
@@ -109,8 +107,8 @@ export async function fetchCatalogListRows(params: {
   const limit = params.limit ?? 100;
 
   // IMPORTANT:
-  // - Do NOT join building blocks here (PostgREST relationship missing in schema cache)
-  // - Pull structured fields only (no big description text)
+  // - Do NOT join building blocks here (PostgREST relationship missing)
+  // - Only select columns that actually exist in YOUR catalog_items schema
   let q = supabase.from("catalog_items").select(`
     id,
     name,
@@ -139,13 +137,7 @@ export async function fetchCatalogListRows(params: {
     tcgplayer_id,
 
     platform_id,
-    Platform_id,
-    game_platform_id,
-
-    game_publisher_id,
     publisher_id,
-    Publisher_Id,
-    Publisher_id,
 
     game_platforms:game_platforms ( name ),
     game_publishers:game_publishers ( name )
@@ -173,11 +165,8 @@ export async function fetchCatalogListRows(params: {
   const normalised: CatalogListRow[] = raw.map((r) => {
     const row: any = r as any;
 
-    // Normalise platform/publisher IDs from whatever the table actually has
-    const platformId = pickFirst(row, ["platform_id", "Platform_id", "game_platform_id"]) ?? null;
-
-    const publisherId =
-      pickFirst(row, ["game_publisher_id", "publisher_id", "Publisher_Id", "Publisher_id"]) ?? null;
+    const platformId = row.platform_id ?? null;
+    const publisherId = row.publisher_id ?? null;
 
     return {
       id: String(row.id),
@@ -209,13 +198,12 @@ export async function fetchCatalogListRows(params: {
       tcgplayer_id: row.tcgplayer_id ?? null,
 
       platform_id: platformId ? String(platformId) : null,
-      game_publisher_id: publisherId ? String(publisherId) : null,
+      publisher_id: publisherId ? String(publisherId) : null,
 
-      // Best-effort names from joins (only works if FK is clean)
+      // Best-effort names from joins (only works if the relationship is actually wired)
       platform_name: row.game_platforms?.name ?? null,
       publisher_name: row.game_publishers?.name ?? null,
 
-      // Filled by manual merge below
       building_blocks: null,
     };
   });
@@ -224,7 +212,6 @@ export async function fetchCatalogListRows(params: {
   const itemIds = normalised.map((r) => r.id);
 
   if (itemIds.length) {
-    // Try common FK column names. We do a best-effort approach without blowing up the request.
     const selectBB = `
       catalog_item_id,
       catalog_items_id,
@@ -243,7 +230,6 @@ export async function fetchCatalogListRows(params: {
       .select(selectBB)
       .in("catalog_item_id", itemIds);
 
-    // If this errors, your column doesn't exist, etc -> we fall back to other columns
     if (!bbErr1) {
       bbRows = (bb1 ?? []) as any[];
     }
@@ -265,7 +251,6 @@ export async function fetchCatalogListRows(params: {
       }
     }
 
-    // Map first building block row per item id (if multiples exist, we take the first)
     const bbByItem = new Map<string, BuildingBlockRaw>();
     for (const r of bbRows) {
       const itemId = pickItemIdFromBB(r);
@@ -286,7 +271,7 @@ export async function fetchCatalogListRows(params: {
     }
   }
 
-  // ✅ If ids were provided, return rows in the same order as ids
+  // Preserve requested ids order
   if (ids.length) {
     const byId = new Map(normalised.map((r) => [r.id, r]));
     return ids.map((id) => byId.get(id)).filter(Boolean) as CatalogListRow[];
