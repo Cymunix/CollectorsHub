@@ -7,6 +7,7 @@ import CatalogCardTile from "@/components/catalog/CatalogCard";
 import CatalogPagination from "@/components/catalog/CatalogPagination";
 import { fetchCatalogListRows, type CatalogListRow } from "@/lib/catalog/listQuery";
 import CatalogListRowView from "@/components/catalog/list/CatalogListRow";
+import { supabase } from "@/lib/supabaseClient";
 
 type LayoutMode = "card" | "list";
 
@@ -51,8 +52,31 @@ export default function CatalogGrid(p: Props) {
   const [listError, setListError] = useState<string | null>(null);
   const [listRows, setListRows] = useState<CatalogListRow[]>([]);
 
+  // ✅ wishlist state for current page
+  const [userId, setUserId] = useState<string | null>(null);
+  const [wishSet, setWishSet] = useState<Set<string>>(new Set());
+
   useEffect(() => {
     setView(readView());
+  }, []);
+
+  // resolve user once (needed for user_wishlist_items)
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      const { data, error } = await supabase.auth.getUser();
+      if (cancelled) return;
+      if (error) {
+        setUserId(null);
+        return;
+      }
+      setUserId(data.user?.id ?? null);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const setAndPersist = (v: LayoutMode) => {
@@ -62,14 +86,18 @@ export default function CatalogGrid(p: Props) {
     } catch {}
   };
 
-  // ✅ When toggled to list, fetch enriched rows for the current page IDs
+  const pageItemIds = useMemo(() => {
+    return p.pagedCards.filter((c) => c.kind !== "minifig").map((c) => c.id);
+  }, [p.pagedCards]);
+
+  // ✅ When toggled to list, fetch enriched rows + wishlist state for current page IDs
   useEffect(() => {
     let cancelled = false;
 
     async function run() {
       if (view !== "list") return;
 
-      const ids = p.pagedCards.filter((c) => c.kind !== "minifig").map((c) => c.id);
+      const ids = pageItemIds;
 
       setListLoading(true);
       setListError(null);
@@ -78,10 +106,28 @@ export default function CatalogGrid(p: Props) {
         const rows = await fetchCatalogListRows({ ids });
         if (cancelled) return;
         setListRows(rows);
+
+        // Load wishlist state for these ids
+        if (!userId || ids.length === 0) {
+          setWishSet(new Set());
+          return;
+        }
+
+        const { data: w, error: wErr } = await supabase
+          .from("user_wishlist_items")
+          .select("catalog_item_id")
+          .eq("user_id", userId)
+          .in("catalog_item_id", ids);
+
+        if (wErr) throw wErr;
+        if (cancelled) return;
+
+        setWishSet(new Set((w ?? []).map((r: any) => String(r.catalog_item_id))));
       } catch (e: any) {
         if (cancelled) return;
         setListError(e?.message || "Failed to load list details.");
         setListRows([]);
+        setWishSet(new Set());
       } finally {
         if (!cancelled) setListLoading(false);
       }
@@ -91,7 +137,61 @@ export default function CatalogGrid(p: Props) {
     return () => {
       cancelled = true;
     };
-  }, [view, p.pagedCards]);
+  }, [view, pageItemIds.join("|"), userId]);
+
+  // ✅ real toggle: add/remove + keep UI in sync
+  async function toggleWishlist(catalogItemId: string) {
+    // If not authed, fall back to whatever your existing handler does
+    if (!userId) {
+      await p.onAddWishlist(catalogItemId);
+      return;
+    }
+
+    const currently = wishSet.has(catalogItemId);
+    const next = !currently;
+
+    // optimistic UI
+    setWishSet((prev) => {
+      const s = new Set(prev);
+      if (next) s.add(catalogItemId);
+      else s.delete(catalogItemId);
+      return s;
+    });
+
+    // persist
+    if (next) {
+      const { error } = await supabase.from("user_wishlist_items").insert({
+        user_id: userId,
+        catalog_item_id: catalogItemId,
+      });
+
+      if (error) {
+        // rollback
+        setWishSet((prev) => {
+          const s = new Set(prev);
+          s.delete(catalogItemId);
+          return s;
+        });
+        throw error;
+      }
+    } else {
+      const { error } = await supabase
+        .from("user_wishlist_items")
+        .delete()
+        .eq("user_id", userId)
+        .eq("catalog_item_id", catalogItemId);
+
+      if (error) {
+        // rollback
+        setWishSet((prev) => {
+          const s = new Set(prev);
+          s.add(catalogItemId);
+          return s;
+        });
+        throw error;
+      }
+    }
+  }
 
   const header = useMemo(() => {
     return (
@@ -259,6 +359,15 @@ export default function CatalogGrid(p: Props) {
                         franchise_id: (card as any).franchise_id ?? null,
                         production_status: (card as any).production_status ?? null,
                         image_url: (card as any).image_url ?? null,
+                        publisher: (card as any).publisher ?? null,
+                        upc: (card as any).upc ?? null,
+                        release_year: (card as any).release_year ?? null,
+                        release_month: (card as any).release_month ?? null,
+                        release_day: (card as any).release_day ?? null,
+                        end_year: (card as any).end_year ?? null,
+                        end_month: (card as any).end_month ?? null,
+                        end_day: (card as any).end_day ?? null,
+                        epid_ebay: (card as any).epid_ebay ?? null,
                         building_blocks: null,
                       } as CatalogListRow);
 
@@ -273,7 +382,8 @@ export default function CatalogGrid(p: Props) {
                         subcategoryName={subcategoryName}
                         isLego={isLegoCard(card)}
                         onOpen={() => p.onOpenItem(card)}
-                        onToggleWishlist={(id) => void p.onAddWishlist(id)}
+                        isWishlisted={wishSet.has(card.id)}
+                        onToggleWishlist={(id) => void toggleWishlist(id)}
                         onAddToCollection={(id) => void p.onAddCollection(id)}
                         isAdmin={false}
                       />
