@@ -11,11 +11,14 @@ type Props = {
   cards: CatalogCard[];
 
   onOpenItem: (id: string) => void;
-  onWishlist: (id: string) => void;
-  onCollection: (id: string) => void;
 
-  // ✅ MUST be promise-returning because CatalogCardTile expects Promise<void>
+  // These may be sync or async depending on your callers — we normalise below.
+  onWishlist: (id: string) => Promise<void> | void;
+  onCollection: (id: string) => Promise<void> | void;
   onQuickAdd: (id: string, d: QuickAddDefault) => Promise<void> | void;
+
+  // Optional: if your parent already knows the default, pass it in.
+  quickAddDefault?: QuickAddDefault;
 };
 
 export default function CatalogGrid({
@@ -25,9 +28,10 @@ export default function CatalogGrid({
   onWishlist,
   onCollection,
   onQuickAdd,
+  quickAddDefault,
 }: Props) {
-  // ✅ safe default without guessing union values
-  const defaultQuickAdd = "default" as unknown as QuickAddDefault;
+  // ✅ must exist for CatalogCardTile; if parent doesn't pass it, we cast a placeholder
+  const qaDefault = (quickAddDefault ?? ("default" as unknown as QuickAddDefault)) as QuickAddDefault;
 
   if (layoutMode === "list") {
     return (
@@ -48,6 +52,7 @@ export default function CatalogGrid({
               key={c.id}
               className="flex items-center gap-4 px-4 py-3 hover:bg-muted/50"
             >
+              {/* Thumbnail */}
               <div
                 className="h-12 w-12 shrink-0 cursor-pointer"
                 onClick={() => onOpenItem(c.id)}
@@ -63,6 +68,7 @@ export default function CatalogGrid({
                 )}
               </div>
 
+              {/* Text */}
               <div
                 className="flex flex-col flex-1 cursor-pointer"
                 onClick={() => onOpenItem(c.id)}
@@ -74,24 +80,28 @@ export default function CatalogGrid({
                 <div className="text-sm text-muted-foreground">{categoryText}</div>
               </div>
 
+              {/* Actions */}
               <div className="flex items-center gap-2 shrink-0">
                 <button
                   className="text-sm px-2 py-1 rounded border"
-                  onClick={() => onWishlist(c.id)}
+                  onClick={() => {
+                    void onWishlist(c.id);
+                  }}
                 >
                   Wishlist
                 </button>
                 <button
                   className="text-sm px-2 py-1 rounded border"
-                  onClick={() => onCollection(c.id)}
+                  onClick={() => {
+                    void onCollection(c.id);
+                  }}
                 >
                   + Collection
                 </button>
                 <button
                   className="text-sm px-2 py-1 rounded border"
                   onClick={() => {
-                    // don’t care about return type here, just call it
-                    void onQuickAdd(c.id, defaultQuickAdd);
+                    void onQuickAdd(c.id, qaDefault);
                   }}
                 >
                   Quick add
@@ -104,16 +114,25 @@ export default function CatalogGrid({
     );
   }
 
+  // CARD MODE: pass the props CatalogCardTile actually expects
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
       {cards.map((c) => (
         <CatalogCardTile
           key={c.id}
-          card={c}
+          item={c}
+          layout={layoutMode}
+          quickAddDefault={qaDefault}
           onOpen={() => onOpenItem(c.id)}
-          onWishlist={() => onWishlist(c.id)}
-          onCollection={() => onCollection(c.id)}
-          onQuickAdd={(d) => Promise.resolve(onQuickAdd(c.id, d))}
+          onAddWishlist={(catalogItemId: string) =>
+            Promise.resolve(onWishlist(catalogItemId))
+          }
+          onAddCollection={(catalogItemId: string) =>
+            Promise.resolve(onCollection(catalogItemId))
+          }
+          onQuickAdd={(catalogItemId: string, pref: QuickAddDefault) =>
+            Promise.resolve(onQuickAdd(catalogItemId, pref))
+          }
         />
       ))}
     </div>
