@@ -8,7 +8,7 @@ import { formatProductionStatus } from "@/lib/catalog/statusFormat";
 type Props = {
   catalogItemId: string;
 
-  // page.tsx passes these; accept them so build doesn’t fail
+  // page.tsx passes these; accept them so TS doesn’t complain
   isAdmin?: boolean;
   categoryName?: string | null;
 };
@@ -35,6 +35,8 @@ function pickFirstEmbed(v: any): any | null {
 
 function pickDisplayName(obj: any): string | null {
   if (!obj) return null;
+
+  // Don’t assume column names. Use whatever exists.
   return (
     toStrOrNull(obj.name) ??
     toStrOrNull(obj.label) ??
@@ -43,6 +45,14 @@ function pickDisplayName(obj: any): string | null {
     toStrOrNull(obj.code) ??
     toStrOrNull(obj.slug) ??
     null
+  );
+}
+
+function Pill({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-center rounded-full border bg-white px-2 py-0.5 text-[11px] text-slate-700">
+      {children}
+    </span>
   );
 }
 
@@ -102,37 +112,24 @@ export default function ItemDescription(p: Props) {
   const prod = useMemo(() => formatProductionStatus(row?.production_status ?? null), [row?.production_status]);
 
   if (loading) return null;
-
-  // If it fails to load, don’t blow up the page — just render nothing (matches prior behaviour).
   if (!row) return null;
 
   return (
     <div>
-      {/* Badges row (this won’t break layout; it’s additive) */}
+      {/* Top row pills: Production + Genre + Age rating */}
       <div className="flex flex-wrap gap-2">
-        {prod?.label && prod.label !== "—" ? (
-          <span className="inline-flex items-center rounded-full border bg-white px-2 py-0.5 text-[11px] text-slate-700">
-            Production: {prod.label}
-          </span>
-        ) : null}
-
-        {row.genre_name ? (
-          <span className="inline-flex items-center rounded-full border bg-white px-2 py-0.5 text-[11px] text-slate-700">
-            Genre: {row.genre_name}
-          </span>
-        ) : null}
-
-        {row.age_rating_name ? (
-          <span className="inline-flex items-center rounded-full border bg-white px-2 py-0.5 text-[11px] text-slate-700">
-            Age rating: {row.age_rating_name}
-          </span>
-        ) : null}
+        {prod?.label && prod.label !== "—" ? <Pill>Production: {prod.label}</Pill> : null}
+        {row.genre_name ? <Pill>Genre: {row.genre_name}</Pill> : null}
+        {row.age_rating_name ? <Pill>Age rating: {row.age_rating_name}</Pill> : null}
       </div>
 
-      {/* Description text — only render if present (NO empty-state text) */}
+      {/* Body: only render description when it exists. NO empty-state message. */}
       {row.description ? (
         <div className="mt-3 text-sm text-slate-800 whitespace-pre-wrap">{row.description}</div>
-      ) : null}
+      ) : (
+        // Keep spacing so the section still “exists” visually, without showing any text.
+        <div className="mt-3" />
+      )}
     </div>
   );
 }
