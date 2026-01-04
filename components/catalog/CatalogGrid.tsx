@@ -13,7 +13,9 @@ type Props = {
   onOpenItem: (id: string) => void;
   onWishlist: (id: string) => void;
   onCollection: (id: string) => void;
-  onQuickAdd: (id: string, d: QuickAddDefault) => void;
+
+  // ✅ MUST be promise-returning because CatalogCardTile expects Promise<void>
+  onQuickAdd: (id: string, d: QuickAddDefault) => Promise<void> | void;
 };
 
 export default function CatalogGrid({
@@ -24,12 +26,8 @@ export default function CatalogGrid({
   onCollection,
   onQuickAdd,
 }: Props) {
-  // ✅ pick a safe default without guessing your union values
-  const defaultQuickAdd = ((): QuickAddDefault => {
-    // If your type is an enum-like object or array elsewhere, you can wire it in later.
-    // For now: cast a known good fallback path that compiles.
-    return "default" as unknown as QuickAddDefault;
-  })();
+  // ✅ safe default without guessing union values
+  const defaultQuickAdd = "default" as unknown as QuickAddDefault;
 
   if (layoutMode === "list") {
     return (
@@ -50,7 +48,6 @@ export default function CatalogGrid({
               key={c.id}
               className="flex items-center gap-4 px-4 py-3 hover:bg-muted/50"
             >
-              {/* Thumbnail */}
               <div
                 className="h-12 w-12 shrink-0 cursor-pointer"
                 onClick={() => onOpenItem(c.id)}
@@ -66,7 +63,6 @@ export default function CatalogGrid({
                 )}
               </div>
 
-              {/* Text */}
               <div
                 className="flex flex-col flex-1 cursor-pointer"
                 onClick={() => onOpenItem(c.id)}
@@ -78,7 +74,6 @@ export default function CatalogGrid({
                 <div className="text-sm text-muted-foreground">{categoryText}</div>
               </div>
 
-              {/* Actions */}
               <div className="flex items-center gap-2 shrink-0">
                 <button
                   className="text-sm px-2 py-1 rounded border"
@@ -94,7 +89,10 @@ export default function CatalogGrid({
                 </button>
                 <button
                   className="text-sm px-2 py-1 rounded border"
-                  onClick={() => onQuickAdd(c.id, defaultQuickAdd)}
+                  onClick={() => {
+                    // don’t care about return type here, just call it
+                    void onQuickAdd(c.id, defaultQuickAdd);
+                  }}
                 >
                   Quick add
                 </button>
@@ -106,7 +104,6 @@ export default function CatalogGrid({
     );
   }
 
-  // CARD MODE (UNCHANGED)
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
       {cards.map((c) => (
@@ -116,7 +113,7 @@ export default function CatalogGrid({
           onOpen={() => onOpenItem(c.id)}
           onWishlist={() => onWishlist(c.id)}
           onCollection={() => onCollection(c.id)}
-          onQuickAdd={(d) => onQuickAdd(c.id, d)}
+          onQuickAdd={(d) => Promise.resolve(onQuickAdd(c.id, d))}
         />
       ))}
     </div>
