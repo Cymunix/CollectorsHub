@@ -14,6 +14,7 @@ type Props = {
 
   onOpen?: (id: string) => void;
 
+  isWishlisted?: boolean;
   onToggleWishlist?: (id: string) => void;
   onAddToCollection?: (id: string) => void;
 
@@ -23,7 +24,10 @@ type Props = {
 
 function moneyCAD(v: number | null | undefined) {
   if (v == null || Number.isNaN(v)) return null;
-  return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD" }).format(v);
+  return new Intl.NumberFormat("en-CA", {
+    style: "currency",
+    currency: "CAD",
+  }).format(v);
 }
 
 function Badge(p: { children: React.ReactNode }) {
@@ -57,16 +61,23 @@ function buildBuyLinks(args: {
       href: `https://www.ebay.ca/sch/i.html?_nkw=${encodeURIComponent(args.epid)}`,
     });
   } else if (upcQ) {
-    links.push({ label: "eBay", href: `https://www.ebay.ca/sch/i.html?_nkw=${upcQ}` });
+    links.push({
+      label: "eBay",
+      href: `https://www.ebay.ca/sch/i.html?_nkw=${upcQ}`,
+    });
   } else {
-    links.push({ label: "eBay", href: `https://www.ebay.ca/sch/i.html?_nkw=${nameQ}` });
+    links.push({
+      label: "eBay",
+      href: `https://www.ebay.ca/sch/i.html?_nkw=${nameQ}`,
+    });
   }
 
-  if (upcQ) {
-    links.push({ label: "Buy", href: `https://www.google.com/search?q=${upcQ}+buy` });
-  } else {
-    links.push({ label: "Buy", href: `https://www.google.com/search?q=${nameQ}+buy` });
-  }
+  links.push({
+    label: "Buy",
+    href: upcQ
+      ? `https://www.google.com/search?q=${upcQ}+buy`
+      : `https://www.google.com/search?q=${nameQ}+buy`,
+  });
 
   return links;
 }
@@ -79,13 +90,14 @@ export default function CatalogListRowView(p: Props) {
   const pieces = bb?.piece_count ?? null;
   const retailCad = p.isLego ? moneyCAD(bb?.retail_cad ?? null) : null;
 
-  // TODO: wire real avg default when pricing summary exists on list rows
+  // TODO: wire pricing engine summary into list rows
   const avgDefaultCad: string | null = null;
 
   const { label: prodLabel } = formatProductionStatus(item.production_status);
 
   const categoryLine = useMemo(() => {
-    if (p.categoryName && p.subcategoryName) return `${p.categoryName} • ${p.subcategoryName}`;
+    if (p.categoryName && p.subcategoryName)
+      return `${p.categoryName} • ${p.subcategoryName}`;
     if (p.categoryName) return p.categoryName;
     if (p.subcategoryName) return p.subcategoryName;
     return "";
@@ -93,26 +105,29 @@ export default function CatalogListRowView(p: Props) {
 
   const releaseYear = item.release_year ?? null;
 
-  const endDate = useMemo(() => {
-    if (!item.end_year) return null;
-    const yy = String(item.end_year).padStart(4, "0");
-    if (!item.end_month) return yy;
-    const mm = String(item.end_month).padStart(2, "0");
-    if (!item.end_day) return `${yy}-${mm}`;
-    const dd = String(item.end_day).padStart(2, "0");
-    return `${yy}-${mm}-${dd}`;
-  }, [item.end_year, item.end_month, item.end_day]);
+  const systemName = useMemo(
+    () => display(item.platform_name ?? null),
+    [item.platform_name]
+  );
 
-  const systemName = useMemo(() => display(item.platform_name ?? null), [item.platform_name]);
   const publisherName = useMemo(
     () => display(item.publisher_name ?? item.publisher ?? null),
     [item.publisher_name, item.publisher]
   );
 
   const upc = useMemo(() => display(item.upc ?? null), [item.upc]);
-  const epid = useMemo(() => display(item.epid_ebay ?? null), [item.epid_ebay]);
-  const tcg = useMemo(() => display(item.tcgplayer_id ?? null), [item.tcgplayer_id]);
-  const cardNo = useMemo(() => display(item.card_number ?? null), [item.card_number]);
+  const epid = useMemo(
+    () => display(item.epid_ebay ?? null),
+    [item.epid_ebay]
+  );
+  const tcg = useMemo(
+    () => display(item.tcgplayer_id ?? null),
+    [item.tcgplayer_id]
+  );
+  const cardNo = useMemo(
+    () => display(item.card_number ?? null),
+    [item.card_number]
+  );
 
   const hasIds = !!(upc || epid || tcg || cardNo);
 
@@ -124,11 +139,11 @@ export default function CatalogListRowView(p: Props) {
   return (
     <div className="rounded-2xl border bg-white p-4 shadow-sm hover:bg-slate-50">
       <div className="flex items-stretch gap-4">
-        {/* IMAGE TILE */}
+        {/* IMAGE TILE — NO CROPPING */}
         <button
           type="button"
           onClick={() => p.onOpen?.(item.id)}
-          className="group h-28 w-28 shrink-0 overflow-hidden rounded-xl border bg-slate-100"
+          className="group h-28 w-28 shrink-0 rounded-xl border bg-white flex items-center justify-center"
           aria-label={`Open ${item.name}`}
         >
           {item.image_url ? (
@@ -136,7 +151,7 @@ export default function CatalogListRowView(p: Props) {
             <img
               src={item.image_url}
               alt=""
-              className="h-full w-full object-cover transition-transform group-hover:scale-[1.03]"
+              className="max-h-full max-w-full object-contain p-1"
             />
           ) : (
             <div className="flex h-full w-full items-center justify-center text-xs text-slate-500">
@@ -157,33 +172,41 @@ export default function CatalogListRowView(p: Props) {
           </button>
 
           <div className="mt-0.5 max-w-full truncate text-sm text-slate-700">
-            {item.version ? item.version : <span className="text-slate-400"> </span>}
+            {item.version ?? <span className="text-slate-400"> </span>}
           </div>
 
           <div className="mt-0.5 max-w-full truncate text-sm text-slate-600">
-            {categoryLine ? categoryLine : <span className="text-slate-400"> </span>}
+            {categoryLine || <span className="text-slate-400"> </span>}
           </div>
 
-          {/* BADGES (single source of truth for platform/publisher) */}
+          {/* BADGES */}
           <div className="mt-3 flex flex-wrap gap-2">
-            {releaseYear ? <Badge>Release Year: {String(releaseYear)}</Badge> : null}
+            {releaseYear ? (
+              <Badge>Release Year: {releaseYear}</Badge>
+            ) : null}
 
             {systemName ? <Badge>Platform: {systemName}</Badge> : null}
-            {publisherName ? <Badge>Publisher: {publisherName}</Badge> : null}
+            {publisherName ? (
+              <Badge>Publisher: {publisherName}</Badge>
+            ) : null}
 
-            {endDate ? <Badge>End: {endDate}</Badge> : null}
+            {p.isLego && setNo ? <Badge>Set: {setNo}</Badge> : null}
+            {p.isLego && pieces ? (
+              <Badge>Pieces: {pieces.toLocaleString("en-CA")}</Badge>
+            ) : null}
 
-            {p.isLego && setNo ? <Badge>Set: {String(setNo)}</Badge> : null}
-            {p.isLego && pieces ? <Badge>Pieces: {pieces.toLocaleString("en-CA")}</Badge> : null}
-
-            {prodLabel && prodLabel !== "—" ? <Badge>Production: {prodLabel}</Badge> : null}
+            {prodLabel && prodLabel !== "—" ? (
+              <Badge>Production: {prodLabel}</Badge>
+            ) : null}
           </div>
         </div>
 
         {/* VALUE + ACTIONS */}
         <div className="flex w-[240px] shrink-0 flex-col items-end justify-between gap-3">
           <div className="w-full text-right">
-            <div className="text-[11px] uppercase tracking-wide text-slate-500">Value</div>
+            <div className="text-[11px] uppercase tracking-wide text-slate-500">
+              Value
+            </div>
 
             <div className="mt-1">
               <div className="text-xs text-slate-500">Avg (default)</div>
@@ -200,20 +223,24 @@ export default function CatalogListRowView(p: Props) {
             </div>
           </div>
 
-          <div className="flex w-full justify-end gap-2">
+          <div className="flex w-full justify-end items-center gap-3">
+            {/* Wishlist = STATE */}
             {p.onToggleWishlist ? (
-              <button
-                type="button"
-                className="rounded-full border px-3 py-1 text-xs font-medium text-slate-800 hover:bg-white"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  p.onToggleWishlist?.(item.id);
-                }}
+              <label
+                className="flex items-center gap-2 text-xs font-medium text-slate-800 cursor-pointer select-none"
+                onClick={(e) => e.stopPropagation()}
               >
+                <input
+                  type="checkbox"
+                  checked={!!p.isWishlisted}
+                  onChange={() => p.onToggleWishlist?.(item.id)}
+                  className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
+                />
                 Wishlist
-              </button>
+              </label>
             ) : null}
 
+            {/* Collection = ACTION */}
             {p.onAddToCollection ? (
               <button
                 type="button"
@@ -243,7 +270,7 @@ export default function CatalogListRowView(p: Props) {
         </div>
       </div>
 
-      {/* BOTTOM RAIL: IDs + BUY LINKS ONLY (no platform/publisher duplication) */}
+      {/* BOTTOM RAIL: IDs + BUY LINKS */}
       <div className="mt-4 border-t pt-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-700">
