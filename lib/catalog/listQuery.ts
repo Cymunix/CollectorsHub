@@ -15,7 +15,6 @@ export type CatalogListRow = {
   production_status: string | null;
   image_url?: string | null;
 
-  // ✅ “description fields without the text”
   publisher: string | null; // legacy text column
   upc: string | null;
 
@@ -29,20 +28,19 @@ export type CatalogListRow = {
 
   epid_ebay: string | null;
 
-  // ✅ card-only identifiers
   card_set_id?: string | null;
   card_number?: string | null;
   tcgplayer_id?: string | null;
 
-  // ✅ normalised ids (based on YOUR actual columns)
   platform_id?: string | null;
   publisher_id?: string | null;
 
-  // ✅ names (best-effort; may be null if schema doesn’t join cleanly)
   platform_name?: string | null;
   publisher_name?: string | null;
 
-  // ✅ building blocks (manual merge; do NOT rely on schema relationships)
+  // ✅ persisted wishlist state for this user
+  is_wishlisted?: boolean;
+
   building_blocks?: {
     set_number: number | null;
     piece_count: number | null;
@@ -94,6 +92,20 @@ function pickItemIdFromBB(row: BuildingBlockRaw): string | null {
   return v ? String(v) : null;
 }
 
+async function fetchWishlistedSet(userId: string, itemIds: string[]) {
+  if (!userId || !itemIds.length) return new Set<string>();
+
+  const { data, error } = await supabase
+    .from("user_wishlist_items")
+    .select("catalog_item_id")
+    .eq("user_id", userId)
+    .in("catalog_item_id", itemIds);
+
+  if (error) throw error;
+
+  return new Set((data ?? []).map((r: any) => String(r.catalog_item_id)));
+}
+
 export async function fetchCatalogListRows(params: {
   ids?: string[] | null;
 
@@ -102,13 +114,13 @@ export async function fetchCatalogListRows(params: {
   subcategoryId?: string | null;
   franchiseId?: string | null;
   limit?: number;
+
+  // ✅ pass current user id to get is_wishlisted
+  userId?: string | null;
 }) {
   const ids = (params.ids ?? []).filter(Boolean);
   const limit = params.limit ?? 100;
 
-  // IMPORTANT:
-  // - Do NOT join building blocks here (PostgREST relationship missing)
-  // - Only select columns that actually exist in YOUR catalog_items schema
   let q = supabase.from("catalog_items").select(`
     id,
     name,
@@ -165,9 +177,6 @@ export async function fetchCatalogListRows(params: {
   const normalised: CatalogListRow[] = raw.map((r) => {
     const row: any = r as any;
 
-    const platformId = row.platform_id ?? null;
-    const publisherId = row.publisher_id ?? null;
-
     return {
       id: String(row.id),
       name: String(row.name ?? ""),
@@ -197,18 +206,19 @@ export async function fetchCatalogListRows(params: {
       card_number: row.card_number ?? null,
       tcgplayer_id: row.tcgplayer_id ?? null,
 
-      platform_id: platformId ? String(platformId) : null,
-      publisher_id: publisherId ? String(publisherId) : null,
+      platform_id: row.platform_id ? String(row.platform_id) : null,
+      publisher_id: row.publisher_id ? String(row.publisher_id) : null,
 
-      // Best-effort names from joins (only works if the relationship is actually wired)
       platform_name: row.game_platforms?.name ?? null,
       publisher_name: row.game_publishers?.name ?? null,
+
+      is_wishlisted: false,
 
       building_blocks: null,
     };
   });
 
-  // Manual merge: building blocks (because PostgREST relationship is missing)
+  // Manual merge: building blocks (no PostgREST relationship)
   const itemIds = normalised.map((r) => r.id);
 
   if (itemIds.length) {
@@ -224,24 +234,18 @@ export async function fetchCatalogListRows(params: {
 
     let bbRows: BuildingBlockRaw[] = [];
 
-    // Attempt 1: catalog_item_id
     const { data: bb1, error: bbErr1 } = await supabase
       .from("catalog_building_blocks_rows")
       .select(selectBB)
       .in("catalog_item_id", itemIds);
 
-    if (!bbErr1) {
-      bbRows = (bb1 ?? []) as any[];
-    }
+    if (!bbErr1) bbRows = (bb1 ?? []) as any[];
 
-    // Attempt 2/3 if we got nothing (or attempt 1 errored)
     if (bbRows.length === 0) {
       const tryCols = ["catalog_items_id", "item_id"] as const;
-
       for (const col of tryCols) {
         const builder: any = supabase.from("catalog_building_blocks_rows").select(selectBB);
         const { data: d2, error: e2 } = await builder.in(col, itemIds);
-
         if (e2) continue;
         const rows2 = (d2 ?? []) as any[];
         if (rows2.length) {
@@ -261,7 +265,6 @@ export async function fetchCatalogListRows(params: {
     for (const r of normalised) {
       const bb = bbByItem.get(r.id);
       if (!bb) continue;
-
       r.building_blocks = {
         set_number: toNumOrNull(bb.set_number),
         piece_count: toNumOrNull(bb.piece_count),
@@ -271,7 +274,15 @@ export async function fetchCatalogListRows(params: {
     }
   }
 
-  // Preserve requested ids order
+  // ✅ Wishlist merge (persisted)
+  if (params.userId) {
+    const wishSet = await fetchWishlistedSet(params.userId, itemIds);
+    for (const r of normalised) {
+      r.is_wishlisted = wishSet.has(r.id);
+    }
+  }
+
+  // Preserve requested order
   if (ids.length) {
     const byId = new Map(normalised.map((r) => [r.id, r]));
     return ids.map((id) => byId.get(id)).filter(Boolean) as CatalogListRow[];
