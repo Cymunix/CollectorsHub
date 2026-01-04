@@ -15,7 +15,7 @@ export type CatalogListRow = {
   production_status: string | null;
   image_url?: string | null;
 
-  // ✅ “description fields without the text”
+  // “description fields without the text”
   publisher: string | null; // legacy text column
   upc: string | null;
 
@@ -29,20 +29,19 @@ export type CatalogListRow = {
 
   epid_ebay: string | null;
 
-  // ✅ card-only identifiers
+  // card-only identifiers
   card_set_id?: string | null;
   card_number?: string | null;
   tcgplayer_id?: string | null;
 
-  // ✅ normalised platform/publisher (handles weird column names)
+  // normalised platform/publisher ids
   platform_id?: string | null;
   game_publisher_id?: string | null;
 
-  // ✅ names (best-effort; may be null if schema doesn’t join cleanly)
+  // resolved names (we will guarantee these via fallback lookups)
   platform_name?: string | null;
   publisher_name?: string | null;
 
-  // ✅ Normalised 1:1-ish join
   building_blocks?: {
     set_number: number | null;
     piece_count: number | null;
@@ -62,7 +61,6 @@ type CatalogListRowRaw = {
     retail_usd: any;
   }> | null;
 
-  // If your FKs are clean these will appear; if not, they’ll be null
   game_platforms?: { name?: any } | null;
   game_publishers?: { name?: any } | null;
 };
@@ -88,8 +86,37 @@ function pickFirst(row: any, keys: string[]) {
   return undefined;
 }
 
+async function fetchPlatformNamesById(ids: string[]) {
+  if (!ids.length) return new Map<string, string>();
+  const { data, error } = await supabase
+    .from("game_platforms")
+    .select("id,name")
+    .in("id", ids);
+  if (error) throw error;
+
+  const m = new Map<string, string>();
+  for (const r of data ?? []) {
+    if (r?.id && r?.name) m.set(String(r.id), String(r.name));
+  }
+  return m;
+}
+
+async function fetchPublisherNamesById(ids: string[]) {
+  if (!ids.length) return new Map<string, string>();
+  const { data, error } = await supabase
+    .from("game_publishers")
+    .select("id,name")
+    .in("id", ids);
+  if (error) throw error;
+
+  const m = new Map<string, string>();
+  for (const r of data ?? []) {
+    if (r?.id && r?.name) m.set(String(r.id), String(r.name));
+  }
+  return m;
+}
+
 export async function fetchCatalogListRows(params: {
-  // ✅ fetch by specific ids (used by CatalogGrid list toggle)
   ids?: string[] | null;
 
   search?: string | null;
@@ -101,9 +128,9 @@ export async function fetchCatalogListRows(params: {
   const ids = (params.ids ?? []).filter(Boolean);
   const limit = params.limit ?? 100;
 
-  // IMPORTANT:
-  // - We SELECT multiple possible column names for platform/publisher IDs because your table has casing variants.
-  // - We do NOT select the free-text description (big payload). We select structured fields only.
+  // NOTE:
+  // We still select the nested joins, but we do NOT rely on them.
+  // The fallback batch lookups below will guarantee names when we have IDs.
   let q = supabase.from("catalog_items").select(`
     id,
     name,
@@ -170,18 +197,16 @@ export async function fetchCatalogListRows(params: {
 
   const raw = (data ?? []) as unknown as CatalogListRowRaw[];
 
-  const normalised: CatalogListRow[] = raw.map((r) => {
+  // First pass: normalise IDs and whatever join names we happened to get.
+  const firstPass: CatalogListRow[] = raw.map((r) => {
     const row: any = r as any;
-
     const bb0 = (row.building_blocks ?? [])?.[0] ?? null;
 
-    // Normalise platform/publisher IDs from whatever the table actually has
     const platformId =
       pickFirst(row, ["platform_id", "Platform_id", "game_platform_id"]) ?? null;
 
     const publisherId =
-      pickFirst(row, ["game_publisher_id", "publisher_id", "Publisher_Id", "Publisher_id"]) ??
-      null;
+      pickFirst(row, ["game_publisher_id", "publisher_id", "Publisher_Id", "Publisher_id"]) ?? null;
 
     return {
       id: String(row.id),
@@ -215,7 +240,7 @@ export async function fetchCatalogListRows(params: {
       platform_id: platformId ? String(platformId) : null,
       game_publisher_id: publisherId ? String(publisherId) : null,
 
-      // Best-effort names from joins (only works if your FK is clean)
+      // best-effort from implicit joins (unreliable)
       platform_name: row.game_platforms?.name ?? null,
       publisher_name: row.game_publishers?.name ?? null,
 
@@ -230,11 +255,44 @@ export async function fetchCatalogListRows(params: {
     };
   });
 
-  // ✅ If ids were provided, return rows in the same order as ids
+  // Second pass: fallback batch lookup for names where we have IDs but missing names.
+  const missingPlatformIds = Array.from(
+    new Set(
+      firstPass
+        .filter((r) => r.platform_id && !r.platform_name)
+        .map((r) => String(r.platform_id))
+    )
+  );
+
+  const missingPublisherIds = Array.from(
+    new Set(
+      firstPass
+        .filter((r) => r.game_publisher_id && !r.publisher_name)
+        .map((r) => String(r.game_publisher_id))
+    )
+  );
+
+  if (missingPlatformIds.length || missingPublisherIds.length) {
+    const [platformMap, publisherMap] = await Promise.all([
+      fetchPlatformNamesById(missingPlatformIds),
+      fetchPublisherNamesById(missingPublisherIds),
+    ]);
+
+    for (const r of firstPass) {
+      if (r.platform_id && !r.platform_name) {
+        r.platform_name = platformMap.get(String(r.platform_id)) ?? null;
+      }
+      if (r.game_publisher_id && !r.publisher_name) {
+        r.publisher_name = publisherMap.get(String(r.game_publisher_id)) ?? null;
+      }
+    }
+  }
+
+  // If ids provided, preserve order
   if (ids.length) {
-    const byId = new Map(normalised.map((r) => [r.id, r]));
+    const byId = new Map(firstPass.map((r) => [r.id, r]));
     return ids.map((id) => byId.get(id)).filter(Boolean) as CatalogListRow[];
   }
 
-  return normalised;
+  return firstPass;
 }
