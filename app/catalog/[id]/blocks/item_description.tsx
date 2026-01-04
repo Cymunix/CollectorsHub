@@ -7,6 +7,7 @@ import { formatProductionStatus } from "@/lib/catalog/statusFormat";
 type Props = {
   catalogItemId: string;
   isAdmin?: boolean;
+  categoryName?: string | null; // RESTORED: This fixed the build error
 };
 
 type Row = {
@@ -24,17 +25,24 @@ function Pill({ children }: { children: React.ReactNode }) {
   );
 }
 
-export default function ItemDescription({ catalogItemId }: Props) {
-  // Initialize with the ID to prevent the "blank" return null check
-  const [row, setRow] = useState<Row | null>(null);
-  const [error, setError] = useState(false);
+export default function ItemDescription({ catalogItemId, categoryName }: Props) {
+  // Initialize with empty strings instead of null to prevent "blank" flickering
+  const [row, setRow] = useState<Row>({
+    description: "",
+    production_status: null,
+    genre_name: null,
+    age_rating_name: null,
+  });
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!catalogItemId) return;
 
     async function load() {
-      // Step 1: Attempt to get everything
-      const { data, error: fetchError } = await supabase
+      setLoading(true);
+      
+      // Attempt query with joins
+      const { data, error } = await supabase
         .from("catalog_items")
         .select(`
           description,
@@ -45,30 +53,23 @@ export default function ItemDescription({ catalogItemId }: Props) {
         .eq("id", catalogItemId)
         .single();
 
-      if (fetchError) {
-        console.error("Fetch error, attempting fallback:", fetchError);
-        
-        // Step 2: Fallback - Get only the description/status if the joins fail
-        const { data: fallbackData } = await supabase
+      if (error || !data) {
+        // Fallback: If joins fail, just get the description
+        const { data: simpleData } = await supabase
           .from("catalog_items")
           .select("description, production_status")
           .eq("id", catalogItemId)
           .single();
 
-        if (fallbackData) {
+        if (simpleData) {
           setRow({
-            description: fallbackData.description,
-            production_status: fallbackData.production_status,
+            description: simpleData.description,
+            production_status: simpleData.production_status,
             genre_name: null,
             age_rating_name: null,
           });
-        } else {
-          setError(true);
         }
-        return;
-      }
-
-      if (data) {
+      } else {
         const genre = Array.isArray(data.genre) ? data.genre[0] : data.genre;
         const age = Array.isArray(data.age_rating) ? data.age_rating[0] : data.age_rating;
 
@@ -79,36 +80,34 @@ export default function ItemDescription({ catalogItemId }: Props) {
           age_rating_name: age?.rating || age?.name || null,
         });
       }
+      setLoading(false);
     }
 
     load();
   }, [catalogItemId]);
 
-  const status = formatProductionStatus(row?.production_status);
+  const status = formatProductionStatus(row.production_status);
   const statusLabel = status?.label && status.label !== "—" ? status.label : "Unknown";
-
-  // Render a skeleton instead of "null" so the area isn't blank while loading
-  if (!row && !error) {
-    return <div className="h-20 w-full animate-pulse bg-slate-50 rounded-md" />;
-  }
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Top Row: Pills */}
+      {/* Top Row: Pills (Matches your screenshot) */}
       <div className="flex flex-wrap gap-2">
         <Pill>Production: {statusLabel}</Pill>
-        {row?.genre_name && <Pill>Genre: {row.genre_name}</Pill>}
-        {row?.age_rating_name && <Pill>Rating: {row.age_rating_name}</Pill>}
+        {row.genre_name && <Pill>Genre: {row.genre_name}</Pill>}
+        {row.age_rating_name && <Pill>Rating: {row.age_rating_name}</Pill>}
       </div>
 
       {/* Description Body */}
-      <div className="min-h-[40px]">
-        {row?.description ? (
+      <div className="mt-1">
+        {loading ? (
+          <div className="h-4 w-3/4 animate-pulse bg-slate-100 rounded" />
+        ) : row.description ? (
           <div className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
             {row.description}
           </div>
         ) : (
-          <div className="text-sm text-slate-400 font-light">
+          <div className="text-sm text-slate-400 font-light italic">
             No description saved yet.
           </div>
         )}
