@@ -66,6 +66,44 @@ function buildBuyLinks(args: { name: string; upc?: string | null; epid?: string 
   return links;
 }
 
+/** NOTE: list rows are “wide”. We defensively read optional fields that may not exist yet. */
+function getGenreText(item: any): string | null {
+  // common patterns you might add in listQuery:
+  // - genre_names: string[]   (recommended)
+  // - genre_name: string
+  // - genres: string[] / string
+  const arr =
+    Array.isArray(item?.genre_names) ? item.genre_names :
+    Array.isArray(item?.genres) ? item.genres :
+    null;
+
+  if (arr && arr.length) return arr.map((x: any) => String(x ?? "").trim()).filter(Boolean).join(", ");
+
+  const single =
+    display(item?.genre_name) ??
+    display(item?.genres) ??
+    null;
+
+  return single;
+}
+
+function getComicSeriesText(item: any): string | null {
+  return (
+    display(item?.comic_series_name) ??
+    display(item?.series_name) ??
+    display(item?.comic_series) ??
+    null
+  );
+}
+
+function getCardSetText(item: any): string | null {
+  return (
+    display(item?.card_set_name) ??
+    display(item?.set_name) ??
+    null
+  );
+}
+
 export default function CatalogListRowView(p: Props) {
   const item = p.item;
 
@@ -78,7 +116,7 @@ export default function CatalogListRowView(p: Props) {
     setWish(persistedWish);
   }, [persistedWish]);
 
-  const bb = item.building_blocks ?? null;
+  const bb = (item as any).building_blocks ?? null;
   const setNo = bb?.set_number ?? null;
   const pieces = bb?.piece_count ?? null;
   const retailCad = p.isLego ? moneyCAD(bb?.retail_cad ?? null) : null;
@@ -94,18 +132,51 @@ export default function CatalogListRowView(p: Props) {
     return "";
   }, [p.categoryName, p.subcategoryName]);
 
+  const categoryKey = useMemo(() => String(p.categoryName ?? "").toLowerCase(), [p.categoryName]);
+
+  const isCard = useMemo(() => {
+    const c = categoryKey;
+    return c.includes("trading") || c.includes("sports card") || c === "cards" || c.includes("tcg");
+  }, [categoryKey]);
+
+  const isComic = useMemo(() => categoryKey.includes("comic"), [categoryKey]);
+  const isMovie = useMemo(() => categoryKey.includes("movie"), [categoryKey]);
+  const isMusic = useMemo(() => categoryKey.includes("music"), [categoryKey]);
+
+  // gaming is "everything else" that isn’t cards/comics/movie/music (keeps old behaviour)
+  const isGamingLike = useMemo(() => !isCard && !isComic && !isMovie && !isMusic, [isCard, isComic, isMovie, isMusic]);
+
   const releaseYear = item.release_year ?? null;
 
-  const systemName = useMemo(() => display(item.platform_name ?? null), [item.platform_name]);
+  // existing fields from listQuery
+  const platformName = useMemo(() => display((item as any).platform_name ?? null), [item]);
   const publisherName = useMemo(
-    () => display(item.publisher_name ?? item.publisher ?? null),
-    [item.publisher_name, item.publisher]
+    () => display((item as any).publisher_name ?? (item as any).publisher ?? null),
+    [item]
   );
 
-  const upc = useMemo(() => display(item.upc ?? null), [item.upc]);
-  const epid = useMemo(() => display(item.epid_ebay ?? null), [item.epid_ebay]);
-  const tcg = useMemo(() => display(item.tcgplayer_id ?? null), [item.tcgplayer_id]);
-  const cardNo = useMemo(() => display(item.card_number ?? null), [item.card_number]);
+  // new “slot 1” value (Genre / Series / Set / Platform)
+  const slot1 = useMemo(() => {
+    if (isMovie || isMusic) {
+      const g = getGenreText(item as any);
+      return { label: "Genre", value: g };
+    }
+    if (isComic) {
+      const s = getComicSeriesText(item as any);
+      return { label: "Series", value: s };
+    }
+    if (isCard) {
+      const s = getCardSetText(item as any);
+      return { label: "Set", value: s };
+    }
+    // default keeps what you had
+    return { label: "Platform", value: platformName };
+  }, [item, isMovie, isMusic, isComic, isCard, platformName]);
+
+  const upc = useMemo(() => display((item as any).upc ?? null), [item]);
+  const epid = useMemo(() => display((item as any).epid_ebay ?? null), [item]);
+  const tcg = useMemo(() => display((item as any).tcgplayer_id ?? null), [item]);
+  const cardNo = useMemo(() => display((item as any).card_number ?? null), [item]);
 
   const hasIds = !!(upc || epid || tcg || cardNo);
 
@@ -149,13 +220,23 @@ export default function CatalogListRowView(p: Props) {
 
           <div className="mt-3 flex flex-wrap gap-2">
             {releaseYear ? <Badge>Release Year: {releaseYear}</Badge> : null}
-            {systemName ? <Badge>Platform: {systemName}</Badge> : null}
+
+            {/* Slot1: Genre / Series / Set / Platform */}
+            {slot1.value ? <Badge>{slot1.label}: {slot1.value}</Badge> : null}
+
+            {/* Keep publisher for everything (cards included, if you have it) */}
             {publisherName ? <Badge>Publisher: {publisherName}</Badge> : null}
 
+            {/* LEGO specifics */}
             {p.isLego && setNo ? <Badge>Set: {setNo}</Badge> : null}
             {p.isLego && pieces ? <Badge>Pieces: {pieces.toLocaleString("en-CA")}</Badge> : null}
 
+            {/* Keep production */}
             {prodLabel && prodLabel !== "—" ? <Badge>Production: {prodLabel}</Badge> : null}
+
+            {/* If you want to *hide* Platform badge for movie/music/comics/cards even when platform exists:
+                already handled by slot1 logic.
+                If you want to hide publisher for cards/movies, remove above. */}
           </div>
         </div>
 
