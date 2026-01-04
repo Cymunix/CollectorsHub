@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import type { CatalogListRow } from "@/lib/catalog/listQuery";
 import { formatProductionStatus } from "@/lib/catalog/statusFormat";
 
@@ -14,8 +14,10 @@ type Props = {
 
   onOpen?: (id: string) => void;
 
+  // If provided, we sync to it. If not, checkbox still works locally.
   isWishlisted?: boolean;
   onToggleWishlist?: (id: string) => void;
+
   onAddToCollection?: (id: string) => void;
 
   isAdmin?: boolean;
@@ -24,10 +26,7 @@ type Props = {
 
 function moneyCAD(v: number | null | undefined) {
   if (v == null || Number.isNaN(v)) return null;
-  return new Intl.NumberFormat("en-CA", {
-    style: "currency",
-    currency: "CAD",
-  }).format(v);
+  return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD" }).format(v);
 }
 
 function Badge(p: { children: React.ReactNode }) {
@@ -45,38 +44,23 @@ function display(v: any) {
 
 type BuyLink = { label: string; href: string };
 
-function buildBuyLinks(args: {
-  name: string;
-  upc?: string | null;
-  epid?: string | null;
-}): BuyLink[] {
+function buildBuyLinks(args: { name: string; upc?: string | null; epid?: string | null }): BuyLink[] {
   const nameQ = encodeURIComponent(args.name);
   const upcQ = args.upc ? encodeURIComponent(args.upc) : null;
 
   const links: BuyLink[] = [];
 
   if (args.epid) {
-    links.push({
-      label: "eBay",
-      href: `https://www.ebay.ca/sch/i.html?_nkw=${encodeURIComponent(args.epid)}`,
-    });
+    links.push({ label: "eBay", href: `https://www.ebay.ca/sch/i.html?_nkw=${encodeURIComponent(args.epid)}` });
   } else if (upcQ) {
-    links.push({
-      label: "eBay",
-      href: `https://www.ebay.ca/sch/i.html?_nkw=${upcQ}`,
-    });
+    links.push({ label: "eBay", href: `https://www.ebay.ca/sch/i.html?_nkw=${upcQ}` });
   } else {
-    links.push({
-      label: "eBay",
-      href: `https://www.ebay.ca/sch/i.html?_nkw=${nameQ}`,
-    });
+    links.push({ label: "eBay", href: `https://www.ebay.ca/sch/i.html?_nkw=${nameQ}` });
   }
 
   links.push({
     label: "Buy",
-    href: upcQ
-      ? `https://www.google.com/search?q=${upcQ}+buy`
-      : `https://www.google.com/search?q=${nameQ}+buy`,
+    href: upcQ ? `https://www.google.com/search?q=${upcQ}+buy` : `https://www.google.com/search?q=${nameQ}+buy`,
   });
 
   return links;
@@ -84,6 +68,14 @@ function buildBuyLinks(args: {
 
 export default function CatalogListRowView(p: Props) {
   const item = p.item;
+
+  // ✅ Optimistic wishlist state (works even if parent doesn't update immediately)
+  const [wish, setWish] = useState<boolean>(!!p.isWishlisted);
+
+  // ✅ Sync from parent when it changes (e.g., after refetch)
+  useEffect(() => {
+    if (typeof p.isWishlisted === "boolean") setWish(p.isWishlisted);
+  }, [p.isWishlisted]);
 
   const bb = item.building_blocks ?? null;
   const setNo = bb?.set_number ?? null;
@@ -96,8 +88,7 @@ export default function CatalogListRowView(p: Props) {
   const { label: prodLabel } = formatProductionStatus(item.production_status);
 
   const categoryLine = useMemo(() => {
-    if (p.categoryName && p.subcategoryName)
-      return `${p.categoryName} • ${p.subcategoryName}`;
+    if (p.categoryName && p.subcategoryName) return `${p.categoryName} • ${p.subcategoryName}`;
     if (p.categoryName) return p.categoryName;
     if (p.subcategoryName) return p.subcategoryName;
     return "";
@@ -105,36 +96,20 @@ export default function CatalogListRowView(p: Props) {
 
   const releaseYear = item.release_year ?? null;
 
-  const systemName = useMemo(
-    () => display(item.platform_name ?? null),
-    [item.platform_name]
-  );
-
+  const systemName = useMemo(() => display(item.platform_name ?? null), [item.platform_name]);
   const publisherName = useMemo(
     () => display(item.publisher_name ?? item.publisher ?? null),
     [item.publisher_name, item.publisher]
   );
 
   const upc = useMemo(() => display(item.upc ?? null), [item.upc]);
-  const epid = useMemo(
-    () => display(item.epid_ebay ?? null),
-    [item.epid_ebay]
-  );
-  const tcg = useMemo(
-    () => display(item.tcgplayer_id ?? null),
-    [item.tcgplayer_id]
-  );
-  const cardNo = useMemo(
-    () => display(item.card_number ?? null),
-    [item.card_number]
-  );
+  const epid = useMemo(() => display(item.epid_ebay ?? null), [item.epid_ebay]);
+  const tcg = useMemo(() => display(item.tcgplayer_id ?? null), [item.tcgplayer_id]);
+  const cardNo = useMemo(() => display(item.card_number ?? null), [item.card_number]);
 
   const hasIds = !!(upc || epid || tcg || cardNo);
 
-  const buyLinks = useMemo(
-    () => buildBuyLinks({ name: item.name, upc, epid }),
-    [item.name, upc, epid]
-  );
+  const buyLinks = useMemo(() => buildBuyLinks({ name: item.name, upc, epid }), [item.name, upc, epid]);
 
   return (
     <div className="rounded-2xl border bg-white p-4 shadow-sm hover:bg-slate-50">
@@ -148,15 +123,9 @@ export default function CatalogListRowView(p: Props) {
         >
           {item.image_url ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={item.image_url}
-              alt=""
-              className="max-h-full max-w-full object-contain p-1"
-            />
+            <img src={item.image_url} alt="" className="max-h-full max-w-full object-contain p-1" />
           ) : (
-            <div className="flex h-full w-full items-center justify-center text-xs text-slate-500">
-              No image
-            </div>
+            <div className="flex h-full w-full items-center justify-center text-xs text-slate-500">No image</div>
           )}
         </button>
 
@@ -181,32 +150,21 @@ export default function CatalogListRowView(p: Props) {
 
           {/* BADGES */}
           <div className="mt-3 flex flex-wrap gap-2">
-            {releaseYear ? (
-              <Badge>Release Year: {releaseYear}</Badge>
-            ) : null}
-
+            {releaseYear ? <Badge>Release Year: {releaseYear}</Badge> : null}
             {systemName ? <Badge>Platform: {systemName}</Badge> : null}
-            {publisherName ? (
-              <Badge>Publisher: {publisherName}</Badge>
-            ) : null}
+            {publisherName ? <Badge>Publisher: {publisherName}</Badge> : null}
 
             {p.isLego && setNo ? <Badge>Set: {setNo}</Badge> : null}
-            {p.isLego && pieces ? (
-              <Badge>Pieces: {pieces.toLocaleString("en-CA")}</Badge>
-            ) : null}
+            {p.isLego && pieces ? <Badge>Pieces: {pieces.toLocaleString("en-CA")}</Badge> : null}
 
-            {prodLabel && prodLabel !== "—" ? (
-              <Badge>Production: {prodLabel}</Badge>
-            ) : null}
+            {prodLabel && prodLabel !== "—" ? <Badge>Production: {prodLabel}</Badge> : null}
           </div>
         </div>
 
         {/* VALUE + ACTIONS */}
         <div className="flex w-[240px] shrink-0 flex-col items-end justify-between gap-3">
           <div className="w-full text-right">
-            <div className="text-[11px] uppercase tracking-wide text-slate-500">
-              Value
-            </div>
+            <div className="text-[11px] uppercase tracking-wide text-slate-500">Value</div>
 
             <div className="mt-1">
               <div className="text-xs text-slate-500">Avg (default)</div>
@@ -224,7 +182,7 @@ export default function CatalogListRowView(p: Props) {
           </div>
 
           <div className="flex w-full justify-end items-center gap-3">
-            {/* Wishlist = STATE */}
+            {/* Wishlist = STATE (optimistic) */}
             {p.onToggleWishlist ? (
               <label
                 className="flex items-center gap-2 text-xs font-medium text-slate-800 cursor-pointer select-none"
@@ -232,8 +190,13 @@ export default function CatalogListRowView(p: Props) {
               >
                 <input
                   type="checkbox"
-                  checked={!!p.isWishlisted}
-                  onChange={() => p.onToggleWishlist?.(item.id)}
+                  checked={wish}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={() => {
+                    // optimistic tick immediately
+                    setWish((v) => !v);
+                    p.onToggleWishlist?.(item.id);
+                  }}
                   className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
                 />
                 Wishlist
