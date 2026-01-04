@@ -39,7 +39,11 @@ function display(v: any) {
   return s.length ? s : null;
 }
 
-function formatPartialDate(y: number | null | undefined, m: number | null | undefined, d: number | null | undefined) {
+function formatPartialDate(
+  y: number | null | undefined,
+  m: number | null | undefined,
+  d: number | null | undefined
+) {
   if (!y) return null;
   const yy = String(y).padStart(4, "0");
   if (!m) return yy;
@@ -57,7 +61,9 @@ export default function CatalogListRowView(p: Props) {
   const pieces = bb?.piece_count ?? null;
   const retailCad = p.isLego ? moneyCAD(bb?.retail_cad ?? null) : null;
 
-  // ✅ IMPORTANT: formatProductionStatus returns an object
+  // TODO: wire real avg default when pricing engine is hooked for list rows
+  const avgDefaultCad: string | null = null;
+
   const { label: prodLabel } = formatProductionStatus(item.production_status);
 
   const categoryLine = useMemo(() => {
@@ -182,26 +188,30 @@ export default function CatalogListRowView(p: Props) {
           )}
         </div>
 
-        {/* VALUE BOX + ACTIONS */}
-        <div className="flex w-[210px] shrink-0 flex-col items-end justify-between gap-3">
-          <div className="w-full rounded-xl border bg-white p-3 text-right">
+        {/* VALUE + ACTIONS (NO INNER BOX) */}
+        <div className="flex w-[240px] shrink-0 flex-col items-end justify-between gap-3">
+          {/* Values */}
+          <div className="w-full text-right">
             <div className="text-[11px] uppercase tracking-wide text-slate-500">Value</div>
 
+            {/* Primary: Avg default */}
             <div className="mt-1">
-              <div className="text-xs text-slate-500">Retail</div>
-              <div className="text-base font-semibold text-slate-900">
-                {retailCad ?? <span className="text-slate-400">—</span>}
+              <div className="text-xs text-slate-500">Avg (default)</div>
+              <div className="text-lg font-semibold leading-tight text-slate-900">
+                {avgDefaultCad ?? <span className="text-slate-400">—</span>}
               </div>
             </div>
 
+            {/* Secondary: Retail */}
             <div className="mt-2">
-              <div className="text-xs text-slate-500">Avg (default)</div>
-              <div className="text-base font-semibold text-slate-900">
-                <span className="text-slate-400">—</span>
+              <div className="text-xs text-slate-500">Retail</div>
+              <div className="text-sm font-medium text-slate-700">
+                {retailCad ?? <span className="text-slate-400">—</span>}
               </div>
             </div>
           </div>
 
+          {/* Actions */}
           <div className="flex w-full justify-end gap-2">
             {p.onToggleWishlist ? (
               <button
