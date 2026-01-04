@@ -52,7 +52,7 @@ function toNumOrNull(v: any): number | null {
 }
 
 export async function fetchCatalogListRows(params: {
-  ids?: string[] | null; // Added back to fix the Vercel build error
+  ids?: string[] | null;
   search?: string | null;
   categoryId?: string | null;
   subcategoryId?: string | null;
@@ -63,16 +63,17 @@ export async function fetchCatalogListRows(params: {
   const limit = params.limit ?? 50;
   const ids = (params.ids ?? []).filter(Boolean);
 
+  // ✅ FIXED: Changed age_ratings join to only select 'rating' 
+  // because the database confirmed 'name' does not exist.
   const select = `
     *,
     franchises:franchise_id ( name ),
     card_sets:card_set_id ( name ),
-    age_ratings:age_rating_id ( name, rating )
+    age_ratings:age_rating_id ( rating )
   `;
 
   let q = supabase.from("catalog_items").select(select);
 
-  // If specific IDs are requested, prioritize those
   if (ids.length > 0) {
     q = q.in("id", ids);
   } else {
@@ -86,11 +87,9 @@ export async function fetchCatalogListRows(params: {
   const { data, error } = await q;
   if (error) throw error;
 
-  // Fetch all genres to map the genre_ids array manually
   const { data: allGenres } = await supabase.from("genres").select("id, name");
   const genreMap = new Map((allGenres || []).map(g => [g.id, g.name]));
 
-  // Fetch Building Blocks for these items
   const foundIds = (data ?? []).map(r => r.id);
   const { data: bbData } = await supabase
     .from("catalog_building_blocks_rows")
@@ -130,7 +129,9 @@ export async function fetchCatalogListRows(params: {
 
       genre_ids: gIds,
       genre_names: gIds.map(id => genreMap.get(id)).filter(Boolean) as string[],
-      age_rating_name: r.age_ratings?.rating || r.age_ratings?.name || null,
+      
+      // ✅ FIXED: Using .rating only here
+      age_rating_name: r.age_ratings?.rating || null,
 
       building_blocks: bb ? {
         set_number: bb.set_number,
