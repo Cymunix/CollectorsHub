@@ -356,11 +356,7 @@ export default function AddItemModal({
       return;
     }
 
-    const row = await insertLookupRowSafe<any>(
-      "bb_themes",
-      { name, subcategory_id: form.subcategoryId },
-      setBanner
-    );
+    const row = await insertLookupRowSafe<any>("bb_themes", { name, subcategory_id: form.subcategoryId }, setBanner);
     if (!row) return;
 
     setMeta((m) => ({ ...m, bbThemes: sortByName([...(m.bbThemes ?? []), row]) }));
@@ -376,11 +372,7 @@ export default function AddItemModal({
       return;
     }
 
-    const row = await insertLookupRowSafe<any>(
-      "bb_subthemes",
-      { name, theme_id: form.bbThemeId },
-      setBanner
-    );
+    const row = await insertLookupRowSafe<any>("bb_subthemes", { name, theme_id: form.bbThemeId }, setBanner);
     if (!row) return;
 
     setMeta((m) => ({ ...m, bbSubthemes: sortByName([...(m.bbSubthemes ?? []), row]) }));
@@ -506,7 +498,9 @@ export default function AddItemModal({
 
   const filteredRatings = useMemo(() => {
     if (!ratingSystemForKind) return [];
-    return ageRatings.filter((r) => String(r.system).toUpperCase() === String(ratingSystemForKind).toUpperCase());
+    return ageRatings.filter(
+      (r) => String(r.system).toUpperCase() === String(ratingSystemForKind).toUpperCase()
+    );
   }, [ageRatings, ratingSystemForKind]);
 
   // Bind form or local fallback
@@ -538,6 +532,46 @@ export default function AddItemModal({
     if (!found) setAgeRatingId("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind]);
+
+  /* ---------------- ✅ persist genres + rating to correct tables ---------------- */
+
+  const persistGenresAndRating = useCallback(
+    async (catalogItemId: string) => {
+      const gids = uniqStrings((genreIds ?? []).filter(Boolean));
+      const arId = String(ageRatingId ?? "").trim();
+
+      // 1) catalog_items: rating + explicit
+      const patch: Record<string, any> = {
+        age_rating_id: arId ? arId : null,
+        explicit_content: kind === "music" ? !!explicitContent : null,
+      };
+
+      const { error: upErr } = await supabase.from("catalog_items").update(patch).eq("id", catalogItemId);
+      if (upErr) throw upErr;
+
+      // 2) join table: replace all genre links
+      // CHANGE THESE NAMES IF YOUR SCHEMA DIFFERS:
+      // table: catalog_item_genres
+      // columns: catalog_item_id, genre_id
+      const { error: delErr } = await supabase
+        .from("catalog_item_genres")
+        .delete()
+        .eq("catalog_item_id", catalogItemId);
+
+      if (delErr) throw delErr;
+
+      if (gids.length) {
+        const rows = gids.map((gid) => ({
+          catalog_item_id: catalogItemId,
+          genre_id: gid,
+        }));
+
+        const { error: insErr } = await supabase.from("catalog_item_genres").insert(rows);
+        if (insErr) throw insErr;
+      }
+    },
+    [ageRatingId, explicitContent, genreIds, kind]
+  );
 
   /* ---------------- bundle helpers ---------------- */
 
@@ -637,7 +671,7 @@ export default function AddItemModal({
 
         productionStatus: form.productionStatus ?? "unknown",
 
-        // ✅ NEW: Save to catalog_items
+        // ✅ NEW: (still passed through for compatibility)
         genreIds: uniqStrings(genreIds ?? []),
         ageRatingId: ageRatingId ? ageRatingId : null,
         explicitContent: kind === "music" ? !!explicitContent : null,
@@ -691,6 +725,9 @@ export default function AddItemModal({
         comicIssueNumber: form.comicIssueNumber,
         comicVariant: form.comicVariant,
       });
+
+      // ✅ ACTUAL write to correct tables (catalog_items + catalog_item_genres)
+      await persistGenresAndRating(id);
 
       // AUTO-SYNC: legacy franchiseId -> join table as PRIMARY
       if (form.franchiseId) {
@@ -901,7 +938,6 @@ export default function AddItemModal({
                       Explicit content
                     </label>
 
-                    {/* Optional: allow MUSIC CLEAN/EXPLICIT rating too if you want */}
                     {filteredRatings.length ? (
                       <div className="mt-4">
                         <div className="text-xs font-semibold text-[#0F172A]">Rating</div>
@@ -1251,7 +1287,6 @@ export default function AddItemModal({
 
           {kind === "movie" ? (
             <SectionShell title="Movie" subtitle="Search people and add them as Directors / Actors.">
-              {/* ... unchanged movie section ... */}
               <div className="space-y-4">
                 {(people as any).peopleUiErr ? (
                   <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800">
@@ -1341,7 +1376,10 @@ export default function AddItemModal({
                       ((people as any).movieDirectorIds ?? []).map((id: string) => {
                         const r = (people as any).resultsById?.get?.(id);
                         return (
-                          <div key={id} className="flex items-center justify-between rounded-xl border border-[#E5E9F2] p-3">
+                          <div
+                            key={id}
+                            className="flex items-center justify-between rounded-xl border border-[#E5E9F2] p-3"
+                          >
                             <div className="min-w-0">
                               <div className="truncate text-sm font-semibold text-[#0F172A]">{r?.name ?? id}</div>
                               <div className="text-[11px] text-[#64748B]">{id}</div>
@@ -1370,7 +1408,10 @@ export default function AddItemModal({
                       ((people as any).movieActorIds ?? []).map((id: string) => {
                         const r = (people as any).resultsById?.get?.(id);
                         return (
-                          <div key={id} className="flex items-center justify-between rounded-xl border border-[#E5E9F2] p-3">
+                          <div
+                            key={id}
+                            className="flex items-center justify-between rounded-xl border border-[#E5E9F2] p-3"
+                          >
                             <div className="min-w-0">
                               <div className="truncate text-sm font-semibold text-[#0F172A]">{r?.name ?? id}</div>
                               <div className="text-[11px] text-[#64748B]">{id}</div>
