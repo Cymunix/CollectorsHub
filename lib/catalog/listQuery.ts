@@ -15,7 +15,6 @@ export type CatalogListRow = {
   production_status: string | null;
   image_url?: string | null;
 
-  // “description fields without the text”
   publisher: string | null; // legacy text column
   upc: string | null;
 
@@ -29,16 +28,13 @@ export type CatalogListRow = {
 
   epid_ebay: string | null;
 
-  // card-only identifiers
   card_set_id?: string | null;
   card_number?: string | null;
   tcgplayer_id?: string | null;
 
-  // normalised platform/publisher ids
   platform_id?: string | null;
   game_publisher_id?: string | null;
 
-  // resolved names (we will guarantee these via fallback lookups)
   platform_name?: string | null;
   publisher_name?: string | null;
 
@@ -50,20 +46,7 @@ export type CatalogListRow = {
   } | null;
 };
 
-// Raw join shape from Supabase (arrays + optional nested join objects)
-type CatalogListRowRaw = {
-  [key: string]: any;
-
-  building_blocks?: Array<{
-    set_number: any;
-    piece_count: any;
-    retail_cad: any;
-    retail_usd: any;
-  }> | null;
-
-  game_platforms?: { name?: any } | null;
-  game_publishers?: { name?: any } | null;
-};
+type CatalogListRowRaw = { [key: string]: any };
 
 function toNumOrNull(v: any): number | null {
   if (v === null || v === undefined) return null;
@@ -86,34 +69,17 @@ function pickFirst(row: any, keys: string[]) {
   return undefined;
 }
 
-async function fetchPlatformNamesById(ids: string[]) {
-  if (!ids.length) return new Map<string, string>();
-  const { data, error } = await supabase
-    .from("game_platforms")
-    .select("id,name")
-    .in("id", ids);
-  if (error) throw error;
+type BuildingBlockRaw = {
+  [key: string]: any;
+  set_number?: any;
+  piece_count?: any;
+  retail_cad?: any;
+  retail_usd?: any;
+};
 
-  const m = new Map<string, string>();
-  for (const r of data ?? []) {
-    if (r?.id && r?.name) m.set(String(r.id), String(r.name));
-  }
-  return m;
-}
-
-async function fetchPublisherNamesById(ids: string[]) {
-  if (!ids.length) return new Map<string, string>();
-  const { data, error } = await supabase
-    .from("game_publishers")
-    .select("id,name")
-    .in("id", ids);
-  if (error) throw error;
-
-  const m = new Map<string, string>();
-  for (const r of data ?? []) {
-    if (r?.id && r?.name) m.set(String(r.id), String(r.name));
-  }
-  return m;
+function pickItemIdFromBB(row: BuildingBlockRaw): string | null {
+  const v = pickFirst(row, ["catalog_item_id", "catalog_items_id", "item_id", "catalogItemId"]);
+  return v ? String(v) : null;
 }
 
 export async function fetchCatalogListRows(params: {
@@ -128,9 +94,7 @@ export async function fetchCatalogListRows(params: {
   const ids = (params.ids ?? []).filter(Boolean);
   const limit = params.limit ?? 100;
 
-  // NOTE:
-  // We still select the nested joins, but we do NOT rely on them.
-  // The fallback batch lookups below will guarantee names when we have IDs.
+  // 1) Fetch catalog items (NO building_blocks join)
   let q = supabase.from("catalog_items").select(`
     id,
     name,
@@ -168,14 +132,7 @@ export async function fetchCatalogListRows(params: {
     Publisher_id,
 
     game_platforms:game_platforms ( name ),
-    game_publishers:game_publishers ( name ),
-
-    building_blocks:catalog_building_blocks_rows (
-      set_number,
-      piece_count,
-      retail_cad,
-      retail_usd
-    )
+    game_publishers:game_publishers ( name )
   `);
 
   if (ids.length) {
@@ -197,14 +154,10 @@ export async function fetchCatalogListRows(params: {
 
   const raw = (data ?? []) as unknown as CatalogListRowRaw[];
 
-  // First pass: normalise IDs and whatever join names we happened to get.
-  const firstPass: CatalogListRow[] = raw.map((r) => {
+  const normalised: CatalogListRow[] = raw.map((r) => {
     const row: any = r as any;
-    const bb0 = (row.building_blocks ?? [])?.[0] ?? null;
 
-    const platformId =
-      pickFirst(row, ["platform_id", "Platform_id", "game_platform_id"]) ?? null;
-
+    const platformId = pickFirst(row, ["platform_id", "Platform_id", "game_platform_id"]) ?? null;
     const publisherId =
       pickFirst(row, ["game_publisher_id", "publisher_id", "Publisher_Id", "Publisher_id"]) ?? null;
 
@@ -240,59 +193,91 @@ export async function fetchCatalogListRows(params: {
       platform_id: platformId ? String(platformId) : null,
       game_publisher_id: publisherId ? String(publisherId) : null,
 
-      // best-effort from implicit joins (unreliable)
       platform_name: row.game_platforms?.name ?? null,
       publisher_name: row.game_publishers?.name ?? null,
 
-      building_blocks: bb0
-        ? {
-            set_number: toNumOrNull(bb0.set_number),
-            piece_count: toNumOrNull(bb0.piece_count),
-            retail_cad: toNumOrNull(bb0.retail_cad),
-            retail_usd: toNumOrNull(bb0.retail_usd),
-          }
-        : null,
+      building_blocks: null,
     };
   });
 
-  // Second pass: fallback batch lookup for names where we have IDs but missing names.
-  const missingPlatformIds = Array.from(
-    new Set(
-      firstPass
-        .filter((r) => r.platform_id && !r.platform_name)
-        .map((r) => String(r.platform_id))
-    )
-  );
+  // 2) Fetch building blocks for these items and merge
+  const itemIds = normalised.map((r) => r.id);
 
-  const missingPublisherIds = Array.from(
-    new Set(
-      firstPass
-        .filter((r) => r.game_publisher_id && !r.publisher_name)
-        .map((r) => String(r.game_publisher_id))
-    )
-  );
+  if (itemIds.length) {
+    // IMPORTANT: we select possible FK column names because your schema has naming inconsistencies.
+    const { data: bbData, error: bbErr } = await supabase
+      .from("catalog_building_blocks_rows")
+      .select(`
+        catalog_item_id,
+        catalog_items_id,
+        item_id,
+        set_number,
+        piece_count,
+        retail_cad,
+        retail_usd
+      `)
+      .in("catalog_item_id", itemIds);
 
-  if (missingPlatformIds.length || missingPublisherIds.length) {
-    const [platformMap, publisherMap] = await Promise.all([
-      fetchPlatformNamesById(missingPlatformIds),
-      fetchPublisherNamesById(missingPublisherIds),
-    ]);
+    // If the FK column isn't catalog_item_id, the query above might return 0 rows.
+    // So we do a fallback attempt for other common column names.
+    let bbRows: BuildingBlockRaw[] = (bbData ?? []) as any;
 
-    for (const r of firstPass) {
-      if (r.platform_id && !r.platform_name) {
-        r.platform_name = platformMap.get(String(r.platform_id)) ?? null;
+    if (!bbErr && bbRows.length === 0) {
+      const tryCols = ["catalog_items_id", "item_id"] as const;
+
+      for (const col of tryCols) {
+        const { data: d2, error: e2 } = await supabase
+          .from("catalog_building_blocks_rows")
+          .select(`
+            catalog_item_id,
+            catalog_items_id,
+            item_id,
+            set_number,
+            piece_count,
+            retail_cad,
+            retail_usd
+          `)
+          // @ts-expect-error - dynamic column name
+          .in(col, itemIds);
+
+        if (e2) continue;
+        const rows2 = (d2 ?? []) as any[];
+        if (rows2.length) {
+          bbRows = rows2 as any;
+          break;
+        }
       }
-      if (r.game_publisher_id && !r.publisher_name) {
-        r.publisher_name = publisherMap.get(String(r.game_publisher_id)) ?? null;
-      }
+    }
+
+    // If there *was* an error on the first attempt, throw it (real failure).
+    if (bbErr) throw bbErr;
+
+    // Map first BB row per item
+    const bbByItem = new Map<string, BuildingBlockRaw>();
+    for (const r of bbRows) {
+      const itemId = pickItemIdFromBB(r);
+      if (!itemId) continue;
+      if (!bbByItem.has(itemId)) bbByItem.set(itemId, r);
+    }
+
+    for (const r of normalised) {
+      const bb = bbByItem.get(r.id);
+      if (!bb) continue;
+
+      r.building_blocks = {
+        set_number: toNumOrNull(bb.set_number),
+        piece_count: toNumOrNull(bb.piece_count),
+        retail_cad: toNumOrNull(bb.retail_cad),
+        retail_usd: toNumOrNull(bb.retail_usd),
+      };
     }
   }
 
-  // If ids provided, preserve order
+  // 3) Preserve requested order
   if (ids.length) {
-    const byId = new Map(firstPass.map((r) => [r.id, r]));
+    const byId = new Map(normalised.map((r) => [r.id, r]));
     return ids.map((id) => byId.get(id)).filter(Boolean) as CatalogListRow[];
   }
 
-  return firstPass;
+  return normalised;
 }
