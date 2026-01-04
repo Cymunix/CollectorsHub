@@ -58,7 +58,7 @@ export default function CatalogGrid({
                 {c.version || "—"}
               </div>
               <div className="text-sm text-muted-foreground">
-                {c.category_name || "—"}
+                {c.category?.name || "—"}
               </div>
             </div>
 
