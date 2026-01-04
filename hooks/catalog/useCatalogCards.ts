@@ -82,16 +82,25 @@ export function useCatalogCards({ categories, subcategories, franchises }: UseCa
     setError(null);
 
     try {
-      // 1) Base items (✅ INCLUDE image_url because some installs use catalog_items.image_url directly)
+      // 1) Base items
+      // ✅ INCLUDE image_url because some installs use catalog_items.image_url directly
       // ✅ INCLUDE is_bundle for bundle UI badges + tabs.
+      // ✅ INCLUDE production_status so list view can show status and LEGO link rules.
       const { data: baseItems, error: baseErr } = await supabase
         .from("catalog_items")
-        .select("id,name,image_url,release_year,version,upc,created_at,category_id,subcategory_id,franchise_id,is_bundle")
+        .select(
+          "id,name,image_url,release_year,version,upc,created_at,category_id,subcategory_id,franchise_id,is_bundle,production_status"
+        )
         .order("created_at", { ascending: false });
 
       if (baseErr) throw baseErr;
 
-      const rows = (baseItems ?? []) as (CatalogItemRow & { image_url?: string | null; is_bundle?: boolean | null })[];
+      const rows = (baseItems ?? []) as (CatalogItemRow & {
+        image_url?: string | null;
+        is_bundle?: boolean | null;
+        production_status?: string | null;
+      })[];
+
       const ids = rows.map((r) => r.id);
 
       // 2) Photos table (optional). If empty or table missing, we fall back to catalog_items.image_url
@@ -106,7 +115,7 @@ export function useCatalogCards({ categories, subcategories, franchises }: UseCa
           .order("sort_order", { ascending: true });
 
         if (photoErr) {
-          // Don't fail the whole catalog if photos table isn't set up yet
+          // Don't fail the whole catalogue if photos table isn't set up yet
           console.warn("catalog_item_photos select failed (will fall back to catalog_items.image_url):", photoErr.message);
         } else {
           for (const p of (photoRows ?? []) as PhotoRow[]) {
@@ -128,42 +137,65 @@ export function useCatalogCards({ categories, subcategories, franchises }: UseCa
         return (res.data ?? []) as any[];
       };
 
-      const [bbDetails, tradingDetails, sportsDetails, musicDetails, toyDetails, gameDetails, comicDetails] =
-        await Promise.all([
-          safeSelect("catalog_building_blocks", "catalog_item_id,theme_id,subtheme_id,bb_themes(name),bb_subthemes(name)"),
-          safeSelect(
-            "catalog_trading_cards",
-            "catalog_item_id,manufacturer_id,set_id,card_type_id,card_manufacturers(name),card_sets(name),card_types(name)"
-          ),
-          safeSelect(
-            "catalog_sports_cards",
-            "catalog_item_id,manufacturer_id,set_id,card_type_id,card_manufacturers(name),card_sets(name),card_types(name)"
-          ),
-          safeSelect("catalog_music", "catalog_item_id,artist_id,music_artists(name)"),
-          safeSelect(
-            "catalog_toys",
-            "catalog_item_id,manufacturer_id,brand_id,line_id,toy_manufacturers(name),toy_brands(name),toy_lines(name)"
-          ),
-          safeSelect("catalog_games", "catalog_item_id,platform_id,publisher_id,game_platforms(name)"),
-          safeSelect("catalog_comics", "catalog_item_id,publisher_id,series,issue_number,comic_publishers(name)"),
-        ]);
+      // ✅ Add LEGO rows table for piece count + retail prices
+      const [
+        bbDetails,
+        bbRowDetails,
+        tradingDetails,
+        sportsDetails,
+        musicDetails,
+        toyDetails,
+        gameDetails,
+        comicDetails,
+      ] = await Promise.all([
+        // Theme/subtheme (legacy / optional depending on your schema)
+        safeSelect("catalog_building_blocks", "catalog_item_id,theme_id,subtheme_id,bb_themes(name),bb_subthemes(name)"),
+
+        // LEGO set number / pieces / retail
+        safeSelect("catalog_building_blocks_rows", "catalog_item_id,set_number,piece_count,retail_cad,retail_usd"),
+
+        safeSelect(
+          "catalog_trading_cards",
+          "catalog_item_id,manufacturer_id,set_id,card_type_id,card_manufacturers(name),card_sets(name),card_types(name)"
+        ),
+        safeSelect(
+          "catalog_sports_cards",
+          "catalog_item_id,manufacturer_id,set_id,card_type_id,card_manufacturers(name),card_sets(name),card_types(name)"
+        ),
+        safeSelect("catalog_music", "catalog_item_id,artist_id,music_artists(name)"),
+        safeSelect(
+          "catalog_toys",
+          "catalog_item_id,manufacturer_id,brand_id,line_id,toy_manufacturers(name),toy_brands(name),toy_lines(name)"
+        ),
+        safeSelect("catalog_games", "catalog_item_id,platform_id,publisher_id,game_platforms(name)"),
+        safeSelect("catalog_comics", "catalog_item_id,publisher_id,series,issue_number,comic_publishers(name)"),
+      ]);
 
       const bbMap = new Map<string, any>();
       bbDetails.forEach((d) => bbMap.set(d.catalog_item_id, d));
+
+      const bbRowMap = new Map<string, any>();
+      bbRowDetails.forEach((d) => bbRowMap.set(d.catalog_item_id, d));
+
       const tradingMap = new Map<string, any>();
       tradingDetails.forEach((d) => tradingMap.set(d.catalog_item_id, d));
+
       const sportsMap = new Map<string, any>();
       sportsDetails.forEach((d) => sportsMap.set(d.catalog_item_id, d));
+
       const musicMap = new Map<string, any>();
       musicDetails.forEach((d) => musicMap.set(d.catalog_item_id, d));
+
       const toysMap = new Map<string, any>();
       toyDetails.forEach((d) => toysMap.set(d.catalog_item_id, d));
+
       const gamesMap = new Map<string, any>();
       gameDetails.forEach((d) => gamesMap.set(d.catalog_item_id, d));
+
       const comicsMap = new Map<string, any>();
       comicDetails.forEach((d) => comicsMap.set(d.catalog_item_id, d));
 
-      // 4) Build item cards
+      // 4) Build item cards (+ listRow payload for list view)
       const builtItems: CatalogCard[] = rows.map((r) => {
         const categoryName = catNameMap.get(r.category_id) || "";
         const kind = detectKindFromCategoryName(categoryName);
@@ -218,12 +250,35 @@ export function useCatalogCards({ categories, subcategories, franchises }: UseCa
         if (!secondary) secondary = [subName, franchiseName].filter(Boolean).join(" • ");
 
         const bb = bbMap.get(r.id);
+        const bbRow = bbRowMap.get(r.id);
+
         const toys = toysMap.get(r.id);
         const games = gamesMap.get(r.id);
         const music = musicMap.get(r.id);
         const comic = comicsMap.get(r.id);
         const trading = tradingMap.get(r.id);
         const sports = sportsMap.get(r.id);
+
+        // ✅ List-row payload (used by your dense list view)
+        // Everything generic from catalog_items, LEGO extras from catalog_building_blocks_rows
+        const listRow = {
+          id: r.id,
+          name: r.name,
+          version: r.version ?? null,
+          image_url,
+
+          category_id: r.category_id,
+          subcategory_id: r.subcategory_id,
+          franchise_id: r.franchise_id,
+
+          production_status: (r as any).production_status ?? null,
+
+          // LEGO extras (null unless kind is building_blocks and rows table exists)
+          lego_set_number: bbRow?.set_number ?? null,
+          lego_piece_count: bbRow?.piece_count ?? null,
+          lego_retail_cad: bbRow?.retail_cad ?? null,
+          lego_retail_usd: bbRow?.retail_usd ?? null,
+        };
 
         return {
           id: r.id,
@@ -243,6 +298,9 @@ export function useCatalogCards({ categories, subcategories, franchises }: UseCa
           // Bundles
           is_bundle: (r as any)?.is_bundle ?? null,
 
+          // ✅ Status (so both card + list views can show it if desired)
+          production_status: (r as any).production_status ?? null,
+
           bb_theme_id: bb?.theme_id ?? null,
           bb_subtheme_id: bb?.subtheme_id ?? null,
 
@@ -259,7 +317,10 @@ export function useCatalogCards({ categories, subcategories, franchises }: UseCa
           game_platform_id: games?.platform_id ?? null,
 
           comic_publisher_id: comic?.publisher_id ?? null,
-        };
+
+          // ✅ New: attach list view model
+          listRow,
+        } as any; // keep as any to avoid breaking if your CatalogCard type hasn't been updated yet
       });
 
       // 5) Minifigs
@@ -272,29 +333,53 @@ export function useCatalogCards({ categories, subcategories, franchises }: UseCa
         console.warn("catalog_minifigs select failed:", minifigErr.message);
       }
 
-      const builtMinifigs: CatalogCard[] = ((minifigRows ?? []) as MinifigRow[]).map((mf: any) => ({
-        id: mf.minifig_id,
-        kind: "minifig",
-        name: mf.name,
-        secondary: mf.minifig_number ? `Fig # ${mf.minifig_number}` : "Minifig",
-        image_url: mf.image_url ?? null,
+      const builtMinifigs: CatalogCard[] = ((minifigRows ?? []) as MinifigRow[]).map((mf: any) => {
+        const listRow = {
+          id: mf.minifig_id,
+          name: mf.name,
+          version: null,
+          image_url: mf.image_url ?? null,
 
-        category_id: buildingBlocksCategoryId || "",
-        subcategory_id: mf.subcategory_id,
-        franchise_id: mf.franchise_id ?? null,
+          category_id: buildingBlocksCategoryId || "",
+          subcategory_id: mf.subcategory_id,
+          franchise_id: mf.franchise_id ?? null,
 
-        release_year: null,
-        version: null,
-        created_at: mf.created_at ?? null,
+          production_status: null,
 
-        // Bundles (minifigs are never bundles)
-        is_bundle: false,
-      }));
+          lego_set_number: null,
+          lego_piece_count: null,
+          lego_retail_cad: null,
+          lego_retail_usd: null,
+        };
+
+        return {
+          id: mf.minifig_id,
+          kind: "minifig",
+          name: mf.name,
+          secondary: mf.minifig_number ? `Fig # ${mf.minifig_number}` : "Minifig",
+          image_url: mf.image_url ?? null,
+
+          category_id: buildingBlocksCategoryId || "",
+          subcategory_id: mf.subcategory_id,
+          franchise_id: mf.franchise_id ?? null,
+
+          release_year: null,
+          version: null,
+          created_at: mf.created_at ?? null,
+
+          // Bundles (minifigs are never bundles)
+          is_bundle: false,
+
+          production_status: null,
+
+          listRow,
+        } as any;
+      });
 
       setCards([...builtItems, ...builtMinifigs]);
     } catch (e: any) {
       console.error(e);
-      setError(e?.message || "Failed to load catalog items.");
+      setError(e?.message || "Failed to load catalogue items.");
     } finally {
       setLoading(false);
     }
