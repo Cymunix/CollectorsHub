@@ -27,64 +27,74 @@ export default function CatalogGrid({
   if (layoutMode === "list") {
     return (
       <div className="flex flex-col divide-y">
-        {cards.map((c) => (
-          <div
-            key={c.id}
-            className="flex items-center gap-4 px-4 py-3 hover:bg-muted/50"
-          >
-            {/* Thumbnail */}
-            <div
-              className="h-12 w-12 shrink-0 cursor-pointer"
-              onClick={() => onOpenItem(c.id)}
-            >
-              {c.image_url ? (
-                <img
-                  src={c.image_url}
-                  alt={c.name}
-                  className="h-full w-full rounded object-cover"
-                />
-              ) : (
-                <div className="h-full w-full rounded bg-muted" />
-              )}
-            </div>
+        {cards.map((c) => {
+          const anyC = c as any;
 
-            {/* Text */}
-            <div
-              className="flex flex-col flex-1 cursor-pointer"
-              onClick={() => onOpenItem(c.id)}
-            >
-              <div className="font-medium leading-tight">{c.name}</div>
-              <div className="text-sm text-muted-foreground">
-                {c.version || "—"}
-              </div>
-              <div className="text-sm text-muted-foreground">
-                {c.category?.name || "—"}
-              </div>
-            </div>
+          const categoryText =
+            anyC.category_name ??
+            anyC.categoryName ??
+            anyC.category_title ??
+            anyC.categoryLabel ??
+            anyC.category?.name ??
+            "—";
 
-            {/* Actions */}
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                className="text-sm px-2 py-1 rounded border"
-                onClick={() => onWishlist(c.id)}
+          return (
+            <div
+              key={c.id}
+              className="flex items-center gap-4 px-4 py-3 hover:bg-muted/50"
+            >
+              {/* Thumbnail */}
+              <div
+                className="h-12 w-12 shrink-0 cursor-pointer"
+                onClick={() => onOpenItem(c.id)}
               >
-                Wishlist
-              </button>
-              <button
-                className="text-sm px-2 py-1 rounded border"
-                onClick={() => onCollection(c.id)}
+                {c.image_url ? (
+                  <img
+                    src={c.image_url}
+                    alt={c.name}
+                    className="h-full w-full rounded object-cover"
+                  />
+                ) : (
+                  <div className="h-full w-full rounded bg-muted" />
+                )}
+              </div>
+
+              {/* Text */}
+              <div
+                className="flex flex-col flex-1 cursor-pointer"
+                onClick={() => onOpenItem(c.id)}
               >
-                + Collection
-              </button>
-              <button
-                className="text-sm px-2 py-1 rounded border"
-                onClick={() => onQuickAdd(c.id, "complete")}
-              >
-                Quick add
-              </button>
+                <div className="font-medium leading-tight">{c.name}</div>
+                <div className="text-sm text-muted-foreground">
+                  {c.version || "—"}
+                </div>
+                <div className="text-sm text-muted-foreground">{categoryText}</div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  className="text-sm px-2 py-1 rounded border"
+                  onClick={() => onWishlist(c.id)}
+                >
+                  Wishlist
+                </button>
+                <button
+                  className="text-sm px-2 py-1 rounded border"
+                  onClick={() => onCollection(c.id)}
+                >
+                  + Collection
+                </button>
+                <button
+                  className="text-sm px-2 py-1 rounded border"
+                  onClick={() => onQuickAdd(c.id, "complete")}
+                >
+                  Quick add
+                </button>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     );
   }
