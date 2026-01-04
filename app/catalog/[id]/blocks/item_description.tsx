@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { formatProductionStatus } from "@/lib/catalog/statusFormat";
 
@@ -11,7 +11,6 @@ type Props = {
 };
 
 type Row = {
-  id: string;
   description: string | null;
   production_status: string | null;
   genre_name: string | null;
@@ -20,7 +19,7 @@ type Row = {
 
 function Pill({ children }: { children: React.ReactNode }) {
   return (
-    <span className="inline-flex items-center rounded-full border bg-white px-2 py-0.5 text-[11px] text-slate-700">
+    <span className="inline-flex items-center rounded-full border bg-white px-2 py-0.5 text-[11px] text-slate-700 font-medium">
       {children}
     </span>
   );
@@ -28,93 +27,65 @@ function Pill({ children }: { children: React.ReactNode }) {
 
 export default function ItemDescription({ catalogItemId }: Props) {
   const [row, setRow] = useState<Row | null>(null);
-  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!catalogItemId) return;
 
-    let isMounted = true;
-
-    async function loadData() {
-      setLoading(true);
-      
-      // We use a single query but make the joins flexible. 
-      // Note: check your Supabase table names. If 'genres' or 'age_ratings' 
-      // are wrong, this query will fail.
+    async function load() {
+      // Fetch core data and joined data in one go
+      // Note: Ensure your foreign keys in Supabase match these names exactly
       const { data, error } = await supabase
         .from("catalog_items")
         .select(`
-          id,
           description,
           production_status,
           genre:genres(name),
-          age_rating:age_ratings(name, rating, label)
+          age_rating:age_ratings(name, rating)
         `)
         .eq("id", catalogItemId)
         .single();
 
-      if (!isMounted) return;
-
-      if (error) {
-        console.error("Supabase Error:", error.message);
-        // If the join fails, try one more time without joins to get the description
-        const { data: fallbackData } = await supabase
-          .from("catalog_items")
-          .select("id, description, production_status")
-          .eq("id", catalogItemId)
-          .single();
-        
-        if (fallbackData) {
-          setRow({
-            id: String(fallbackData.id),
-            description: fallbackData.description,
-            production_status: fallbackData.production_status,
-            genre_name: null,
-            age_rating_name: null,
-          });
-        }
-      } else if (data) {
-        // Extract names safely from joined objects or arrays
-        const genreData = Array.isArray(data.genre) ? data.genre[0] : data.genre;
-        const ageData = Array.isArray(data.age_rating) ? data.age_rating[0] : data.age_rating;
-
-        setRow({
-          id: String(data.id),
-          description: data.description,
-          production_status: data.production_status,
-          genre_name: genreData?.name || null,
-          age_rating_name: ageData?.rating || ageData?.name || ageData?.label || null,
-        });
+      if (error || !data) {
+        console.error("Error loading description:", error);
+        return;
       }
-      setLoading(false);
+
+      // Handle potential array vs object returns from Supabase joins
+      const genre = Array.isArray(data.genre) ? data.genre[0] : data.genre;
+      const age = Array.isArray(data.age_rating) ? data.age_rating[0] : data.age_rating;
+
+      setRow({
+        description: data.description,
+        production_status: data.production_status,
+        genre_name: genre?.name || null,
+        age_rating_name: age?.rating || age?.name || null,
+      });
     }
 
-    loadData();
-    return () => { isMounted = false; };
+    load();
   }, [catalogItemId]);
 
-  const prod = useMemo(() => formatProductionStatus(row?.production_status), [row?.production_status]);
-  const prodLabel = prod?.label && prod.label !== "—" ? prod.label : "Status unknown";
+  if (!row) return <div className="animate-pulse h-12 bg-slate-50 rounded" />;
 
-  if (loading && !row) return <div className="animate-pulse h-20 bg-slate-50 rounded-lg" />;
-  if (!row) return null;
+  const status = formatProductionStatus(row.production_status);
+  const statusLabel = status?.label && status.label !== "—" ? status.label : "Unknown";
 
   return (
-    <div className="space-y-3">
-      {/* Top row pills */}
+    <div className="flex flex-col gap-3">
+      {/* Top Row: Combined Pills */}
       <div className="flex flex-wrap gap-2">
-        <Pill>Production: {prodLabel}</Pill>
+        <Pill>Production: {statusLabel}</Pill>
         {row.genre_name && <Pill>Genre: {row.genre_name}</Pill>}
-        {row.age_rating_name && <Pill>Age rating: {row.age_rating_name}</Pill>}
+        {row.age_rating_name && <Pill>Rating: {row.age_rating_name}</Pill>}
       </div>
 
-      {/* Body */}
+      {/* Description Body */}
       {row.description ? (
-        <div className="text-sm text-slate-800 whitespace-pre-wrap leading-relaxed">
+        <div className="text-sm text-slate-600 leading-relaxed whitespace-pre-wrap">
           {row.description}
         </div>
       ) : (
-        <div className="text-sm text-slate-400 italic">No description available.</div>
+        <div className="text-sm text-slate-400 italic">No description saved yet.</div>
       )}
     </div>
   );
