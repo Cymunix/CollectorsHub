@@ -90,6 +90,48 @@ function parsePartialDate(input: string): { y: number | null; m: number | null; 
   return { y: Math.floor(y), m: mm, d: dd };
 }
 
+/* =========================
+   Production Status (UI)
+   ========================= */
+
+const PRODUCTION_STATUS_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "", label: "—" },
+  { value: "in_production", label: "In production" },
+  { value: "out_of_production", label: "Out of production" },
+  { value: "discontinued", label: "Discontinued" },
+  { value: "prototype", label: "Prototype" },
+  { value: "unknown", label: "Unknown" },
+];
+
+function normaliseProductionStatus(raw: string | null | undefined) {
+  const s = String(raw ?? "").trim();
+  if (!s) return "";
+  return s
+    .toLowerCase()
+    .replace(/[-\s]+/g, "_")
+    .replace(/_+/g, "_");
+}
+
+function formatProductionStatus(raw: string | null | undefined) {
+  const cleaned = normaliseProductionStatus(raw);
+  if (!cleaned) return "—";
+
+  const known: Record<string, string> = {
+    in_production: "In production",
+    out_of_production: "Out of production",
+    discontinued: "Discontinued",
+    prototype: "Prototype",
+    unknown: "Unknown",
+  };
+
+  if (known[cleaned]) return known[cleaned];
+
+  // Fallback: "some_status_value" -> "Some status value"
+  const words = cleaned.split("_").filter(Boolean);
+  const titled = words.map((w) => (w.length ? w[0].toUpperCase() + w.slice(1) : w)).join(" ");
+  return titled || "—";
+}
+
 function Field({
   label,
   value,
@@ -286,7 +328,10 @@ export default function ItemDescription({
     setDraftReleaseDate(
       nextItem ? formatPartialDate(nextItem.release_year, nextItem.release_month, nextItem.release_day).replace("—", "") : ""
     );
-    setDraftProductionStatus(String(row?.production_status ?? ""));
+
+    // ✅ normalise so dropdown matches even if legacy values exist
+    setDraftProductionStatus(normaliseProductionStatus(row?.production_status ?? ""));
+
     setDraftEndDate(nextItem ? formatPartialDate(nextItem.end_year, nextItem.end_month, nextItem.end_day).replace("—", "") : "");
   }
 
@@ -656,7 +701,12 @@ export default function ItemDescription({
                     onChange={setDraftCardNumber}
                   />
                 ) : (
-                  <Field label={identifierLabel} value={editing ? draftUpc : String(item?.upc ?? "")} editing={editing} onChange={setDraftUpc} />
+                  <Field
+                    label={identifierLabel}
+                    value={editing ? draftUpc : String(item?.upc ?? "")}
+                    editing={editing}
+                    onChange={setDraftUpc}
+                  />
                 )}
 
                 {/* Maker: Publisher (ID-aware) */}
@@ -711,13 +761,38 @@ export default function ItemDescription({
 
               {/* Row 2 */}
               <div className={`mt-4 grid grid-cols-1 gap-4 ${row2GridClass}`}>
+                {/* ✅ Production Status: dropdown when editing, friendly label when viewing */}
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold text-[#64748B]">Production Status</div>
+
+                  {editing ? (
+                    <select
+                      className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm text-[#0F172A]"
+                      value={draftProductionStatus ?? ""}
+                      onChange={(e) => setDraftProductionStatus(e.target.value)}
+                    >
+                      {PRODUCTION_STATUS_OPTIONS.map((opt) => (
+                        <option key={opt.value || "empty"} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div
+                      className="mt-1 text-left text-sm truncate w-full text-[#0F172A]"
+                      title={formatProductionStatus(item?.production_status)}
+                    >
+                      {formatProductionStatus(item?.production_status)}
+                    </div>
+                  )}
+                </div>
+
                 <Field
-                  label="Production Status"
-                  value={editing ? draftProductionStatus : String(item?.production_status ?? "")}
+                  label="Release Date"
+                  value={editing ? draftReleaseDate : releaseDateDisplay}
                   editing={editing}
-                  onChange={setDraftProductionStatus}
+                  onChange={setDraftReleaseDate}
                 />
-                <Field label="Release Date" value={editing ? draftReleaseDate : releaseDateDisplay} editing={editing} onChange={setDraftReleaseDate} />
                 <Field label="End Date" value={editing ? draftEndDate : endDateDisplay} editing={editing} onChange={setDraftEndDate} />
               </div>
 
