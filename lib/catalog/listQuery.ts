@@ -14,11 +14,10 @@ export type CatalogListRow = {
 
   production_status: string | null;
 
-  // If you have an image url field in catalog_items, keep it.
-  // Change this to match your schema.
+  // Change this if your field differs
   image_url?: string | null;
 
-  // LEGO join (nullable)
+  // Normalised 1:1-ish join
   building_blocks?: {
     set_number: number | null;
     piece_count: number | null;
@@ -26,6 +25,22 @@ export type CatalogListRow = {
     retail_usd: number | null;
   } | null;
 };
+
+// Raw shape Supabase returns for joined tables (arrays)
+type CatalogListRowRaw = Omit<CatalogListRow, "building_blocks"> & {
+  building_blocks?: Array<{
+    set_number: any;
+    piece_count: any;
+    retail_cad: any;
+    retail_usd: any;
+  }> | null;
+};
+
+function toNumOrNull(v: any): number | null {
+  if (v === null || v === undefined) return null;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
 
 export async function fetchCatalogListRows(params: {
   search?: string | null;
@@ -36,8 +51,9 @@ export async function fetchCatalogListRows(params: {
 }) {
   const limit = params.limit ?? 100;
 
-  // NOTE: "building_blocks" is an alias for the joined table.
-  // If your relationship name differs, adjust accordingly.
+  // NOTE:
+  // Supabase returns joined tables as arrays by default.
+  // We'll normalise building_blocks to a single object (first row) below.
   let q = supabase
     .from("catalog_items")
     .select(
@@ -64,7 +80,6 @@ export async function fetchCatalogListRows(params: {
   if (params.subcategoryId) q = q.eq("subcategory_id", params.subcategoryId);
   if (params.franchiseId) q = q.eq("franchise_id", params.franchiseId);
 
-  // Basic search (swap for your existing full-text search if you have it)
   if (params.search && params.search.trim().length) {
     q = q.ilike("name", `%${params.search.trim()}%`);
   }
@@ -72,5 +87,35 @@ export async function fetchCatalogListRows(params: {
   const { data, error } = await q;
   if (error) throw error;
 
-  return (data ?? []) as CatalogListRow[];
+  const raw = (data ?? []) as unknown as CatalogListRowRaw[];
+
+  // Normalise join arrays → single object
+  const normalised: CatalogListRow[] = raw.map((r) => {
+    const bb0 = (r.building_blocks ?? [])?.[0] ?? null;
+
+    return {
+      id: String((r as any).id),
+      name: String((r as any).name ?? ""),
+      version: (r as any).version ?? null,
+
+      category_id: (r as any).category_id ?? null,
+      subcategory_id: (r as any).subcategory_id ?? null,
+      franchise_id: (r as any).franchise_id ?? null,
+
+      production_status: (r as any).production_status ?? null,
+
+      image_url: (r as any).image_url ?? null,
+
+      building_blocks: bb0
+        ? {
+            set_number: toNumOrNull(bb0.set_number),
+            piece_count: toNumOrNull(bb0.piece_count),
+            retail_cad: toNumOrNull(bb0.retail_cad),
+            retail_usd: toNumOrNull(bb0.retail_usd),
+          }
+        : null,
+    };
+  });
+
+  return normalised;
 }
