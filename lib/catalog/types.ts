@@ -21,6 +21,21 @@ export type GamePlatform = { id: string; name: string };
 
 export type ComicPublisher = { id: string; name: string };
 
+/** ✅ NEW: Genre & Age Rating lookups */
+export type Genre = {
+  id: string;
+  name: string;
+  slug?: string | null;
+  kind?: string | null;
+};
+
+export type AgeRating = {
+  id: string;
+  name: string;
+  slug?: string | null;
+  kind?: string | null;
+};
+
 export type ItemKind =
   | "building_blocks"
   | "trading_card"
@@ -42,6 +57,10 @@ export type CatalogItemRow = {
   category_id: string;
   subcategory_id: string;
   franchise_id: string | null;
+
+  /** ✅ NEW: store FK ids on item */
+  genre_id?: string | null;
+  age_rating_id?: string | null;
 
   // Bundles
   is_bundle?: boolean;
@@ -106,6 +125,14 @@ export type CatalogCard = {
   game_platform_id?: string | null;
 
   comic_publisher_id?: string | null;
+
+  /** ✅ NEW: Genre & Age Rating (ids + optional names for joined display) */
+  genre_id?: string | null;
+  age_rating_id?: string | null;
+
+  // If your query joins genres/age_ratings, map these too:
+  genre_name?: string | null;
+  age_rating_name?: string | null;
 };
 
 export type QuickAddDefault = "collection" | "wishlist" | "both" | "ask";
