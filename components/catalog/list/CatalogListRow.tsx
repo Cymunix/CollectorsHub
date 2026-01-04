@@ -34,25 +34,67 @@ function Badge(p: { children: React.ReactNode }) {
   );
 }
 
+function display(v: any) {
+  const s = String(v ?? "").trim();
+  return s.length ? s : null;
+}
+
+function formatPartialDate(y: number | null | undefined, m: number | null | undefined, d: number | null | undefined) {
+  if (!y) return null;
+  const yy = String(y).padStart(4, "0");
+  if (!m) return yy;
+  const mm = String(m).padStart(2, "0");
+  if (!d) return `${yy}-${mm}`;
+  const dd = String(d).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
+
 export default function CatalogListRowView(p: Props) {
-  const bb = p.item.building_blocks ?? null;
+  const item = p.item;
+
+  const bb = item.building_blocks ?? null;
   const setNo = bb?.set_number ?? null;
   const pieces = bb?.piece_count ?? null;
   const retailCad = p.isLego ? moneyCAD(bb?.retail_cad ?? null) : null;
 
-  const { label: statusLabel } = formatProductionStatus(p.item.production_status);
+  // Production status (clean label)
+  const prod = useMemo(() => formatProductionStatus(item.production_status), [item.production_status]);
 
+  // Context line (Category/Subcategory)
   const categoryLine = useMemo(() => {
-    // This is the “Category” line in the spec. Keep it simple.
-    // If you want franchise/platform here instead, say so and we’ll swap it.
     if (p.categoryName && p.subcategoryName) return `${p.categoryName} • ${p.subcategoryName}`;
     if (p.categoryName) return p.categoryName;
     if (p.subcategoryName) return p.subcategoryName;
     return "";
   }, [p.categoryName, p.subcategoryName]);
 
-  // Optional if your list row has year/platform names later
-  const year = (p.item as any).release_year ?? null;
+  // Dates (start/end)
+  const startDate = useMemo(
+    () => formatPartialDate((item as any).release_year ?? null, (item as any).release_month ?? null, (item as any).release_day ?? null),
+    [item]
+  );
+  const endDate = useMemo(
+    () => formatPartialDate((item as any).end_year ?? null, (item as any).end_month ?? null, (item as any).end_day ?? null),
+    [item]
+  );
+
+  // System / Publisher (prefer normalised name fields if present)
+  const systemName = useMemo(() => display((item as any).platform_name ?? null), [item]);
+  const publisherName = useMemo(
+    () => display((item as any).publisher_name ?? (item as any).publisher ?? null),
+    [item]
+  );
+
+  // IDs
+  const upc = useMemo(() => display((item as any).upc ?? null), [item]);
+  const epid = useMemo(() => display((item as any).epid_ebay ?? null), [item]);
+  const tcg = useMemo(() => display((item as any).tcgplayer_id ?? null), [item]);
+  const cardNo = useMemo(() => display((item as any).card_number ?? null), [item]);
+
+  // Year badge (keep)
+  const year = (item as any).release_year ?? null;
+
+  const hasIds = !!(upc || epid || tcg || cardNo);
 
   return (
     <div className="rounded-2xl border bg-white p-4 shadow-sm hover:bg-slate-50">
@@ -60,56 +102,93 @@ export default function CatalogListRowView(p: Props) {
         {/* IMAGE TILE */}
         <button
           type="button"
-          onClick={() => p.onOpen?.(p.item.id)}
+          onClick={() => p.onOpen?.(item.id)}
           className="group h-28 w-28 shrink-0 overflow-hidden rounded-xl border bg-slate-100"
-          aria-label={`Open ${p.item.name}`}
+          aria-label={`Open ${item.name}`}
         >
-          {p.item.image_url ? (
+          {item.image_url ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
-              src={p.item.image_url}
+              src={item.image_url}
               alt=""
               className="h-full w-full object-cover transition-transform group-hover:scale-[1.03]"
             />
           ) : (
-            <div className="flex h-full w-full items-center justify-center text-xs text-slate-500">
-              No image
-            </div>
+            <div className="flex h-full w-full items-center justify-center text-xs text-slate-500">No image</div>
           )}
         </button>
 
-        {/* IDENTITY + BADGES */}
+        {/* IDENTITY + META */}
         <div className="min-w-0 flex-1">
           {/* STRICT HIERARCHY: Name / Edition / Category */}
           <button
             type="button"
-            onClick={() => p.onOpen?.(p.item.id)}
+            onClick={() => p.onOpen?.(item.id)}
             className="block max-w-full truncate text-left text-lg font-semibold text-slate-900 hover:underline"
-            title={p.item.name}
+            title={item.name}
           >
-            {p.item.name}
+            {item.name}
           </button>
 
           <div className="mt-0.5 max-w-full truncate text-sm text-slate-700">
-            {p.item.version ? p.item.version : <span className="text-slate-400"> </span>}
+            {item.version ? item.version : <span className="text-slate-400"> </span>}
           </div>
 
           <div className="mt-0.5 max-w-full truncate text-sm text-slate-600">
             {categoryLine ? categoryLine : <span className="text-slate-400"> </span>}
           </div>
 
-          {/* BADGES ROW (secondary info only) */}
+          {/* BADGES ROW (structured description info, no free text) */}
           <div className="mt-3 flex flex-wrap gap-2">
             {year ? <Badge>Year: {String(year)}</Badge> : null}
+
+            {/* Games / media meta */}
+            {systemName ? <Badge>System: {systemName}</Badge> : null}
+            {publisherName ? <Badge>Publisher: {publisherName}</Badge> : null}
+
+            {/* Dates */}
+            {startDate ? <Badge>Start: {startDate}</Badge> : null}
+            {endDate ? <Badge>End: {endDate}</Badge> : null}
+
+            {/* LEGO meta */}
             {p.isLego && setNo ? <Badge>Set: {String(setNo)}</Badge> : null}
             {p.isLego && pieces ? <Badge>Pieces: {pieces.toLocaleString("en-CA")}</Badge> : null}
-            {statusLabel ? <Badge>Status: {statusLabel}</Badge> : null}
+
+            {/* Production */}
+            {prod ? <Badge>Production: {prod}</Badge> : null}
           </div>
+
+          {/* ID codes line */}
+          {hasIds ? (
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600">
+              {upc ? (
+                <span>
+                  <span className="text-slate-500">UPC:</span> {upc}
+                </span>
+              ) : null}
+              {epid ? (
+                <span>
+                  <span className="text-slate-500">ePID:</span> {epid}
+                </span>
+              ) : null}
+              {cardNo ? (
+                <span>
+                  <span className="text-slate-500">Card #:</span> {cardNo}
+                </span>
+              ) : null}
+              {tcg ? (
+                <span>
+                  <span className="text-slate-500">TCG:</span> {tcg}
+                </span>
+              ) : null}
+            </div>
+          ) : (
+            <div className="mt-2 text-[11px] text-slate-400"> </div>
+          )}
         </div>
 
         {/* VALUE BOX + ACTIONS */}
         <div className="flex w-[210px] shrink-0 flex-col items-end justify-between gap-3">
-          {/* Value box (this is the bit you actually care about long term) */}
           <div className="w-full rounded-xl border bg-white p-3 text-right">
             <div className="text-[11px] uppercase tracking-wide text-slate-500">Value</div>
 
@@ -123,14 +202,11 @@ export default function CatalogListRowView(p: Props) {
             <div className="mt-2">
               <div className="text-xs text-slate-500">Avg (default)</div>
               <div className="text-base font-semibold text-slate-900">
-                {/* You told me: show avg based on default condition (e.g., complete / 7).
-                    That number is NOT in CatalogListRow yet, so placeholder until wired. */}
                 <span className="text-slate-400">—</span>
               </div>
             </div>
           </div>
 
-          {/* Actions (secondary, not dominating) */}
           <div className="flex w-full justify-end gap-2">
             {p.onToggleWishlist ? (
               <button
@@ -138,7 +214,7 @@ export default function CatalogListRowView(p: Props) {
                 className="rounded-full border px-3 py-1 text-xs font-medium text-slate-800 hover:bg-white"
                 onClick={(e) => {
                   e.stopPropagation();
-                  p.onToggleWishlist?.(p.item.id);
+                  p.onToggleWishlist?.(item.id);
                 }}
               >
                 Wishlist
@@ -151,7 +227,7 @@ export default function CatalogListRowView(p: Props) {
                 className="rounded-full border px-3 py-1 text-xs font-medium text-slate-800 hover:bg-white"
                 onClick={(e) => {
                   e.stopPropagation();
-                  p.onAddToCollection?.(p.item.id);
+                  p.onAddToCollection?.(item.id);
                 }}
               >
                 + Collection
@@ -164,7 +240,7 @@ export default function CatalogListRowView(p: Props) {
                 className="rounded-full border px-3 py-1 text-xs font-medium text-slate-800 hover:bg-white"
                 onClick={(e) => {
                   e.stopPropagation();
-                  p.onEdit?.(p.item.id);
+                  p.onEdit?.(item.id);
                 }}
               >
                 Edit
