@@ -110,11 +110,23 @@ function formatMoneyCAD(n: number) {
 }
 
 function categoryLabel(item: CatalogCard) {
-  // If you later add category_name, use it here.
-  // For now, you were showing kind (gaming/building blocks) — keep that behaviour.
+  // You were showing kind — keep that behaviour.
   const k = String(item.kind ?? "").toLowerCase();
   if (k === "minifig") return "MINIFIG";
   return k.replace(/_/g, " ").toUpperCase();
+}
+
+function shouldShowMediaMeta(item: CatalogCard) {
+  // user asked: Movies, Musics, Games
+  // your kind is "movie" | "music" | "gaming"
+  return item.kind === "movie" || item.kind === "music" || item.kind === "gaming";
+}
+
+function buildMediaMetaLine(item: CatalogCard) {
+  const bits: string[] = [];
+  if (item.genre_name) bits.push(item.genre_name);
+  if (item.age_rating_name) bits.push(item.age_rating_name);
+  return bits.length ? bits.join(" • ") : null;
 }
 
 export default function CatalogCardTile({
@@ -144,6 +156,9 @@ export default function CatalogCardTile({
     typeof item.release_year === "number" && Number.isFinite(item.release_year) ? String(item.release_year) : "";
 
   const pricePill = defaultPrice !== null ? `Avg ${formatMoneyCAD(defaultPrice)}` : "No price";
+
+  const showMediaMeta = useMemo(() => shouldShowMediaMeta(item), [item]);
+  const mediaMetaLine = useMemo(() => (showMediaMeta ? buildMediaMetaLine(item) : null), [item, showMediaMeta]);
 
   // ===== LIST / RECTANGLE LAYOUT =====
   if (layout === "list") {
@@ -184,6 +199,13 @@ export default function CatalogCardTile({
                 {/* Category */}
                 <div className="mt-1 text-[10px] font-semibold text-slate-500">{category}</div>
 
+                {/* ✅ Genre + Age Rating (movies/music/games only) */}
+                {showMediaMeta ? (
+                  <div className="mt-1 text-[11px] text-slate-600 line-clamp-2">
+                    {mediaMetaLine || <span className="text-[#CBD5E1]">—</span>}
+                  </div>
+                ) : null}
+
                 {/* Year */}
                 <div className="mt-3 flex items-center gap-3 text-[11px] text-[#94A3B8]">
                   {year ? <span>{year}</span> : <span className="text-[#CBD5E1]">—</span>}
@@ -197,7 +219,7 @@ export default function CatalogCardTile({
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    onAddWishlist(item.id);
+                    void onAddWishlist(item.id);
                   }}
                 >
                   ♡
@@ -209,7 +231,7 @@ export default function CatalogCardTile({
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      onAddCollection(item.id);
+                      void onAddCollection(item.id);
                     }}
                   >
                     ＋
@@ -221,7 +243,7 @@ export default function CatalogCardTile({
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    onQuickAdd(item.id, quickAddDefault);
+                    void onQuickAdd(item.id, quickAddDefault);
                   }}
                 >
                   {quickIcon(quickAddDefault)}
@@ -256,7 +278,7 @@ export default function CatalogCardTile({
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              onAddWishlist(item.id);
+              void onAddWishlist(item.id);
             }}
           >
             ♡
@@ -268,7 +290,7 @@ export default function CatalogCardTile({
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                onAddCollection(item.id);
+                void onAddCollection(item.id);
               }}
             >
               ＋
@@ -280,7 +302,7 @@ export default function CatalogCardTile({
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              onQuickAdd(item.id, quickAddDefault);
+              void onQuickAdd(item.id, quickAddDefault);
             }}
           >
             {quickIcon(quickAddDefault)}
@@ -304,6 +326,13 @@ export default function CatalogCardTile({
 
         {/* Category */}
         <p className="mt-1 text-[10px] font-semibold text-slate-500">{category}</p>
+
+        {/* ✅ Genre + Age Rating (movies/music/games only) */}
+        {showMediaMeta ? (
+          <p className="mt-1 text-[11px] text-slate-600 line-clamp-2">
+            {mediaMetaLine || <span className="text-gray-300">—</span>}
+          </p>
+        ) : null}
 
         {/* Year */}
         <div className="mt-2">
