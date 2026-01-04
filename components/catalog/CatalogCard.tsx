@@ -40,76 +40,86 @@ function quickLabel(pref: QuickAddDefault) {
   return "Quick add";
 }
 
-/**
- * Make results scannable even with limited fields.
- * - primary: short, non-repeated title
- * - variant: the differentiator (edition/bundle/etc.)
- */
-function computeDisplay(item: CatalogCard): { primary: string; variant: string | null } {
-  const rawName = String(item.name ?? "").trim();
-  const rawSecondary = String(item.secondary ?? "").trim();
-
-  const secondary = rawSecondary && rawSecondary !== "—" ? rawSecondary : "";
-
-  const hasColon = rawName.includes(":");
-  const hasDash = rawName.includes(" - ") || rawName.includes(" — ") || rawName.includes(" – ");
-
-  let primary = rawName;
-  let extractedVariant: string | null = null;
-
-  if (hasColon) {
-    const parts = rawName.split(":");
-    const rhs = parts.slice(1).join(":").trim();
-    if (rhs.length) primary = rhs;
-  } else if (hasDash) {
-    const parts = rawName.split(/ — | – | - /);
-    const left = parts[0]?.trim();
-    const right = parts.slice(1).join(" - ").trim();
-    if (left) primary = left;
-    if (right) extractedVariant = right || null;
-  }
-
-  const normalise = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
-  const nPrimary = normalise(primary);
-  const nSecondary = normalise(secondary);
-
-  const secondaryRepeatsPrimary =
-    !!secondary && (nSecondary === nPrimary || nSecondary.includes(nPrimary) || nPrimary.includes(nSecondary));
-
-  let variant: string | null = null;
-
-  if (secondary && !secondaryRepeatsPrimary) {
-    variant = secondary;
-  } else if (extractedVariant) {
-    variant = extractedVariant;
-  } else {
-    variant = null;
-  }
-
-  if (variant && variant.length > 80) variant = variant.slice(0, 77) + "…";
-  if (primary.length > 80) primary = primary.slice(0, 77) + "…";
-
-  return { primary, variant };
+function normalise(s: string) {
+  return String(s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-function kindBadge(kind: CatalogCard["kind"]): { label: string; tone: string } {
+function computeVariant(item: CatalogCard): string | null {
+  const rawName = String(item.name ?? "").trim();
+  const rawSecondary = String(item.secondary ?? "").trim();
+  const secondary = rawSecondary && rawSecondary !== "—" ? rawSecondary : "";
+
+  // If secondary repeats the name, ignore it
+  if (secondary && (normalise(secondary) === normalise(rawName) || normalise(secondary).includes(normalise(rawName)))) {
+    return null;
+  }
+
+  // Prefer an explicit version if present
+  const v = String((item as any).version ?? "").trim();
+  if (v) return v;
+
+  if (secondary) return secondary;
+
+  // Fallback: try to extract after dash
+  const hasDash = rawName.includes(" - ") || rawName.includes(" — ") || rawName.includes(" – ");
+  if (hasDash) {
+    const parts = rawName.split(/ — | – | - /);
+    const right = parts.slice(1).join(" - ").trim();
+    if (right) return right;
+  }
+
+  return null;
+}
+
+function safeNumber(v: any): number | null {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Tier-7 "complete unsealed" pricing.
+ * Supports:
+ * - price_tier10_7_cad (flat)
+ * - price_tier10_cad or pricing_tier10 maps
+ * - fallback price_cad / market_price_cad / estimated_price_cad / latest_sale_price_cad
+ */
+function getTier7PriceCad(item: CatalogCard): number | null {
+  const anyIt = item as any;
+  const tier10 = 7;
+
+  const flat = safeNumber(anyIt[`price_tier10_${tier10}_cad`]);
+  if (flat !== null) return flat;
+
+  const m1 = anyIt.price_tier10_cad;
+  if (m1 && typeof m1 === "object") {
+    const v = safeNumber(m1[tier10] ?? m1[String(tier10)]);
+    if (v !== null) return v;
+  }
+
+  const m2 = anyIt.pricing_tier10;
+  if (m2 && typeof m2 === "object") {
+    const v = safeNumber(m2[tier10] ?? m2[String(tier10)]);
+    if (v !== null) return v;
+  }
+
+  const p =
+    safeNumber(anyIt.price_cad) ??
+    safeNumber(anyIt.market_price_cad) ??
+    safeNumber(anyIt.estimated_price_cad) ??
+    safeNumber(anyIt.latest_sale_price_cad);
+
+  return p ?? null;
+}
+
+function formatMoneyCAD(n: number | null) {
+  if (n === null) return "—";
+  return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD" }).format(n);
+}
+
+function kindBadge(kind: CatalogCard["kind"]) {
   const k = String(kind ?? "").toLowerCase();
-
-  if (k === "minifig") return { label: "MINIFIG", tone: "bg-white/90 text-slate-800 border-white/40" };
-
-  if (k.includes("game")) return { label: "GAME", tone: "bg-white/90 text-slate-800 border-white/40" };
-  if (k.includes("dlc") || k.includes("expansion") || k.includes("map")) {
-    return { label: "DLC", tone: "bg-white/90 text-slate-800 border-white/40" };
-  }
-  if (k.includes("bundle") || k.includes("package") || k.includes("set")) {
-    return { label: "BUNDLE", tone: "bg-white/90 text-slate-800 border-white/40" };
-  }
-  if (k.includes("accessory") || k.includes("controller") || k.includes("headset")) {
-    return { label: "ACCESSORY", tone: "bg-white/90 text-slate-800 border-white/40" };
-  }
-
-  const label = k.replace(/_/g, " ").toUpperCase();
-  return { label, tone: "bg-white/90 text-slate-800 border-white/40" };
+  if (k === "minifig") return "MINIFIG";
+  return k.replace(/_/g, " ").toUpperCase();
 }
 
 export default function CatalogCardTile({
@@ -131,8 +141,9 @@ export default function CatalogCardTile({
 }) {
   const showExplicitCollection = quickAddDefault !== "collection";
 
-  const display = useMemo(() => computeDisplay(item), [item]);
-  const badge = useMemo(() => kindBadge(item.kind), [item.kind]);
+  const badgeText = useMemo(() => kindBadge(item.kind), [item.kind]);
+  const variant = useMemo(() => computeVariant(item), [item]);
+  const tier7 = useMemo(() => getTier7PriceCad(item), [item]);
 
   const year =
     typeof item.release_year === "number" && Number.isFinite(item.release_year) ? String(item.release_year) : "";
@@ -150,23 +161,14 @@ export default function CatalogCardTile({
           <div className="relative h-28 w-28 rounded-xl bg-gray-100 overflow-hidden shrink-0 border flex items-center justify-center">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             {item.image_url ? (
-              <img
-                src={item.image_url}
-                alt={item.name}
-                className="h-full w-full object-contain p-2 bg-white"
-              />
+              <img src={item.image_url} alt={item.name} className="h-full w-full object-contain p-2 bg-white" />
             ) : (
               <div className="text-[11px] text-gray-400">No image</div>
             )}
 
-            {/* Soft gradient for legibility (kept subtle) */}
-            <div className="absolute inset-0 bg-gradient-to-t from-black/15 via-black/0 to-black/0 pointer-events-none" />
-
-            {/* Kind badge (only place we show kind) */}
-            <div
-              className={`absolute left-2 top-2 text-[10px] font-semibold px-2 py-1 rounded-full border ${badge.tone}`}
-            >
-              {badge.label}
+            {/* Badge: constrain width so it NEVER overlaps buttons (even if you add buttons later) */}
+            <div className="absolute left-2 top-2 max-w-[78px] rounded-full border border-white/40 bg-white/90 px-2 py-1">
+              <div className="text-[10px] font-semibold text-slate-800 truncate">{badgeText}</div>
             </div>
           </div>
 
@@ -174,15 +176,18 @@ export default function CatalogCardTile({
           <div className="min-w-0">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
-                <div className="text-sm font-semibold text-[#0F172A] truncate">{display.primary}</div>
+                {/* PRICE (top line) */}
+                <div className="text-sm font-semibold text-slate-900 truncate">
+                  {tier7 !== null ? `${formatMoneyCAD(tier7)} avg (tier 7)` : "— avg (tier 7)"}
+                </div>
 
-                {display.variant ? (
-                  <div className="mt-1 text-[11px] text-[#475569] line-clamp-2">{display.variant}</div>
-                ) : (
-                  <div className="mt-1 text-[11px] text-[#94A3B8]">—</div>
-                )}
+                {/* VERSION / VARIANT (second line) */}
+                <div className="mt-1 text-[11px] text-slate-600 line-clamp-2">{variant || "—"}</div>
 
-                {/* Meta row: year only (kind is already in badge) */}
+                {/* CATALOG NAME (third line) */}
+                <div className="mt-2 text-xs font-semibold text-[#0F172A] line-clamp-2">{item.name}</div>
+
+                {/* Meta row */}
                 <div className="mt-3 flex items-center gap-3 text-[11px] text-[#94A3B8]">
                   {year ? <span>{year}</span> : <span className="text-[#CBD5E1]">—</span>}
                 </div>
@@ -242,24 +247,12 @@ export default function CatalogCardTile({
       <div className="relative aspect-square bg-gray-100 overflow-hidden">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         {item.image_url ? (
-          <img
-            src={item.image_url}
-            alt={item.name}
-            className="h-full w-full object-contain p-3 bg-white"
-          />
+          <img src={item.image_url} alt={item.name} className="h-full w-full object-contain p-3 bg-white" />
         ) : (
           <div className="h-full w-full flex items-center justify-center text-[11px] text-gray-400">No image</div>
         )}
 
-        {/* Very light overlay so badges/buttons read cleanly */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/10 via-black/0 to-black/0 pointer-events-none" />
-
-        {/* Kind badge (only place we show kind) */}
-        <div className={`absolute left-2 top-2 text-[10px] font-semibold px-2 py-1 rounded-full border ${badge.tone}`}>
-          {badge.label}
-        </div>
-
-        {/* Quick actions */}
+        {/* Controls */}
         <div className="absolute top-2 right-2 flex items-center gap-1.5">
           <IconButton
             title="Add to wishlist"
@@ -296,20 +289,28 @@ export default function CatalogCardTile({
             {quickIcon(quickAddDefault)}
           </IconButton>
         </div>
+
+        {/* Badge: reserve space so it can't run under the buttons */}
+        <div className="absolute left-2 top-2 pr-[110px]">
+          <div className="max-w-full rounded-full border border-white/40 bg-white/90 px-2 py-1">
+            <div className="text-[10px] font-semibold text-slate-800 truncate">{badgeText}</div>
+          </div>
+        </div>
       </div>
 
       <div className="p-3">
-        {/* Primary title (scan-first) */}
-        <p className="text-xs font-semibold text-slate-900 truncate">{display.primary}</p>
+        {/* PRICE (top line) */}
+        <p className="text-xs font-semibold text-slate-900 truncate">
+          {tier7 !== null ? `${formatMoneyCAD(tier7)} avg (tier 7)` : "— avg (tier 7)"}
+        </p>
 
-        {/* Variant / differentiator (scan-second) */}
-        {display.variant ? (
-          <p className="mt-1 text-[11px] text-slate-600 line-clamp-2">{display.variant}</p>
-        ) : (
-          <p className="mt-1 text-[11px] text-slate-400">—</p>
-        )}
+        {/* VERSION / VARIANT (second line) */}
+        <p className="mt-1 text-[11px] text-slate-600 line-clamp-2">{variant || "—"}</p>
 
-        {/* Meta: year only (kind already in badge) */}
+        {/* CATALOG NAME (third line) */}
+        <p className="mt-2 text-xs font-semibold text-slate-900 line-clamp-2">{item.name}</p>
+
+        {/* Year */}
         <div className="mt-2">
           <span className="text-[10px] text-gray-400">{year}</span>
         </div>
