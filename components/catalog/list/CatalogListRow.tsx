@@ -57,10 +57,9 @@ export default function CatalogListRowView(p: Props) {
   const pieces = bb?.piece_count ?? null;
   const retailCad = p.isLego ? moneyCAD(bb?.retail_cad ?? null) : null;
 
-  // Production status (clean label)
-  const prod = useMemo(() => formatProductionStatus(item.production_status), [item.production_status]);
+  // ✅ IMPORTANT: formatProductionStatus returns an object
+  const { label: prodLabel } = formatProductionStatus(item.production_status);
 
-  // Context line (Category/Subcategory)
   const categoryLine = useMemo(() => {
     if (p.categoryName && p.subcategoryName) return `${p.categoryName} • ${p.subcategoryName}`;
     if (p.categoryName) return p.categoryName;
@@ -68,31 +67,30 @@ export default function CatalogListRowView(p: Props) {
     return "";
   }, [p.categoryName, p.subcategoryName]);
 
-  // Dates (start/end)
+  const year = item.release_year ?? null;
+
   const startDate = useMemo(
-    () => formatPartialDate((item as any).release_year ?? null, (item as any).release_month ?? null, (item as any).release_day ?? null),
-    [item]
-  );
-  const endDate = useMemo(
-    () => formatPartialDate((item as any).end_year ?? null, (item as any).end_month ?? null, (item as any).end_day ?? null),
-    [item]
+    () => formatPartialDate(item.release_year, item.release_month, item.release_day),
+    [item.release_year, item.release_month, item.release_day]
   );
 
-  // System / Publisher (prefer normalised name fields if present)
-  const systemName = useMemo(() => display((item as any).platform_name ?? null), [item]);
+  const endDate = useMemo(
+    () => formatPartialDate(item.end_year, item.end_month, item.end_day),
+    [item.end_year, item.end_month, item.end_day]
+  );
+
+  // Names best-effort
+  const systemName = useMemo(() => display(item.platform_name ?? null), [item.platform_name]);
   const publisherName = useMemo(
-    () => display((item as any).publisher_name ?? (item as any).publisher ?? null),
-    [item]
+    () => display(item.publisher_name ?? item.publisher ?? null),
+    [item.publisher_name, item.publisher]
   );
 
   // IDs
-  const upc = useMemo(() => display((item as any).upc ?? null), [item]);
-  const epid = useMemo(() => display((item as any).epid_ebay ?? null), [item]);
-  const tcg = useMemo(() => display((item as any).tcgplayer_id ?? null), [item]);
-  const cardNo = useMemo(() => display((item as any).card_number ?? null), [item]);
-
-  // Year badge (keep)
-  const year = (item as any).release_year ?? null;
+  const upc = useMemo(() => display(item.upc ?? null), [item.upc]);
+  const epid = useMemo(() => display(item.epid_ebay ?? null), [item.epid_ebay]);
+  const tcg = useMemo(() => display(item.tcgplayer_id ?? null), [item.tcgplayer_id]);
+  const cardNo = useMemo(() => display(item.card_number ?? null), [item.card_number]);
 
   const hasIds = !!(upc || epid || tcg || cardNo);
 
@@ -114,13 +112,14 @@ export default function CatalogListRowView(p: Props) {
               className="h-full w-full object-cover transition-transform group-hover:scale-[1.03]"
             />
           ) : (
-            <div className="flex h-full w-full items-center justify-center text-xs text-slate-500">No image</div>
+            <div className="flex h-full w-full items-center justify-center text-xs text-slate-500">
+              No image
+            </div>
           )}
         </button>
 
         {/* IDENTITY + META */}
         <div className="min-w-0 flex-1">
-          {/* STRICT HIERARCHY: Name / Edition / Category */}
           <button
             type="button"
             onClick={() => p.onOpen?.(item.id)}
@@ -138,24 +137,20 @@ export default function CatalogListRowView(p: Props) {
             {categoryLine ? categoryLine : <span className="text-slate-400"> </span>}
           </div>
 
-          {/* BADGES ROW (structured description info, no free text) */}
+          {/* BADGES */}
           <div className="mt-3 flex flex-wrap gap-2">
             {year ? <Badge>Year: {String(year)}</Badge> : null}
 
-            {/* Games / media meta */}
             {systemName ? <Badge>System: {systemName}</Badge> : null}
             {publisherName ? <Badge>Publisher: {publisherName}</Badge> : null}
 
-            {/* Dates */}
             {startDate ? <Badge>Start: {startDate}</Badge> : null}
             {endDate ? <Badge>End: {endDate}</Badge> : null}
 
-            {/* LEGO meta */}
             {p.isLego && setNo ? <Badge>Set: {String(setNo)}</Badge> : null}
             {p.isLego && pieces ? <Badge>Pieces: {pieces.toLocaleString("en-CA")}</Badge> : null}
 
-            {/* Production */}
-            {prod ? <Badge>Production: {prod}</Badge> : null}
+            {prodLabel && prodLabel !== "—" ? <Badge>Production: {prodLabel}</Badge> : null}
           </div>
 
           {/* ID codes line */}
