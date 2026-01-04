@@ -18,7 +18,6 @@ import { detectKindFromCategoryName } from "@/lib/catalog/utils";
 import CatalogFilters from "@/components/catalog/CatalogFilters";
 import CatalogGrid from "@/components/catalog/CatalogGrid";
 
-// ✅ Right context panel
 import RightContextPanel from "@/components/catalog/right/RightContextPanel";
 
 function isDuplicateError(msg: string) {
@@ -27,16 +26,19 @@ function isDuplicateError(msg: string) {
 }
 
 function buildDefaultConditionJson(tier10: number) {
-  // This matches your ItemConditionSelector non-LEGO JSON shape
   return {
     v: 1,
     item_type: "generic",
     mode: "tier10",
-    data: {
-      tier10,
-      for_parts: false,
-    },
+    data: { tier10, for_parts: false },
   };
+}
+
+function norm(s: string) {
+  return String(s ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
 }
 
 export default function CatalogScreen() {
@@ -46,14 +48,7 @@ export default function CatalogScreen() {
   // - { user, loading }
   // - { profile, loading }
   // - { userProfile, loading }
-  // Some hooks name the profile row "user" which is confusing but common.
-  const profileOrUser =
-    up?.profile ??
-    up?.userProfile ??
-    up?.user_profile ??
-    up?.user ??
-    null;
-
+  const profileOrUser = up?.profile ?? up?.userProfile ?? up?.user_profile ?? up?.user ?? null;
   const profileLoading = Boolean(up?.loading ?? up?.isLoading ?? up?.profileLoading ?? false);
 
   const roleRaw = String(profileOrUser?.role ?? profileOrUser?.roleRaw ?? "").trim();
@@ -65,7 +60,7 @@ export default function CatalogScreen() {
   const router = useRouter();
   const sp = useSearchParams();
 
-  // ✅ Support BOTH "search" (your current header behavior) AND "q" (common pattern)
+  // ✅ Support BOTH "search" AND "q"
   const urlSearch = (sp.get("search") || sp.get("q") || "").trim();
 
   // ✅ URL-driven context filters coming from item page clicks
@@ -73,11 +68,7 @@ export default function CatalogScreen() {
   const urlSet = (sp.get("set") || "").trim();
 
   const [modalOpen, setModalOpen] = useState(false);
-
-  // Auth modal for quick add
   const [authOpen, setAuthOpen] = useState(false);
-
-  // Toast / banner
   const [banner, setBanner] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
 
   // Meta + cards
@@ -88,7 +79,6 @@ export default function CatalogScreen() {
     franchises: meta.franchises,
   });
 
-  // ✅ Your upgraded preference hook
   const quickPref = useQuickAddPreference();
 
   // -------------------- Filters --------------------
@@ -171,14 +161,39 @@ export default function CatalogScreen() {
 
   // -------------------- URL Context -> Local Filter State --------------------
   useEffect(() => {
-    if (urlFranchise) {
-      setFranchiseId(urlFranchise);
-    }
-
-    if (urlSet) {
-      setCardSetId(urlSet);
-    }
+    if (urlFranchise) setFranchiseId(urlFranchise);
+    if (urlSet) setCardSetId(urlSet);
   }, [urlFranchise, urlSet]);
+
+  // -------------------- Header search intent -> focus --------------------
+  // If header search exactly matches a franchise name, automatically focus that franchise.
+  // This "overrides" the left filters so user doesn't have to clear manually.
+  useEffect(() => {
+    const q = norm(urlSearch);
+    if (!q) return;
+    if (!meta.franchises || meta.franchises.length === 0) return;
+
+    // exact match first
+    const exact = meta.franchises.find((f) => norm(f.name) === q) ?? null;
+
+    // optional prefix match (only when query is >=4 chars to avoid noise)
+    const prefix =
+      q.length >= 4 ? meta.franchises.find((f) => norm(f.name).startsWith(q)) ?? null : null;
+
+    const hit = exact ?? prefix;
+    if (!hit) return;
+
+    if (franchiseId === hit.id) return;
+
+    // ✅ set focus
+    setFranchiseId(hit.id);
+
+    // ✅ override the left-side selection that blocks results + sidebar
+    setCategoryId("");
+    setSubcategoryId("");
+
+    // Optional: do NOT clear years, etc. Those can remain as user intent filters.
+  }, [urlSearch, meta.franchises, franchiseId]);
 
   // -------------------- URL helpers --------------------
   const removeUrlKeys = (keys: string[]) => {
@@ -308,8 +323,10 @@ export default function CatalogScreen() {
         if (comicPublisherId && it.comic_publisher_id !== comicPublisherId) return false;
       }
 
+      // Apply cardSetId globally if it exists
       if (cardSetId && (it as any).card_set_id !== cardSetId) return false;
 
+      // Card-only extras still apply when in card kinds
       if (selectedKind === "trading_card" || selectedKind === "sports_card") {
         if (cardManufacturerId && it.card_manufacturer_id !== cardManufacturerId) return false;
         if (cardTypeId && it.card_type_id !== cardTypeId) return false;
@@ -473,7 +490,8 @@ export default function CatalogScreen() {
     const qty = Number((quickPref as any)?.defaultQuantity);
     const safeQty = Number.isFinite(qty) ? Math.max(1, Math.min(999, Math.round(qty))) : 1;
 
-    const visibility = String((quickPref as any)?.defaultCollectionVisibility ?? "private") === "public" ? "public" : "private";
+    const visibility =
+      String((quickPref as any)?.defaultCollectionVisibility ?? "private") === "public" ? "public" : "private";
 
     const condition_json = buildDefaultConditionJson(safeTier10);
 
@@ -549,6 +567,13 @@ export default function CatalogScreen() {
         <div>
           <h1 className="text-xl font-semibold">Catalog</h1>
           <p className="text-xs text-gray-500">Browse items across all categories. Use the left filters to narrow results.</p>
+
+          {/* Optional: show auto-focus hint */}
+          {urlSearch && selectedFranchise ? (
+            <p className="mt-1 text-[11px] text-gray-500">
+              Search matched franchise: <span className="font-semibold text-gray-700">{selectedFranchise.name}</span>
+            </p>
+          ) : null}
         </div>
 
         <div className="flex items-center gap-2">
@@ -617,9 +642,7 @@ export default function CatalogScreen() {
       {banner ? (
         <div
           className={`mb-4 rounded-2xl border p-4 text-sm ${
-            banner.type === "ok"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-              : "border-red-200 bg-red-50 text-red-700"
+            banner.type === "ok" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-700"
           }`}
         >
           {banner.msg}
@@ -627,6 +650,7 @@ export default function CatalogScreen() {
       ) : null}
 
       <div className="grid grid-cols-12 gap-6">
+        {/* LEFT FILTERS */}
         <aside className="col-span-12 md:col-span-3 md:sticky md:top-28 self-start">
           <CatalogFilters
             metaLoading={meta.loading}
@@ -636,6 +660,7 @@ export default function CatalogScreen() {
             filteredSubcategories={filteredSubcategories}
             franchises={meta.franchises}
             selectedKind={selectedKind}
+            // base values
             categoryId={categoryId}
             setCategoryId={setCategoryId}
             subcategoryId={subcategoryId}
@@ -646,6 +671,7 @@ export default function CatalogScreen() {
             setMinYear={setMinYear}
             maxYear={maxYear}
             setMaxYear={setMaxYear}
+            // building blocks
             showMinifigs={showMinifigs}
             setShowMinifigs={setShowMinifigs}
             bbThemeId={bbThemeId}
@@ -654,6 +680,7 @@ export default function CatalogScreen() {
             setBbSubthemeId={setBbSubthemeId}
             bbThemeOptions={bbThemeOptions}
             bbSubthemeOptions={bbSubthemeOptions}
+            // toys
             toyManufacturers={meta.toyManufacturers}
             toyBrands={meta.toyBrands}
             toyLines={meta.toyLines}
@@ -665,15 +692,19 @@ export default function CatalogScreen() {
             setToyLineId={setToyLineId}
             toyBrandOptions={toyBrandOptions}
             toyLineOptions={toyLineOptions}
+            // gaming
             gamePlatforms={meta.gamePlatforms}
             gamePlatformId={gamePlatformId}
             setGamePlatformId={setGamePlatformId}
+            // music
             musicArtists={meta.musicArtists}
             musicArtistId={musicArtistId}
             setMusicArtistId={setMusicArtistId}
+            // comics
             comicPublishers={meta.comicPublishers}
             comicPublisherId={comicPublisherId}
             setComicPublisherId={setComicPublisherId}
+            // cards
             cardManufacturers={meta.cardManufacturers}
             cardSets={meta.cardSets}
             cardTypes={meta.cardTypes}
@@ -684,10 +715,15 @@ export default function CatalogScreen() {
             cardTypeId={cardTypeId}
             setCardTypeId={setCardTypeId}
             cardSetOptions={cardSetOptions}
-            clearFilters={clearFilters}
+            // clear
+            clearFilters={() => {
+              clearFilters();
+              clearSearch();
+            }}
           />
         </aside>
 
+        {/* MAIN */}
         <section className="col-span-12 md:col-span-6">
           <CatalogGrid
             loading={cardsState.loading}
@@ -698,9 +734,11 @@ export default function CatalogScreen() {
             rangeEnd={rangeEnd}
             pagedCards={pagedCards}
             onOpenItem={openItem}
+            // pagination
             page={safePage}
             totalPages={totalPages}
             setPage={setPage}
+            // quick add
             quickAddDefault={quickPref.value}
             onAddWishlist={addToWishlist}
             onAddCollection={addToCollection}
@@ -708,6 +746,7 @@ export default function CatalogScreen() {
           />
         </section>
 
+        {/* RIGHT CONTEXT */}
         <aside className="col-span-12 md:col-span-3 md:sticky md:top-28 self-start">
           <RightContextPanel
             franchiseId={franchiseId}
