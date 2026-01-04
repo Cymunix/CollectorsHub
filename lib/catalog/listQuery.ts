@@ -14,7 +14,6 @@ export type CatalogListRow = {
 
   production_status: string | null;
 
-  // Change this if your field differs
   image_url?: string | null;
 
   // Normalised 1:1-ish join
@@ -26,7 +25,7 @@ export type CatalogListRow = {
   } | null;
 };
 
-// Raw shape Supabase returns for joined tables (arrays)
+// Raw join shape from Supabase (arrays)
 type CatalogListRowRaw = Omit<CatalogListRow, "building_blocks"> & {
   building_blocks?: Array<{
     set_number: any;
@@ -43,17 +42,18 @@ function toNumOrNull(v: any): number | null {
 }
 
 export async function fetchCatalogListRows(params: {
+  // ✅ NEW: fetch by specific ids (used by CatalogGrid list toggle)
+  ids?: string[] | null;
+
   search?: string | null;
   categoryId?: string | null;
   subcategoryId?: string | null;
   franchiseId?: string | null;
   limit?: number;
 }) {
+  const ids = (params.ids ?? []).filter(Boolean);
   const limit = params.limit ?? 100;
 
-  // NOTE:
-  // Supabase returns joined tables as arrays by default.
-  // We'll normalise building_blocks to a single object (first row) below.
   let q = supabase
     .from("catalog_items")
     .select(
@@ -73,15 +73,20 @@ export async function fetchCatalogListRows(params: {
           retail_usd
         )
       `
-    )
-    .limit(limit);
+    );
 
-  if (params.categoryId) q = q.eq("category_id", params.categoryId);
-  if (params.subcategoryId) q = q.eq("subcategory_id", params.subcategoryId);
-  if (params.franchiseId) q = q.eq("franchise_id", params.franchiseId);
+  if (ids.length) {
+    q = q.in("id", ids);
+  } else {
+    q = q.limit(limit);
 
-  if (params.search && params.search.trim().length) {
-    q = q.ilike("name", `%${params.search.trim()}%`);
+    if (params.categoryId) q = q.eq("category_id", params.categoryId);
+    if (params.subcategoryId) q = q.eq("subcategory_id", params.subcategoryId);
+    if (params.franchiseId) q = q.eq("franchise_id", params.franchiseId);
+
+    if (params.search && params.search.trim().length) {
+      q = q.ilike("name", `%${params.search.trim()}%`);
+    }
   }
 
   const { data, error } = await q;
@@ -89,7 +94,6 @@ export async function fetchCatalogListRows(params: {
 
   const raw = (data ?? []) as unknown as CatalogListRowRaw[];
 
-  // Normalise join arrays → single object
   const normalised: CatalogListRow[] = raw.map((r) => {
     const bb0 = (r.building_blocks ?? [])?.[0] ?? null;
 
@@ -116,6 +120,12 @@ export async function fetchCatalogListRows(params: {
         : null,
     };
   });
+
+  // ✅ If ids were provided, return rows in the same order as ids
+  if (ids.length) {
+    const byId = new Map(normalised.map((r) => [r.id, r]));
+    return ids.map((id) => byId.get(id)).filter(Boolean) as CatalogListRow[];
+  }
 
   return normalised;
 }
