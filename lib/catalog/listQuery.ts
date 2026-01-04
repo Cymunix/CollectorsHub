@@ -38,13 +38,12 @@ export type CatalogListRow = {
   platform_name?: string | null;
   publisher_name?: string | null;
 
-  // ✅ NEW: Genre + Age Rating (ids + display names)
+  // ✅ Genre + Age Rating
   genre_id?: string | null;
   age_rating_id?: string | null;
   genre_name?: string | null;
   age_rating_name?: string | null;
 
-  // ✅ persisted wishlist state for this user
   is_wishlisted?: boolean;
 
   building_blocks?: {
@@ -57,11 +56,8 @@ export type CatalogListRow = {
 
 type CatalogListRowRaw = {
   [key: string]: any;
-
   game_platforms?: { name?: any } | null;
   game_publishers?: { name?: any } | null;
-
-  // ✅ NEW: joined lookups
   genres?: { name?: any } | null;
   age_ratings?: { name?: any } | null;
 };
@@ -131,13 +127,12 @@ export async function fetchCatalogListRows(params: {
   franchiseId?: string | null;
   limit?: number;
 
-  // ✅ pass current user id to get is_wishlisted
   userId?: string | null;
 }) {
   const ids = (params.ids ?? []).filter(Boolean);
   const limit = params.limit ?? 100;
 
-  let q = supabase.from("catalog_items").select(`
+  const select = `
     id,
     name,
     version,
@@ -146,36 +141,29 @@ export async function fetchCatalogListRows(params: {
     franchise_id,
     production_status,
     image_url,
-
     publisher,
     upc,
-
     release_year,
     release_month,
     release_day,
-
     end_year,
     end_month,
     end_day,
-
     epid_ebay,
-
     card_set_id,
     card_number,
     tcgplayer_id,
-
     platform_id,
     publisher_id,
-
     game_platforms:game_platforms ( name ),
     game_publishers:game_publishers ( name ),
-
-    -- ✅ NEW: Genre + Age Rating joins
     genre_id,
     age_rating_id,
     genres:genres ( name ),
     age_ratings:age_ratings ( name )
-  `);
+  `;
+
+  let q = supabase.from("catalog_items").select(select);
 
   if (ids.length) {
     q = q.in("id", ids);
@@ -234,7 +222,6 @@ export async function fetchCatalogListRows(params: {
       platform_name: toStrOrNull(row.game_platforms?.name ?? null),
       publisher_name: toStrOrNull(row.game_publishers?.name ?? null),
 
-      // ✅ NEW: genre + age rating
       genre_id: row.genre_id ? String(row.genre_id) : null,
       age_rating_id: row.age_rating_id ? String(row.age_rating_id) : null,
       genre_name: toStrOrNull(row.genres?.name ?? null),
@@ -246,9 +233,9 @@ export async function fetchCatalogListRows(params: {
     };
   });
 
-  // Manual merge: building blocks (no PostgREST relationship)
   const itemIds = normalised.map((r) => r.id);
 
+  // Manual merge: building blocks
   if (itemIds.length) {
     const selectBB = `
       catalog_item_id,
@@ -302,7 +289,7 @@ export async function fetchCatalogListRows(params: {
     }
   }
 
-  // ✅ Wishlist merge (persisted)
+  // Wishlist merge
   if (params.userId) {
     const wishSet = await fetchWishlistedSet(params.userId, itemIds);
     for (const r of normalised) {
@@ -310,7 +297,6 @@ export async function fetchCatalogListRows(params: {
     }
   }
 
-  // Preserve requested order
   if (ids.length) {
     const byId = new Map(normalised.map((r) => [r.id, r]));
     return ids.map((id) => byId.get(id)).filter(Boolean) as CatalogListRow[];
