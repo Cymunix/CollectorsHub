@@ -169,8 +169,9 @@ function CreateLinkButton({
 /**
  * SAFE lookup insert: if it fails, it shows the real error in the banner
  * instead of appearing to do nothing.
+ * Relaxed constraint to T extends { id: string } to support Age Ratings (code/system)
  */
-async function insertLookupRowSafe<T extends { id: string; name: string }>(
+async function insertLookupRowSafe<T extends { id: string }>(
   table: string,
   payload: Record<string, any>,
   setBanner: (b: { type: "error" | "success"; msg: string } | null) => void
@@ -1775,3 +1776,4 @@ export default function AddItemModal({
     </>
   );
 }
+
