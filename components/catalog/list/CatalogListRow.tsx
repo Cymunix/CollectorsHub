@@ -53,6 +53,61 @@ function formatPartialDate(
   return `${yy}-${mm}-${dd}`;
 }
 
+type BuyLink = { label: string; href: string };
+
+function buildBuyLinks(args: {
+  name: string;
+  upc?: string | null;
+  epid?: string | null;
+  tcgplayerId?: string | null;
+  isLego: boolean;
+  setNumber?: string | number | null;
+}): BuyLink[] {
+  const nameQ = encodeURIComponent(args.name);
+  const upcQ = args.upc ? encodeURIComponent(args.upc) : null;
+
+  const links: BuyLink[] = [];
+
+  // eBay: prefer ePID if available, else UPC/name search.
+  if (args.epid) {
+    links.push({
+      label: "eBay",
+      href: `https://www.ebay.ca/sch/i.html?_nkw=${encodeURIComponent(args.epid)}`,
+    });
+  } else if (upcQ) {
+    links.push({ label: "eBay", href: `https://www.ebay.ca/sch/i.html?_nkw=${upcQ}` });
+  } else {
+    links.push({ label: "eBay", href: `https://www.ebay.ca/sch/i.html?_nkw=${nameQ}` });
+  }
+
+  // TCGPlayer: if we have an ID, link to product search (safe); otherwise omit.
+  if (args.tcgplayerId) {
+    links.push({
+      label: "TCGPlayer",
+      href: `https://www.tcgplayer.com/search/all/product?q=${encodeURIComponent(args.tcgplayerId)}`,
+    });
+  }
+
+  // LEGO: Bricklink set number search when we have it
+  if (args.isLego && args.setNumber) {
+    links.push({
+      label: "BrickLink",
+      href: `https://www.bricklink.com/v2/catalog/catalogitem.page?S=${encodeURIComponent(
+        String(args.setNumber)
+      )}`,
+    });
+  }
+
+  // Google as a catch-all “Buy” jump
+  if (upcQ) {
+    links.push({ label: "Buy", href: `https://www.google.com/search?q=${upcQ}+buy` });
+  } else {
+    links.push({ label: "Buy", href: `https://www.google.com/search?q=${nameQ}+buy` });
+  }
+
+  return links;
+}
+
 export default function CatalogListRowView(p: Props) {
   const item = p.item;
 
@@ -61,7 +116,7 @@ export default function CatalogListRowView(p: Props) {
   const pieces = bb?.piece_count ?? null;
   const retailCad = p.isLego ? moneyCAD(bb?.retail_cad ?? null) : null;
 
-  // TODO: wire real avg default when pricing engine is hooked for list rows
+  // TODO: wire real avg default when list rows include pricing summary
   const avgDefaultCad: string | null = null;
 
   const { label: prodLabel } = formatProductionStatus(item.production_status);
@@ -98,7 +153,22 @@ export default function CatalogListRowView(p: Props) {
   const tcg = useMemo(() => display(item.tcgplayer_id ?? null), [item.tcgplayer_id]);
   const cardNo = useMemo(() => display(item.card_number ?? null), [item.card_number]);
 
-  const hasIds = !!(upc || epid || tcg || cardNo);
+  const buyLinks = useMemo(
+    () =>
+      buildBuyLinks({
+        name: item.name,
+        upc,
+        epid,
+        tcgplayerId: tcg,
+        isLego: p.isLego,
+        setNumber: setNo,
+      }),
+    [item.name, upc, epid, tcg, p.isLego, setNo]
+  );
+
+  const setOrPlatform = p.isLego && setNo ? `Set: ${String(setNo)}` : systemName ? `Platform: ${systemName}` : null;
+
+  const hasKeyLine = !!(setOrPlatform || publisherName || upc || epid || tcg || cardNo);
 
   return (
     <div className="rounded-2xl border bg-white p-4 shadow-sm hover:bg-slate-50">
@@ -124,8 +194,9 @@ export default function CatalogListRowView(p: Props) {
           )}
         </button>
 
-        {/* IDENTITY + META */}
+        {/* MAIN CONTENT */}
         <div className="min-w-0 flex-1">
+          {/* TITLE */}
           <button
             type="button"
             onClick={() => p.onOpen?.(item.id)}
@@ -135,6 +206,7 @@ export default function CatalogListRowView(p: Props) {
             {item.name}
           </button>
 
+          {/* VERSION + CATEGORY */}
           <div className="mt-0.5 max-w-full truncate text-sm text-slate-700">
             {item.version ? item.version : <span className="text-slate-400"> </span>}
           </div>
@@ -147,7 +219,7 @@ export default function CatalogListRowView(p: Props) {
           <div className="mt-3 flex flex-wrap gap-2">
             {year ? <Badge>Year: {String(year)}</Badge> : null}
 
-            {systemName ? <Badge>System: {systemName}</Badge> : null}
+            {systemName ? <Badge>Platform: {systemName}</Badge> : null}
             {publisherName ? <Badge>Publisher: {publisherName}</Badge> : null}
 
             {startDate ? <Badge>Start: {startDate}</Badge> : null}
@@ -158,43 +230,13 @@ export default function CatalogListRowView(p: Props) {
 
             {prodLabel && prodLabel !== "—" ? <Badge>Production: {prodLabel}</Badge> : null}
           </div>
-
-          {/* ID codes line */}
-          {hasIds ? (
-            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600">
-              {upc ? (
-                <span>
-                  <span className="text-slate-500">UPC:</span> {upc}
-                </span>
-              ) : null}
-              {epid ? (
-                <span>
-                  <span className="text-slate-500">ePID:</span> {epid}
-                </span>
-              ) : null}
-              {cardNo ? (
-                <span>
-                  <span className="text-slate-500">Card #:</span> {cardNo}
-                </span>
-              ) : null}
-              {tcg ? (
-                <span>
-                  <span className="text-slate-500">TCG:</span> {tcg}
-                </span>
-              ) : null}
-            </div>
-          ) : (
-            <div className="mt-2 text-[11px] text-slate-400"> </div>
-          )}
         </div>
 
-        {/* VALUE + ACTIONS (NO INNER BOX) */}
+        {/* VALUE + ACTIONS */}
         <div className="flex w-[240px] shrink-0 flex-col items-end justify-between gap-3">
-          {/* Values */}
           <div className="w-full text-right">
             <div className="text-[11px] uppercase tracking-wide text-slate-500">Value</div>
 
-            {/* Primary: Avg default */}
             <div className="mt-1">
               <div className="text-xs text-slate-500">Avg (default)</div>
               <div className="text-lg font-semibold leading-tight text-slate-900">
@@ -202,7 +244,6 @@ export default function CatalogListRowView(p: Props) {
               </div>
             </div>
 
-            {/* Secondary: Retail */}
             <div className="mt-2">
               <div className="text-xs text-slate-500">Retail</div>
               <div className="text-sm font-medium text-slate-700">
@@ -211,7 +252,6 @@ export default function CatalogListRowView(p: Props) {
             </div>
           </div>
 
-          {/* Actions */}
           <div className="flex w-full justify-end gap-2">
             {p.onToggleWishlist ? (
               <button
@@ -251,6 +291,73 @@ export default function CatalogListRowView(p: Props) {
                 Edit
               </button>
             ) : null}
+          </div>
+        </div>
+      </div>
+
+      {/* BOTTOM RAIL: KEY META + BUY BOX */}
+      <div className="mt-4 border-t pt-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {/* Key identifiers */}
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-700">
+            {hasKeyLine ? (
+              <>
+                {setOrPlatform ? (
+                  <span>
+                    <span className="text-slate-500">{p.isLego && setNo ? "Set:" : "Platform:"}</span>{" "}
+                    {p.isLego && setNo ? String(setNo) : systemName}
+                  </span>
+                ) : null}
+
+                {publisherName ? (
+                  <span>
+                    <span className="text-slate-500">Publisher:</span> {publisherName}
+                  </span>
+                ) : null}
+
+                {upc ? (
+                  <span>
+                    <span className="text-slate-500">UPC:</span> {upc}
+                  </span>
+                ) : null}
+
+                {epid ? (
+                  <span>
+                    <span className="text-slate-500">ePID:</span> {epid}
+                  </span>
+                ) : null}
+
+                {cardNo ? (
+                  <span>
+                    <span className="text-slate-500">Card #:</span> {cardNo}
+                  </span>
+                ) : null}
+
+                {tcg ? (
+                  <span>
+                    <span className="text-slate-500">TCG:</span> {tcg}
+                  </span>
+                ) : null}
+              </>
+            ) : (
+              <span className="text-slate-400"> </span>
+            )}
+          </div>
+
+          {/* Buy links */}
+          <div className="flex flex-wrap justify-end gap-2">
+            {buyLinks.map((l) => (
+              <a
+                key={l.label}
+                href={l.href}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-full border bg-white px-3 py-1 text-xs font-medium text-slate-800 hover:bg-slate-50"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {l.label}
+              </a>
+            ))}
           </div>
         </div>
       </div>
