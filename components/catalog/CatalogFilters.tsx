@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import type {
   BbSubtheme,
   BbTheme,
@@ -96,6 +96,89 @@ type Props = {
 };
 
 export default function CatalogFilters(p: Props) {
+  /* -----------------------------
+     Reset helpers
+     ----------------------------- */
+  const clearBuildingBlocks = () => {
+    p.setShowMinifigs(false);
+    p.setBbThemeId("");
+    p.setBbSubthemeId("");
+  };
+
+  const clearToys = () => {
+    p.setToyManufacturerId("");
+    p.setToyBrandId("");
+    p.setToyLineId("");
+  };
+
+  const clearGaming = () => {
+    p.setGamePlatformId("");
+  };
+
+  const clearMusic = () => {
+    p.setMusicArtistId("");
+  };
+
+  const clearComics = () => {
+    p.setComicPublisherId("");
+  };
+
+  const clearCards = () => {
+    p.setCardManufacturerId("");
+    p.setCardSetId("");
+    p.setCardTypeId("");
+  };
+
+  const clearKindSpecific = () => {
+    clearBuildingBlocks();
+    clearToys();
+    clearGaming();
+    clearMusic();
+    clearComics();
+    clearCards();
+  };
+
+  /* -----------------------------
+     When kind changes, clear
+     kind-specific filters so we
+     don't keep "invisible" filters
+     applied.
+     ----------------------------- */
+  const prevKindRef = useRef<Props["selectedKind"]>(p.selectedKind);
+  useEffect(() => {
+    if (prevKindRef.current !== p.selectedKind) {
+      clearKindSpecific();
+      prevKindRef.current = p.selectedKind;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.selectedKind]);
+
+  /* -----------------------------
+     Change handlers with proper
+     cascading resets
+     ----------------------------- */
+  const onCategoryChange = (nextCategoryId: string) => {
+    p.setCategoryId(nextCategoryId);
+
+    // downstream globals
+    p.setSubcategoryId("");
+    p.setFranchiseId("");
+
+    // downstream kind-specific
+    clearKindSpecific();
+  };
+
+  const onSubcategoryChange = (nextSubcategoryId: string) => {
+    p.setSubcategoryId(nextSubcategoryId);
+
+    // subcategory can invalidate kind-specific option trees
+    clearKindSpecific();
+  };
+
+  const onFranchiseChange = (nextFranchiseId: string) => {
+    p.setFranchiseId(nextFranchiseId);
+  };
+
   return (
     <div className="rounded-2xl border bg-white p-4 shadow-sm max-h-[calc(100vh-8rem)] overflow-y-auto">
       <div className="flex items-center justify-between mb-2">
@@ -109,12 +192,21 @@ export default function CatalogFilters(p: Props) {
       {p.metaError && <p className="text-[11px] text-red-600">{p.metaError}</p>}
 
       <div className="mt-3 space-y-3 text-xs">
+        {/* -----------------------------
+            Global filters
+           ----------------------------- */}
         <div className="space-y-1">
           <label className="font-medium">Category</label>
-          <select value={p.categoryId} onChange={(e) => p.setCategoryId(e.target.value)} className="w-full rounded-xl border bg-white px-3 py-2">
+          <select
+            value={p.categoryId}
+            onChange={(e) => onCategoryChange(e.target.value)}
+            className="w-full rounded-xl border bg-white px-3 py-2"
+          >
             <option value="">All</option>
             {p.categories.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
             ))}
           </select>
         </div>
@@ -123,23 +215,31 @@ export default function CatalogFilters(p: Props) {
           <label className="font-medium">Subcategory</label>
           <select
             value={p.subcategoryId}
-            onChange={(e) => p.setSubcategoryId(e.target.value)}
+            onChange={(e) => onSubcategoryChange(e.target.value)}
             className="w-full rounded-xl border bg-white px-3 py-2"
             disabled={!p.categoryId}
           >
             <option value="">{p.categoryId ? "All" : "Select category first"}</option>
             {p.filteredSubcategories.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
             ))}
           </select>
         </div>
 
         <div className="space-y-1">
           <label className="font-medium">Franchise</label>
-          <select value={p.franchiseId} onChange={(e) => p.setFranchiseId(e.target.value)} className="w-full rounded-xl border bg-white px-3 py-2">
+          <select
+            value={p.franchiseId}
+            onChange={(e) => onFranchiseChange(e.target.value)}
+            className="w-full rounded-xl border bg-white px-3 py-2"
+          >
             <option value="">All</option>
             {p.franchises.map((f) => (
-              <option key={f.id} value={f.id}>{f.name}</option>
+              <option key={f.id} value={f.id}>
+                {f.name}
+              </option>
             ))}
           </select>
         </div>
@@ -167,6 +267,9 @@ export default function CatalogFilters(p: Props) {
           </div>
         </div>
 
+        {/* -----------------------------
+            Building Blocks
+           ----------------------------- */}
         {p.selectedKind === "building_blocks" && (
           <div className="pt-2 border-t space-y-3">
             <p className="text-[11px] text-gray-500">Building Blocks filters</p>
@@ -176,7 +279,11 @@ export default function CatalogFilters(p: Props) {
                 <p className="font-medium text-xs">Show Minifigs</p>
                 <p className="text-[10px] text-gray-500">Display minifigs as catalog cards</p>
               </div>
-              <input type="checkbox" checked={p.showMinifigs} onChange={(e) => p.setShowMinifigs(e.target.checked)} />
+              <input
+                type="checkbox"
+                checked={p.showMinifigs}
+                onChange={(e) => p.setShowMinifigs(e.target.checked)}
+              />
             </div>
 
             <div className="space-y-1">
@@ -190,9 +297,11 @@ export default function CatalogFilters(p: Props) {
                 className="w-full rounded-xl border bg-white px-3 py-2"
                 disabled={!p.subcategoryId}
               >
-                <option value="">{p.subcategoryId ? "All" : "Select brand first"}</option>
+                <option value="">{p.subcategoryId ? "All" : "Select subcategory first"}</option>
                 {p.bbThemeOptions.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
                 ))}
               </select>
             </div>
@@ -207,97 +316,163 @@ export default function CatalogFilters(p: Props) {
               >
                 <option value="">{p.bbThemeId ? "All" : "Select theme first"}</option>
                 {p.bbSubthemeOptions.map((st) => (
-                  <option key={st.id} value={st.id}>{st.name}</option>
+                  <option key={st.id} value={st.id}>
+                    {st.name}
+                  </option>
                 ))}
               </select>
             </div>
           </div>
         )}
 
+        {/* -----------------------------
+            Toys
+           ----------------------------- */}
         {p.selectedKind === "toy" && (
           <div className="pt-2 border-t space-y-3">
             <p className="text-[11px] text-gray-500">Toys filters</p>
 
             <div className="space-y-1">
               <label className="font-medium">Manufacturer</label>
-              <select value={p.toyManufacturerId} onChange={(e) => p.setToyManufacturerId(e.target.value)} className="w-full rounded-xl border bg-white px-3 py-2">
+              <select
+                value={p.toyManufacturerId}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  p.setToyManufacturerId(v);
+                  // reset downstream
+                  p.setToyBrandId("");
+                  p.setToyLineId("");
+                }}
+                className="w-full rounded-xl border bg-white px-3 py-2"
+              >
                 <option value="">All</option>
                 {p.toyManufacturers.map((m) => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
                 ))}
               </select>
             </div>
 
             <div className="space-y-1">
               <label className="font-medium">Brand</label>
-              <select value={p.toyBrandId} onChange={(e) => p.setToyBrandId(e.target.value)} className="w-full rounded-xl border bg-white px-3 py-2" disabled={!p.toyManufacturerId}>
+              <select
+                value={p.toyBrandId}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  p.setToyBrandId(v);
+                  // reset downstream
+                  p.setToyLineId("");
+                }}
+                className="w-full rounded-xl border bg-white px-3 py-2"
+                disabled={!p.toyManufacturerId}
+              >
                 <option value="">{p.toyManufacturerId ? "All" : "Select manufacturer first"}</option>
                 {p.toyBrandOptions.map((b) => (
-                  <option key={b.id} value={b.id}>{b.name}</option>
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
                 ))}
               </select>
             </div>
 
             <div className="space-y-1">
               <label className="font-medium">Line</label>
-              <select value={p.toyLineId} onChange={(e) => p.setToyLineId(e.target.value)} className="w-full rounded-xl border bg-white px-3 py-2" disabled={!p.toyBrandId}>
+              <select
+                value={p.toyLineId}
+                onChange={(e) => p.setToyLineId(e.target.value)}
+                className="w-full rounded-xl border bg-white px-3 py-2"
+                disabled={!p.toyBrandId}
+              >
                 <option value="">{p.toyBrandId ? "All" : "Select brand first"}</option>
                 {p.toyLineOptions.map((l) => (
-                  <option key={l.id} value={l.id}>{l.name}</option>
+                  <option key={l.id} value={l.id}>
+                    {l.name}
+                  </option>
                 ))}
               </select>
             </div>
           </div>
         )}
 
+        {/* -----------------------------
+            Gaming
+           ----------------------------- */}
         {p.selectedKind === "gaming" && (
           <div className="pt-2 border-t space-y-3">
             <p className="text-[11px] text-gray-500">Gaming filters</p>
 
             <div className="space-y-1">
               <label className="font-medium">Platform</label>
-              <select value={p.gamePlatformId} onChange={(e) => p.setGamePlatformId(e.target.value)} className="w-full rounded-xl border bg-white px-3 py-2">
+              <select
+                value={p.gamePlatformId}
+                onChange={(e) => p.setGamePlatformId(e.target.value)}
+                className="w-full rounded-xl border bg-white px-3 py-2"
+              >
                 <option value="">All</option>
                 {p.gamePlatforms.map((pl) => (
-                  <option key={pl.id} value={pl.id}>{pl.name}</option>
+                  <option key={pl.id} value={pl.id}>
+                    {pl.name}
+                  </option>
                 ))}
               </select>
             </div>
           </div>
         )}
 
+        {/* -----------------------------
+            Music
+           ----------------------------- */}
         {p.selectedKind === "music" && (
           <div className="pt-2 border-t space-y-3">
             <p className="text-[11px] text-gray-500">Music filters</p>
 
             <div className="space-y-1">
               <label className="font-medium">Artist</label>
-              <select value={p.musicArtistId} onChange={(e) => p.setMusicArtistId(e.target.value)} className="w-full rounded-xl border bg-white px-3 py-2">
+              <select
+                value={p.musicArtistId}
+                onChange={(e) => p.setMusicArtistId(e.target.value)}
+                className="w-full rounded-xl border bg-white px-3 py-2"
+              >
                 <option value="">All</option>
                 {p.musicArtists.map((a) => (
-                  <option key={a.id} value={a.id}>{a.name}</option>
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
                 ))}
               </select>
             </div>
           </div>
         )}
 
+        {/* -----------------------------
+            Comics
+           ----------------------------- */}
         {p.selectedKind === "comic" && (
           <div className="pt-2 border-t space-y-3">
             <p className="text-[11px] text-gray-500">Comics filters</p>
 
             <div className="space-y-1">
               <label className="font-medium">Publisher</label>
-              <select value={p.comicPublisherId} onChange={(e) => p.setComicPublisherId(e.target.value)} className="w-full rounded-xl border bg-white px-3 py-2">
+              <select
+                value={p.comicPublisherId}
+                onChange={(e) => p.setComicPublisherId(e.target.value)}
+                className="w-full rounded-xl border bg-white px-3 py-2"
+              >
                 <option value="">All</option>
                 {p.comicPublishers.map((pub) => (
-                  <option key={pub.id} value={pub.id}>{pub.name}</option>
+                  <option key={pub.id} value={pub.id}>
+                    {pub.name}
+                  </option>
                 ))}
               </select>
             </div>
           </div>
         )}
 
+        {/* -----------------------------
+            Cards
+           ----------------------------- */}
         {(p.selectedKind === "trading_card" || p.selectedKind === "sports_card") && (
           <div className="pt-2 border-t space-y-3">
             <p className="text-[11px] text-gray-500">Cards filters</p>
@@ -307,34 +482,51 @@ export default function CatalogFilters(p: Props) {
               <select
                 value={p.cardManufacturerId}
                 onChange={(e) => {
-                  p.setCardManufacturerId(e.target.value);
+                  const v = e.target.value;
+                  p.setCardManufacturerId(v);
+                  // reset downstream
                   p.setCardSetId("");
                 }}
                 className="w-full rounded-xl border bg-white px-3 py-2"
               >
                 <option value="">All</option>
                 {p.cardManufacturers.map((m) => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
                 ))}
               </select>
             </div>
 
             <div className="space-y-1">
               <label className="font-medium">Set</label>
-              <select value={p.cardSetId} onChange={(e) => p.setCardSetId(e.target.value)} className="w-full rounded-xl border bg-white px-3 py-2" disabled={!p.cardManufacturerId}>
+              <select
+                value={p.cardSetId}
+                onChange={(e) => p.setCardSetId(e.target.value)}
+                className="w-full rounded-xl border bg-white px-3 py-2"
+                disabled={!p.cardManufacturerId}
+              >
                 <option value="">{p.cardManufacturerId ? "All" : "Select manufacturer first"}</option>
                 {p.cardSetOptions.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
                 ))}
               </select>
             </div>
 
             <div className="space-y-1">
               <label className="font-medium">Card Type</label>
-              <select value={p.cardTypeId} onChange={(e) => p.setCardTypeId(e.target.value)} className="w-full rounded-xl border bg-white px-3 py-2">
+              <select
+                value={p.cardTypeId}
+                onChange={(e) => p.setCardTypeId(e.target.value)}
+                className="w-full rounded-xl border bg-white px-3 py-2"
+              >
                 <option value="">All</option>
                 {p.cardTypes.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
                 ))}
               </select>
             </div>
