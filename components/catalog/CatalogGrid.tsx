@@ -47,80 +47,6 @@ function stop(e: React.MouseEvent) {
   e.stopPropagation();
 }
 
-function enc(s: string) {
-  return encodeURIComponent(s);
-}
-
-type StatusTone = "good" | "neutral" | "bad" | "muted";
-
-function formatProductionStatus(status?: string | null): { label: string; tone: StatusTone } {
-  switch (status) {
-    case "in_production":
-      return { label: "In production", tone: "good" };
-    case "retired":
-      return { label: "Retired", tone: "neutral" };
-    case "out_of_production":
-      return { label: "Out of production", tone: "neutral" };
-    case "cancelled":
-      return { label: "Cancelled", tone: "bad" };
-    default:
-      return { label: "Status unknown", tone: "muted" };
-  }
-}
-
-function toneClass(t: StatusTone) {
-  switch (t) {
-    case "good":
-      return "text-emerald-700";
-    case "bad":
-      return "text-red-700";
-    case "neutral":
-      return "text-slate-700";
-    case "muted":
-    default:
-      return "text-slate-500";
-  }
-}
-
-function moneyCAD(v: any): string | null {
-  const n = typeof v === "number" ? v : Number(v);
-  if (!Number.isFinite(n)) return null;
-  return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD" }).format(n);
-}
-
-type ExternalLink = { key: string; label: string; href: string };
-
-function buildLinks(args: { name: string; version?: string | null; isLego: boolean; setNumber?: number | null; status?: string | null }) {
-  const q = [args.name, args.version].filter(Boolean).join(" ").trim();
-
-  const links: ExternalLink[] = [
-    { key: "collectorshub", label: "CollectorsHub", href: `/catalog?query=${enc(args.name)}` },
-    { key: "ebay", label: "eBay", href: `https://www.ebay.com/sch/i.html?_nkw=${enc(q || args.name)}` },
-  ];
-
-  if (args.isLego) {
-    const setNo = args.setNumber ?? null;
-
-    links.push({
-      key: "bricklink",
-      label: "Bricklink",
-      href: setNo
-        ? `https://www.bricklink.com/v2/catalog/catalogitem.page?S=${setNo}-1`
-        : `https://www.bricklink.com/v2/search.page?q=${enc(args.name)}`,
-    });
-
-    if (args.status === "in_production") {
-      links.push({
-        key: "lego",
-        label: "LEGO",
-        href: setNo ? `https://www.lego.com/en-ca/product/${setNo}` : `https://www.lego.com/en-ca/search?q=${enc(args.name)}`,
-      });
-    }
-  }
-
-  return links.slice(0, 4);
-}
-
 export default function CatalogGrid(p: Props) {
   const [view, setView] = useState<LayoutMode>("card");
 
@@ -272,8 +198,8 @@ export default function CatalogGrid(p: Props) {
               {listLoading ? <p className="text-xs text-gray-500">Loading list details…</p> : null}
               {listError ? <p className="text-xs text-red-600">{listError}</p> : null}
 
-              <div className="space-y-3">
-                {/* Render minifigs using existing tile (no join data) */}
+              <div className="space-y-2">
+                {/* Minifigs: keep existing tile (not in catalog_items) */}
                 {p.pagedCards
                   .filter((c) => c.kind === "minifig")
                   .map((it) => (
@@ -289,109 +215,82 @@ export default function CatalogGrid(p: Props) {
                     />
                   ))}
 
-                {/* Render catalog_items using the NEW listQuery data */}
+                {/* catalog_items: SIMPLE list rows using listQuery */}
                 {p.pagedCards
                   .filter((c) => c.kind !== "minifig")
                   .map((card) => {
                     const r = listById.get(card.id);
 
-                    // Fallback to card data if row hasn't loaded yet
+                    // Line 1: Item Name
                     const name = r?.name ?? card.name;
-                    const version = r?.version ?? (card.version ?? null);
-                    const imageUrl = (r as any)?.image_url ?? card.image_url ?? null;
-                    const status = r?.production_status ?? (card as any)?.production_status ?? null;
 
-                    const isLego = card.kind === "building_blocks";
-                    const setNo = isLego ? (r?.building_blocks?.set_number ?? null) : null;
-                    const pieces = isLego ? (r?.building_blocks?.piece_count ?? null) : null;
-                    const retailCad = isLego ? moneyCAD(r?.building_blocks?.retail_cad ?? null) : null;
+                    // Line 2: Edition (version)
+                    const version = (r?.version ?? (card.version ?? null)) as string | null;
 
-                    const st = formatProductionStatus(status);
-                    const links = buildLinks({ name, version, isLego, setNumber: setNo, status });
+                    // Line 3: Category (use listQuery if present, otherwise fall back to whatever the card already provides)
+                    const category =
+                      (r as any)?.category_name ??
+                      (r as any)?.category ??
+                      (card as any)?.category_name ??
+                      (card as any)?.category?.name ??
+                      (card as any)?.categoryName ??
+                      card.secondary ??
+                      "—";
+
+                    const imageUrl = (r as any)?.image_url ?? (card.image_url ?? null);
 
                     return (
                       <div
                         key={`list:${card.id}`}
-                        className="flex items-stretch gap-3 rounded-2xl border bg-white p-3 shadow-sm transition hover:bg-gray-50 cursor-pointer"
+                        className="flex items-center gap-3 rounded-xl border bg-white p-3 shadow-sm transition hover:bg-gray-50 cursor-pointer"
                         onClick={() => p.onOpenItem(card)}
                       >
                         {/* Thumb */}
-                        <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl border bg-gray-100">
+                        <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg border bg-gray-100">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           {imageUrl ? <img src={imageUrl} alt="" className="h-full w-full object-cover" /> : null}
                         </div>
 
-                        {/* Identity */}
+                        {/* Text: EXACT 3 lines */}
                         <div className="min-w-0 flex-1">
                           <div className="truncate text-sm font-semibold text-gray-900">{name}</div>
-                          {version ? <div className="truncate text-xs text-gray-600">{version}</div> : null}
-                          <div className="truncate text-xs text-gray-600">{card.secondary}</div>
-
-                          {isLego && (setNo || pieces || retailCad) ? (
-                            <div className="truncate text-xs text-gray-600">
-                              {setNo ? <span className="font-medium">{setNo}</span> : null}
-                              {pieces ? <span>{setNo ? " • " : ""}Pieces: {Number(pieces).toLocaleString("en-CA")}</span> : null}
-                              {retailCad ? <span>{(setNo || pieces) ? " • " : ""}Retail: {retailCad}</span> : null}
-                            </div>
-                          ) : null}
-
-                          <div className="mt-1 text-xs text-gray-600">
-                            <span className="text-gray-500">Status:</span>{" "}
-                            <span className={toneClass(st.tone)}>{st.label}</span>
-                          </div>
+                          {version ? <div className="truncate text-xs text-gray-600">{version}</div> : <div className="text-xs text-gray-600">—</div>}
+                          <div className="truncate text-xs text-gray-600">{String(category || "—")}</div>
                         </div>
 
-                        {/* Right: links + actions */}
-                        <div className="flex shrink-0 flex-col items-end justify-between gap-2">
-                          <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1 text-[11px]">
-                            {links.map((l) => (
-                              <a
-                                key={l.key}
-                                href={l.href}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-gray-600 hover:text-gray-900 hover:underline"
-                                onClick={(e) => e.stopPropagation()}
-                                title={`Search on ${l.label}`}
-                              >
-                                {l.label}
-                              </a>
-                            ))}
-                          </div>
-
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              className="rounded-lg border px-2 py-1 text-[11px] font-semibold text-gray-700 hover:bg-white"
-                              onClick={(e) => {
-                                stop(e);
-                                p.onAddWishlist(card.id);
-                              }}
-                            >
-                              Wishlist
-                            </button>
-                            <button
-                              type="button"
-                              className="rounded-lg border px-2 py-1 text-[11px] font-semibold text-gray-700 hover:bg-white"
-                              onClick={(e) => {
-                                stop(e);
-                                p.onAddCollection(card.id);
-                              }}
-                            >
-                              + Collection
-                            </button>
-                            <button
-                              type="button"
-                              className="rounded-lg border px-2 py-1 text-[11px] font-semibold text-gray-700 hover:bg-white"
-                              onClick={(e) => {
-                                stop(e);
-                                p.onQuickAdd(card.id, p.quickAddDefault);
-                              }}
-                              title="Quick add"
-                            >
-                              Quick add
-                            </button>
-                          </div>
+                        {/* Actions */}
+                        <div className="flex shrink-0 items-center gap-2">
+                          <button
+                            type="button"
+                            className="rounded-lg border px-2 py-1 text-[11px] font-semibold text-gray-700 hover:bg-white"
+                            onClick={(e) => {
+                              stop(e);
+                              p.onAddWishlist(card.id);
+                            }}
+                          >
+                            Wishlist
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded-lg border px-2 py-1 text-[11px] font-semibold text-gray-700 hover:bg-white"
+                            onClick={(e) => {
+                              stop(e);
+                              p.onAddCollection(card.id);
+                            }}
+                          >
+                            + Collection
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded-lg border px-2 py-1 text-[11px] font-semibold text-gray-700 hover:bg-white"
+                            onClick={(e) => {
+                              stop(e);
+                              p.onQuickAdd(card.id, p.quickAddDefault);
+                            }}
+                            title="Quick add"
+                          >
+                            Quick add
+                          </button>
                         </div>
                       </div>
                     );
