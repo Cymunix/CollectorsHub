@@ -330,7 +330,7 @@ export default function ItemDescription({
   // Meta
   const [franchises, setFranchises] = useState<LookupRow[]>([]);
 
-  // ✅ NEW: genres + comic series meta/state
+  // Genres + comic series meta/state
   const [genreOptions, setGenreOptions] = useState<GenreRow[]>([]);
   const [selectedGenreIds, setSelectedGenreIds] = useState<string[]>([]);
   const [comicSeriesOptions, setComicSeriesOptions] = useState<ComicSeriesRow[]>([]);
@@ -363,10 +363,10 @@ export default function ItemDescription({
   // publisher (non-card; id-aware)
   const [draftPublisherId, setDraftPublisherId] = useState<string | null>(null);
 
-  // ✅ genres
+  // genres
   const [draftGenreIds, setDraftGenreIds] = useState<string[]>([]);
 
-  // ✅ comics
+  // comics
   const [draftComicSeriesId, setDraftComicSeriesId] = useState<string | null>(null);
   const [draftComicIssueNumber, setDraftComicIssueNumber] = useState<string>("");
   const [draftComicVariant, setDraftComicVariant] = useState<string>("");
@@ -396,7 +396,7 @@ export default function ItemDescription({
     return "Publisher";
   }, [categoryKey]);
 
-  // ✅ This is the important fix: Movies/Music -> Genre, Comics -> Series, Cards -> Set, Gaming -> Platform
+  // Movies/Music -> Genre, Comics -> Series, Cards -> Set, Gaming -> Platform
   const setOrPlatformLabel = useMemo(() => {
     if (isCardCategory) return "Set";
     if (isComicCategory) return "Series";
@@ -477,14 +477,15 @@ export default function ItemDescription({
         const detectedPlatformKey = pickExistingKey(row, ["platform_id", "Platform_id", "game_platform_id"]);
         const detectedPublisherKey = pickExistingKey(row, ["publisher_id", "Publisher_Id", "Publisher_id", "game_publisher_id"]);
 
-        const metaPromises: Promise<any>[] = [
+        // ✅ IMPORTANT FIX: Supabase queries are PromiseLike, not Promise. So this array must be PromiseLike.
+        const metaPromises: Array<PromiseLike<any>> = [
           safeLookup("franchises"),
           safeLookup("card_sets"),
           safeLookup("game_platforms"),
           safeLookup("game_publishers"),
         ];
 
-        // ✅ genres meta + current selection (movie/music)
+        // genres meta + current selection (movie/music)
         if (isMovieCategory || isMusicCategory) {
           metaPromises.push(safeLookupGenres(isMovieCategory ? "movie" : "music"));
           metaPromises.push(
@@ -499,30 +500,38 @@ export default function ItemDescription({
           metaPromises.push(Promise.resolve([]));
         }
 
-        // ✅ comic series meta
+        // comic series meta
         if (isComicCategory) metaPromises.push(safeLookupComicSeries());
         else metaPromises.push(Promise.resolve([]));
 
-        const [frs, sets, plats, pubs, genres, genreIds, comicSeries] = await Promise.all(metaPromises);
+        const [frs, sets, plats, pubs, genres, genreIds, comicSeries] = (await Promise.all(metaPromises)) as [
+          LookupRow[],
+          LookupRow[],
+          LookupRow[],
+          LookupRow[],
+          GenreRow[],
+          string[],
+          ComicSeriesRow[]
+        ];
 
         let fName = "";
-        if (row?.franchise_id) fName = String((frs as LookupRow[]).find((x) => x.id === String(row.franchise_id))?.name ?? "");
+        if (row?.franchise_id) fName = String(frs.find((x) => x.id === String(row.franchise_id))?.name ?? "");
 
         let sName = "";
         const cardSetId = row?.card_set_id ?? null;
-        if (cardSetId) sName = String((sets as LookupRow[]).find((x) => x.id === String(cardSetId))?.name ?? "");
+        if (cardSetId) sName = String(sets.find((x) => x.id === String(cardSetId))?.name ?? "");
 
         let pName = "";
         const platId = detectedPlatformKey ? row?.[detectedPlatformKey] ?? null : null;
-        if (platId) pName = String((plats as LookupRow[]).find((x) => x.id === String(platId))?.name ?? "");
+        if (platId) pName = String(plats.find((x) => x.id === String(platId))?.name ?? "");
 
         let pubName = "";
         const pubId = detectedPublisherKey ? row?.[detectedPublisherKey] ?? null : null;
-        if (pubId) pubName = String((pubs as LookupRow[]).find((x) => x.id === String(pubId))?.name ?? "");
+        if (pubId) pubName = String(pubs.find((x) => x.id === String(pubId))?.name ?? "");
 
         // comic series name
         let csName = "";
-        if (row?.comic_series_id) csName = String((comicSeries as ComicSeriesRow[]).find((x) => x.id === String(row.comic_series_id))?.name ?? "");
+        if (row?.comic_series_id) csName = String(comicSeries.find((x) => x.id === String(row.comic_series_id))?.name ?? "");
 
         if (cancelled) return;
 
@@ -531,21 +540,21 @@ export default function ItemDescription({
         setPlatformIdKey(detectedPlatformKey);
         setPublisherIdKey(detectedPublisherKey);
 
-        setFranchises(frs as LookupRow[]);
-        setCardSets(sets as LookupRow[]);
-        setPlatforms(plats as LookupRow[]);
-        setPublishers(pubs as LookupRow[]);
+        setFranchises(frs);
+        setCardSets(sets);
+        setPlatforms(plats);
+        setPublishers(pubs);
 
         setFranchiseName(fName);
         setSetName(sName);
         setPlatformName(pName);
         setPublisherName(pubName);
 
-        setGenreOptions(genres as GenreRow[]);
-        setSelectedGenreIds(genreIds as string[]);
-        setDraftGenreIds(genreIds as string[]);
+        setGenreOptions(genres);
+        setSelectedGenreIds(genreIds);
+        setDraftGenreIds(genreIds);
 
-        setComicSeriesOptions(comicSeries as ComicSeriesRow[]);
+        setComicSeriesOptions(comicSeries);
         setComicSeriesName(csName);
 
         primeDraftFromLoaded(it, detectedPlatformKey, detectedPublisherKey);
@@ -630,7 +639,7 @@ export default function ItemDescription({
         publisherIdPayload[publisherIdKey] = draftPublisherId;
       }
 
-      // comics payload (only if those columns exist; safeUpdate fallback handles it)
+      // comics payload
       const comicPayload: Record<string, any> = {};
       if (isComicCategory) {
         comicPayload.comic_series_id = draftComicSeriesId;
@@ -657,7 +666,7 @@ export default function ItemDescription({
       const res = await safeUpdateCatalogItem(catalogItemId, tryFull, fallbacks);
       if (!res.ok) throw res.error;
 
-      // ✅ genres (movie/music) live in join table, not catalog_items
+      // genres (movie/music) live in join table, not catalog_items
       if (isMovieCategory || isMusicCategory) {
         await syncItemGenres(catalogItemId, draftGenreIds);
         setSelectedGenreIds([...draftGenreIds]);
@@ -965,8 +974,8 @@ export default function ItemDescription({
                           platformName ? "text-[#2563EB] hover:underline" : "text-[#0F172A]"
                         }`}
                         onClick={() => {
-                          const row: any = item as any;
-                          const id = platformIdKey ? row?.[platformIdKey] ?? null : row?.platform_id ?? row?.Platform_id ?? null;
+                          const rowAny: any = item as any;
+                          const id = platformIdKey ? rowAny?.[platformIdKey] ?? null : rowAny?.platform_id ?? rowAny?.Platform_id ?? null;
                           if (id) pushPlatform(String(id));
                         }}
                         title={platformName || "—"}
@@ -1072,22 +1081,11 @@ export default function ItemDescription({
                   )}
                 </div>
 
-                <Field
-                  label="Release Date"
-                  value={editing ? draftReleaseDate : releaseDateDisplay}
-                  editing={editing}
-                  onChange={setDraftReleaseDate}
-                />
-
-                <Field
-                  label="End Date"
-                  value={editing ? draftEndDate : endDateDisplay}
-                  editing={editing}
-                  onChange={setDraftEndDate}
-                />
+                <Field label="Release Date" value={editing ? draftReleaseDate : releaseDateDisplay} editing={editing} onChange={setDraftReleaseDate} />
+                <Field label="End Date" value={editing ? draftEndDate : endDateDisplay} editing={editing} onChange={setDraftEndDate} />
               </div>
 
-              {/* Comics extras (issue/variant/volume) */}
+              {/* Comics extras */}
               {isComicCategory ? (
                 <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
                   <Field
@@ -1114,12 +1112,7 @@ export default function ItemDescription({
               {/* Row 3 */}
               <div className={`mt-4 grid grid-cols-1 gap-4 ${row3GridClass}`}>
                 <Field label="CollectorsHub ID" value={collectorsHubId} editing={false} />
-                <Field
-                  label="ePID (eBay)"
-                  value={editing ? draftEpid : String(item?.epid_ebay ?? "")}
-                  editing={editing}
-                  onChange={setDraftEpid}
-                />
+                <Field label="ePID (eBay)" value={editing ? draftEpid : String(item?.epid_ebay ?? "")} editing={editing} onChange={setDraftEpid} />
 
                 {isCardCategory ? (
                   <Field
@@ -1134,8 +1127,7 @@ export default function ItemDescription({
               </div>
 
               <div className="mt-3 text-[11px] text-[#64748B]">
-                Date format accepts <code className="px-1">YYYY</code>, <code className="px-1">YYYY-MM</code>, or{" "}
-                <code className="px-1">YYYY-MM-DD</code>.
+                Date format accepts <code className="px-1">YYYY</code>, <code className="px-1">YYYY-MM</code>, or <code className="px-1">YYYY-MM-DD</code>.
               </div>
 
               {(isMovieCategory || isMusicCategory) && !editing && selectedGenreNames.length === 0 ? (
