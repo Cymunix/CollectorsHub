@@ -11,12 +11,12 @@ type Props = {
   categoryName?: string | null;
 };
 
-type Row = {
+type BaseRow = {
   id: string;
   description: string | null;
   production_status: string | null;
-  genre_name: string | null;
-  age_rating_name: string | null;
+  genre_id: string | null;
+  age_rating_id: string | null;
 };
 
 function Pill({ children }: { children: React.ReactNode }) {
@@ -30,12 +30,6 @@ function Pill({ children }: { children: React.ReactNode }) {
 function toStrOrNull(v: any): string | null {
   const s = String(v ?? "").trim();
   return s.length ? s : null;
-}
-
-function pickFirstEmbed(v: any): any | null {
-  if (!v) return null;
-  if (Array.isArray(v)) return v[0] ?? null;
-  return v;
 }
 
 function pickDisplayName(obj: any): string | null {
@@ -54,13 +48,18 @@ function pickDisplayName(obj: any): string | null {
 export default function ItemDescription(p: Props) {
   const itemId = p.catalogItemId;
 
-  const [row, setRow] = useState<Row>({
+  const [base, setBase] = useState<BaseRow>({
     id: itemId,
     description: null,
     production_status: null,
-    genre_name: null,
-    age_rating_name: null,
+    genre_id: null,
+    age_rating_id: null,
   });
+
+  const [genreName, setGenreName] = useState<string | null>(null);
+  const [ageRatingName, setAgeRatingName] = useState<string | null>(null);
+
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     if (!itemId) return;
@@ -68,57 +67,55 @@ export default function ItemDescription(p: Props) {
     let cancelled = false;
 
     async function load() {
-      // 1) Try with joins (Genre + Age)
-      const selectWithJoins = `
-        id,
-        description,
-        production_status,
-        genre:genres(*),
-        age_rating:age_ratings(*)
-      `;
+      setLoaded(false);
 
-      const r1 = await supabase.from("catalog_items").select(selectWithJoins).eq("id", itemId).single();
+      // 1) Always load the base item fields (this is what was “working before”)
+      const { data, error } = await supabase
+        .from("catalog_items")
+        .select("id, description, production_status, genre_id, age_rating_id")
+        .eq("id", itemId)
+        .single();
 
       if (cancelled) return;
 
-      if (!r1.error && r1.data) {
-        const genreObj = pickFirstEmbed((r1.data as any).genre);
-        const ageObj = pickFirstEmbed((r1.data as any).age_rating);
-
-        setRow({
-          id: String((r1.data as any).id),
-          description: (r1.data as any).description ?? null,
-          production_status: (r1.data as any).production_status ?? null,
-          genre_name: pickDisplayName(genreObj),
-          age_rating_name: pickDisplayName(ageObj),
-        });
+      if (error || !data) {
+        console.error("ItemDescription base load error:", error);
+        // Don’t blank the UI; just mark as loaded and keep defaults.
+        setLoaded(true);
         return;
       }
 
-      // 2) Fallback: base fields only (so the block never goes blank)
-      const selectBase = `
-        id,
-        description,
-        production_status
-      `;
+      const nextBase: BaseRow = {
+        id: String((data as any).id),
+        description: (data as any).description ?? null,
+        production_status: (data as any).production_status ?? null,
+        genre_id: (data as any).genre_id ? String((data as any).genre_id) : null,
+        age_rating_id: (data as any).age_rating_id ? String((data as any).age_rating_id) : null,
+      };
 
-      const r2 = await supabase.from("catalog_items").select(selectBase).eq("id", itemId).single();
+      setBase(nextBase);
 
-      if (cancelled) return;
+      // reset names before lookup
+      setGenreName(null);
+      setAgeRatingName(null);
 
-      if (r2.error || !r2.data) {
-        console.error("ItemDescription load failed:", r1.error ?? r2.error);
-        // keep whatever we already had (don’t blank the UI)
-        return;
+      // 2) Look up Genre name (no joins)
+      if (nextBase.genre_id) {
+        const rG = await supabase.from("genres").select("*").eq("id", nextBase.genre_id).single();
+        if (!cancelled && !rG.error && rG.data) {
+          setGenreName(pickDisplayName(rG.data));
+        }
       }
 
-      setRow({
-        id: String((r2.data as any).id),
-        description: (r2.data as any).description ?? null,
-        production_status: (r2.data as any).production_status ?? null,
-        genre_name: null,
-        age_rating_name: null,
-      });
+      // 3) Look up Age rating name (no joins)
+      if (nextBase.age_rating_id) {
+        const rA = await supabase.from("age_ratings").select("*").eq("id", nextBase.age_rating_id).single();
+        if (!cancelled && !rA.error && rA.data) {
+          setAgeRatingName(pickDisplayName(rA.data));
+        }
+      }
+
+      if (!cancelled) setLoaded(true);
     }
 
     load();
@@ -127,24 +124,28 @@ export default function ItemDescription(p: Props) {
     };
   }, [itemId]);
 
-  const prod = useMemo(() => formatProductionStatus(row.production_status), [row.production_status]);
+  const prod = useMemo(() => formatProductionStatus(base.production_status), [base.production_status]);
   const prodLabel = prod?.label && prod.label !== "—" ? prod.label : "Status unknown";
 
+  // IMPORTANT: never return null — the block should always “exist”
   return (
     <div>
-      {/* Top row pills (matches your screenshot style) */}
+      {/* Top row pills: keep your original Production pill + add Genre/Age rating */}
       <div className="flex flex-wrap gap-2">
         <Pill>Production: {prodLabel}</Pill>
-        {row.genre_name ? <Pill>Genre: {row.genre_name}</Pill> : null}
-        {row.age_rating_name ? <Pill>Age rating: {row.age_rating_name}</Pill> : null}
+        {genreName ? <Pill>Genre: {genreName}</Pill> : null}
+        {ageRatingName ? <Pill>Age rating: {ageRatingName}</Pill> : null}
       </div>
 
-      {/* Body: render description only if it exists. No empty-state message. */}
-      {row.description ? (
-        <div className="mt-3 text-sm text-slate-800 whitespace-pre-wrap">{row.description}</div>
+      {/* Description: show exactly like before (only if it exists). No empty-state message. */}
+      {base.description ? (
+        <div className="mt-3 text-sm text-slate-800 whitespace-pre-wrap">{base.description}</div>
       ) : (
         <div className="mt-3" />
       )}
+
+      {/* Optional: keep layout stable while loading without adding new UI */}
+      {!loaded ? <div className="sr-only">Loading</div> : null}
     </div>
   );
 }
