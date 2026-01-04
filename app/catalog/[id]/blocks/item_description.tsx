@@ -1132,7 +1132,7 @@ export default function ItemDescription({
 
               {(isMovieCategory || isMusicCategory) && !editing && selectedGenreNames.length === 0 ? (
                 <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-                  This item has no genres. That’s going to make search/filtering crap. Add at least one.
+                  No genres are set for this item. Add at least one to improve search and filtering.
                 </div>
               ) : null}
 
@@ -1148,3 +1148,4 @@ export default function ItemDescription({
     </div>
   );
 }
+
