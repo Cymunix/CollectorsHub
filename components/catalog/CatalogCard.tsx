@@ -44,31 +44,20 @@ function normalise(s: string) {
   return String(s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-function computeVariant(item: CatalogCard): string | null {
-  const rawName = String(item.name ?? "").trim();
-  const rawSecondary = String(item.secondary ?? "").trim();
-  const secondary = rawSecondary && rawSecondary !== "—" ? rawSecondary : "";
+/** Edition / variant text */
+function computeEdition(item: CatalogCard): string | null {
+  const name = String(item.name ?? "").trim();
+  const secondary = String(item.secondary ?? "").trim();
+  const version = String((item as any).version ?? "").trim();
 
-  // If secondary repeats the name, ignore it
-  if (secondary && (normalise(secondary) === normalise(rawName) || normalise(secondary).includes(normalise(rawName)))) {
-    return null;
-  }
+  if (version) return version;
+  if (!secondary || secondary === "—") return null;
 
-  // Prefer an explicit version if present
-  const v = String((item as any).version ?? "").trim();
-  if (v) return v;
+  const nS = normalise(secondary);
+  const nN = normalise(name);
+  if (nS === nN || nS.includes(nN) || nN.includes(nS)) return null;
 
-  if (secondary) return secondary;
-
-  // Fallback: try to extract after dash
-  const hasDash = rawName.includes(" - ") || rawName.includes(" — ") || rawName.includes(" – ");
-  if (hasDash) {
-    const parts = rawName.split(/ — | – | - /);
-    const right = parts.slice(1).join(" - ").trim();
-    if (right) return right;
-  }
-
-  return null;
+  return secondary;
 }
 
 function safeNumber(v: any): number | null {
@@ -77,14 +66,18 @@ function safeNumber(v: any): number | null {
 }
 
 /**
- * Tier-7 "complete unsealed" pricing.
- * Supports:
- * - price_tier10_7_cad (flat)
- * - price_tier10_cad or pricing_tier10 maps
- * - fallback price_cad / market_price_cad / estimated_price_cad / latest_sale_price_cad
+ * Default price = Complete / unsealed average (your “default” when opening an item).
+ * Primary source: default_price_cad
+ * Fallbacks: tier-7 fields if present, else generic price fields.
  */
-function getTier7PriceCad(item: CatalogCard): number | null {
+function getDefaultPriceCad(item: CatalogCard): number | null {
   const anyIt = item as any;
+
+  // ✅ the one you actually want everywhere
+  const dp = safeNumber(anyIt.default_price_cad);
+  if (dp !== null) return dp;
+
+  // fallback: tier-7 map/field (if you have it)
   const tier10 = 7;
 
   const flat = safeNumber(anyIt[`price_tier10_${tier10}_cad`]);
@@ -102,6 +95,7 @@ function getTier7PriceCad(item: CatalogCard): number | null {
     if (v !== null) return v;
   }
 
+  // generic fallbacks
   const p =
     safeNumber(anyIt.price_cad) ??
     safeNumber(anyIt.market_price_cad) ??
@@ -111,12 +105,11 @@ function getTier7PriceCad(item: CatalogCard): number | null {
   return p ?? null;
 }
 
-function formatMoneyCAD(n: number | null) {
-  if (n === null) return "—";
+function formatMoneyCAD(n: number) {
   return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD" }).format(n);
 }
 
-function kindBadge(kind: CatalogCard["kind"]) {
+function kindLabel(kind: CatalogCard["kind"]) {
   const k = String(kind ?? "").toLowerCase();
   if (k === "minifig") return "MINIFIG";
   return k.replace(/_/g, " ").toUpperCase();
@@ -141,12 +134,14 @@ export default function CatalogCardTile({
 }) {
   const showExplicitCollection = quickAddDefault !== "collection";
 
-  const badgeText = useMemo(() => kindBadge(item.kind), [item.kind]);
-  const variant = useMemo(() => computeVariant(item), [item]);
-  const tier7 = useMemo(() => getTier7PriceCad(item), [item]);
+  const edition = useMemo(() => computeEdition(item), [item]);
+  const kindText = useMemo(() => kindLabel(item.kind), [item.kind]);
+  const defaultPrice = useMemo(() => getDefaultPriceCad(item), [item]);
 
   const year =
     typeof item.release_year === "number" && Number.isFinite(item.release_year) ? String(item.release_year) : "";
+
+  const pricePill = defaultPrice !== null ? `Avg ${formatMoneyCAD(defaultPrice)}` : "No price";
 
   // ===== LIST / RECTANGLE LAYOUT =====
   if (layout === "list") {
@@ -166,9 +161,11 @@ export default function CatalogCardTile({
               <div className="text-[11px] text-gray-400">No image</div>
             )}
 
-            {/* Badge: constrain width so it NEVER overlaps buttons (even if you add buttons later) */}
-            <div className="absolute left-2 top-2 max-w-[78px] rounded-full border border-white/40 bg-white/90 px-2 py-1">
-              <div className="text-[10px] font-semibold text-slate-800 truncate">{badgeText}</div>
+            {/* PRICE pill (top-left over image) */}
+            <div className="absolute left-2 top-2">
+              <div className="max-w-[100px] rounded-full border border-white/40 bg-white/90 px-2 py-1">
+                <div className="text-[10px] font-semibold text-slate-900 truncate">{pricePill}</div>
+              </div>
             </div>
           </div>
 
@@ -176,18 +173,15 @@ export default function CatalogCardTile({
           <div className="min-w-0">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
-                {/* PRICE (top line) */}
-                <div className="text-sm font-semibold text-slate-900 truncate">
-                  {tier7 !== null ? `${formatMoneyCAD(tier7)} avg (tier 7)` : "— avg (tier 7)"}
-                </div>
+                {/* Edition */}
+                <div className="text-[11px] text-slate-600 line-clamp-2">{edition || "—"}</div>
 
-                {/* VERSION / VARIANT (second line) */}
-                <div className="mt-1 text-[11px] text-slate-600 line-clamp-2">{variant || "—"}</div>
+                {/* Category/kind UNDER edition */}
+                <div className="mt-1 text-[10px] font-semibold text-slate-500">{kindText}</div>
 
-                {/* CATALOG NAME (third line) */}
-                <div className="mt-2 text-xs font-semibold text-[#0F172A] line-clamp-2">{item.name}</div>
+                {/* Catalog name */}
+                <div className="mt-2 text-sm font-semibold text-[#0F172A] line-clamp-2">{item.name}</div>
 
-                {/* Meta row */}
                 <div className="mt-3 flex items-center gap-3 text-[11px] text-[#94A3B8]">
                   {year ? <span>{year}</span> : <span className="text-[#CBD5E1]">—</span>}
                 </div>
@@ -252,7 +246,7 @@ export default function CatalogCardTile({
           <div className="h-full w-full flex items-center justify-center text-[11px] text-gray-400">No image</div>
         )}
 
-        {/* Controls */}
+        {/* Quick actions (top-right) */}
         <div className="absolute top-2 right-2 flex items-center gap-1.5">
           <IconButton
             title="Add to wishlist"
@@ -290,24 +284,22 @@ export default function CatalogCardTile({
           </IconButton>
         </div>
 
-        {/* Badge: reserve space so it can't run under the buttons */}
+        {/* PRICE pill (top-left over image). Reserve space so it can't run under the buttons */}
         <div className="absolute left-2 top-2 pr-[110px]">
           <div className="max-w-full rounded-full border border-white/40 bg-white/90 px-2 py-1">
-            <div className="text-[10px] font-semibold text-slate-800 truncate">{badgeText}</div>
+            <div className="text-[10px] font-semibold text-slate-900 truncate">{pricePill}</div>
           </div>
         </div>
       </div>
 
       <div className="p-3">
-        {/* PRICE (top line) */}
-        <p className="text-xs font-semibold text-slate-900 truncate">
-          {tier7 !== null ? `${formatMoneyCAD(tier7)} avg (tier 7)` : "— avg (tier 7)"}
-        </p>
+        {/* Edition */}
+        <p className="text-[11px] text-slate-600 line-clamp-2">{edition || "—"}</p>
 
-        {/* VERSION / VARIANT (second line) */}
-        <p className="mt-1 text-[11px] text-slate-600 line-clamp-2">{variant || "—"}</p>
+        {/* Category/kind UNDER edition */}
+        <p className="mt-1 text-[10px] font-semibold text-slate-500">{kindText}</p>
 
-        {/* CATALOG NAME (third line) */}
+        {/* Catalog name */}
         <p className="mt-2 text-xs font-semibold text-slate-900 line-clamp-2">{item.name}</p>
 
         {/* Year */}
