@@ -7,8 +7,6 @@ import { formatProductionStatus } from "@/lib/catalog/statusFormat";
 
 type Props = {
   catalogItemId: string;
-
-  // page.tsx passes these; accept them so TS doesn’t complain
   isAdmin?: boolean;
   categoryName?: string | null;
 };
@@ -17,10 +15,17 @@ type Row = {
   id: string;
   description: string | null;
   production_status: string | null;
-
   genre_name: string | null;
   age_rating_name: string | null;
 };
+
+function Pill({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-center rounded-full border bg-white px-2 py-0.5 text-[11px] text-slate-700">
+      {children}
+    </span>
+  );
+}
 
 function toStrOrNull(v: any): string | null {
   const s = String(v ?? "").trim();
@@ -35,8 +40,6 @@ function pickFirstEmbed(v: any): any | null {
 
 function pickDisplayName(obj: any): string | null {
   if (!obj) return null;
-
-  // Don’t assume column names. Use whatever exists.
   return (
     toStrOrNull(obj.name) ??
     toStrOrNull(obj.label) ??
@@ -48,19 +51,16 @@ function pickDisplayName(obj: any): string | null {
   );
 }
 
-function Pill({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="inline-flex items-center rounded-full border bg-white px-2 py-0.5 text-[11px] text-slate-700">
-      {children}
-    </span>
-  );
-}
-
 export default function ItemDescription(p: Props) {
   const itemId = p.catalogItemId;
 
-  const [row, setRow] = useState<Row | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [row, setRow] = useState<Row>({
+    id: itemId,
+    description: null,
+    production_status: null,
+    genre_name: null,
+    age_rating_name: null,
+  });
 
   useEffect(() => {
     if (!itemId) return;
@@ -68,9 +68,8 @@ export default function ItemDescription(p: Props) {
     let cancelled = false;
 
     async function load() {
-      setLoading(true);
-
-      const select = `
+      // 1) Try with joins (Genre + Age)
+      const selectWithJoins = `
         id,
         description,
         production_status,
@@ -78,29 +77,48 @@ export default function ItemDescription(p: Props) {
         age_rating:age_ratings(*)
       `;
 
-      const { data, error } = await supabase.from("catalog_items").select(select).eq("id", itemId).single();
+      const r1 = await supabase.from("catalog_items").select(selectWithJoins).eq("id", itemId).single();
 
       if (cancelled) return;
 
-      if (error || !data) {
-        console.error("ItemDescription load error:", error);
-        setRow(null);
-        setLoading(false);
+      if (!r1.error && r1.data) {
+        const genreObj = pickFirstEmbed((r1.data as any).genre);
+        const ageObj = pickFirstEmbed((r1.data as any).age_rating);
+
+        setRow({
+          id: String((r1.data as any).id),
+          description: (r1.data as any).description ?? null,
+          production_status: (r1.data as any).production_status ?? null,
+          genre_name: pickDisplayName(genreObj),
+          age_rating_name: pickDisplayName(ageObj),
+        });
         return;
       }
 
-      const genreObj = pickFirstEmbed((data as any).genre);
-      const ageObj = pickFirstEmbed((data as any).age_rating);
+      // 2) Fallback: base fields only (so the block never goes blank)
+      const selectBase = `
+        id,
+        description,
+        production_status
+      `;
+
+      const r2 = await supabase.from("catalog_items").select(selectBase).eq("id", itemId).single();
+
+      if (cancelled) return;
+
+      if (r2.error || !r2.data) {
+        console.error("ItemDescription load failed:", r1.error ?? r2.error);
+        // keep whatever we already had (don’t blank the UI)
+        return;
+      }
 
       setRow({
-        id: String((data as any).id),
-        description: (data as any).description ?? null,
-        production_status: (data as any).production_status ?? null,
-        genre_name: pickDisplayName(genreObj),
-        age_rating_name: pickDisplayName(ageObj),
+        id: String((r2.data as any).id),
+        description: (r2.data as any).description ?? null,
+        production_status: (r2.data as any).production_status ?? null,
+        genre_name: null,
+        age_rating_name: null,
       });
-
-      setLoading(false);
     }
 
     load();
@@ -109,25 +127,22 @@ export default function ItemDescription(p: Props) {
     };
   }, [itemId]);
 
-  const prod = useMemo(() => formatProductionStatus(row?.production_status ?? null), [row?.production_status]);
-
-  if (loading) return null;
-  if (!row) return null;
+  const prod = useMemo(() => formatProductionStatus(row.production_status), [row.production_status]);
+  const prodLabel = prod?.label && prod.label !== "—" ? prod.label : "Status unknown";
 
   return (
     <div>
-      {/* Top row pills: Production + Genre + Age rating */}
+      {/* Top row pills (matches your screenshot style) */}
       <div className="flex flex-wrap gap-2">
-        {prod?.label && prod.label !== "—" ? <Pill>Production: {prod.label}</Pill> : null}
+        <Pill>Production: {prodLabel}</Pill>
         {row.genre_name ? <Pill>Genre: {row.genre_name}</Pill> : null}
         {row.age_rating_name ? <Pill>Age rating: {row.age_rating_name}</Pill> : null}
       </div>
 
-      {/* Body: only render description when it exists. NO empty-state message. */}
+      {/* Body: render description only if it exists. No empty-state message. */}
       {row.description ? (
         <div className="mt-3 text-sm text-slate-800 whitespace-pre-wrap">{row.description}</div>
       ) : (
-        // Keep spacing so the section still “exists” visually, without showing any text.
         <div className="mt-3" />
       )}
     </div>
