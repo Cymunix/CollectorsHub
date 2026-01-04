@@ -15,7 +15,7 @@ export type CatalogListRow = {
   production_status: string | null;
   image_url?: string | null;
 
-  // ✅ structured "description" fields (NO free text description)
+  // ✅ “description fields without the text”
   publisher: string | null; // legacy text column
   upc: string | null;
 
@@ -29,19 +29,20 @@ export type CatalogListRow = {
 
   epid_ebay: string | null;
 
-  // ✅ card-only ids (optional)
+  // ✅ card-only identifiers
   card_set_id?: string | null;
   card_number?: string | null;
   tcgplayer_id?: string | null;
 
-  // ✅ game platform / publisher ids + names (optional)
+  // ✅ normalised platform/publisher (handles weird column names)
   platform_id?: string | null;
-  platform_name?: string | null;
-
   game_publisher_id?: string | null;
+
+  // ✅ names (best-effort; may be null if schema doesn’t join cleanly)
+  platform_name?: string | null;
   publisher_name?: string | null;
 
-  // Normalised 1:1-ish join
+  // ✅ Normalised 1:1-ish join
   building_blocks?: {
     set_number: number | null;
     piece_count: number | null;
@@ -50,8 +51,10 @@ export type CatalogListRow = {
   } | null;
 };
 
-// Raw join shape from Supabase (arrays)
-type CatalogListRowRaw = Omit<CatalogListRow, "building_blocks" | "platform_name" | "publisher_name"> & {
+// Raw join shape from Supabase (arrays + optional nested join objects)
+type CatalogListRowRaw = {
+  [key: string]: any;
+
   building_blocks?: Array<{
     set_number: any;
     piece_count: any;
@@ -59,6 +62,7 @@ type CatalogListRowRaw = Omit<CatalogListRow, "building_blocks" | "platform_name
     retail_usd: any;
   }> | null;
 
+  // If your FKs are clean these will appear; if not, they’ll be null
   game_platforms?: { name?: any } | null;
   game_publishers?: { name?: any } | null;
 };
@@ -74,7 +78,18 @@ function toIntOrNull(v: any): number | null {
   return n === null ? null : Math.trunc(n);
 }
 
+function pickFirst(row: any, keys: string[]) {
+  for (const k of keys) {
+    if (row && Object.prototype.hasOwnProperty.call(row, k)) {
+      const v = row[k];
+      if (v !== undefined) return v;
+    }
+  }
+  return undefined;
+}
+
 export async function fetchCatalogListRows(params: {
+  // ✅ fetch by specific ids (used by CatalogGrid list toggle)
   ids?: string[] | null;
 
   search?: string | null;
@@ -86,50 +101,55 @@ export async function fetchCatalogListRows(params: {
   const ids = (params.ids ?? []).filter(Boolean);
   const limit = params.limit ?? 100;
 
-  let q = supabase
-    .from("catalog_items")
-    .select(
-      `
-        id,
-        name,
-        version,
-        category_id,
-        subcategory_id,
-        franchise_id,
-        production_status,
-        image_url,
+  // IMPORTANT:
+  // - We SELECT multiple possible column names for platform/publisher IDs because your table has casing variants.
+  // - We do NOT select the free-text description (big payload). We select structured fields only.
+  let q = supabase.from("catalog_items").select(`
+    id,
+    name,
+    version,
+    category_id,
+    subcategory_id,
+    franchise_id,
+    production_status,
+    image_url,
 
-        publisher,
-        upc,
+    publisher,
+    upc,
 
-        release_year,
-        release_month,
-        release_day,
+    release_year,
+    release_month,
+    release_day,
 
-        end_year,
-        end_month,
-        end_day,
+    end_year,
+    end_month,
+    end_day,
 
-        epid_ebay,
+    epid_ebay,
 
-        card_set_id,
-        card_number,
-        tcgplayer_id,
+    card_set_id,
+    card_number,
+    tcgplayer_id,
 
-        platform_id,
-        game_publisher_id,
+    platform_id,
+    Platform_id,
+    game_platform_id,
 
-        game_platforms:game_platforms ( name ),
-        game_publishers:game_publishers ( name ),
+    game_publisher_id,
+    publisher_id,
+    Publisher_Id,
+    Publisher_id,
 
-        building_blocks:catalog_building_blocks_rows (
-          set_number,
-          piece_count,
-          retail_cad,
-          retail_usd
-        )
-      `
-    );
+    game_platforms:game_platforms ( name ),
+    game_publishers:game_publishers ( name ),
+
+    building_blocks:catalog_building_blocks_rows (
+      set_number,
+      piece_count,
+      retail_cad,
+      retail_usd
+    )
+  `);
 
   if (ids.length) {
     q = q.in("id", ids);
@@ -151,42 +171,53 @@ export async function fetchCatalogListRows(params: {
   const raw = (data ?? []) as unknown as CatalogListRowRaw[];
 
   const normalised: CatalogListRow[] = raw.map((r) => {
-    const bb0 = (r.building_blocks ?? [])?.[0] ?? null;
+    const row: any = r as any;
+
+    const bb0 = (row.building_blocks ?? [])?.[0] ?? null;
+
+    // Normalise platform/publisher IDs from whatever the table actually has
+    const platformId =
+      pickFirst(row, ["platform_id", "Platform_id", "game_platform_id"]) ?? null;
+
+    const publisherId =
+      pickFirst(row, ["game_publisher_id", "publisher_id", "Publisher_Id", "Publisher_id"]) ??
+      null;
 
     return {
-      id: String((r as any).id),
-      name: String((r as any).name ?? ""),
-      version: (r as any).version ?? null,
+      id: String(row.id),
+      name: String(row.name ?? ""),
+      version: row.version ?? null,
 
-      category_id: (r as any).category_id ?? null,
-      subcategory_id: (r as any).subcategory_id ?? null,
-      franchise_id: (r as any).franchise_id ?? null,
+      category_id: row.category_id ?? null,
+      subcategory_id: row.subcategory_id ?? null,
+      franchise_id: row.franchise_id ?? null,
 
-      production_status: (r as any).production_status ?? null,
-      image_url: (r as any).image_url ?? null,
+      production_status: row.production_status ?? null,
+      image_url: row.image_url ?? null,
 
-      publisher: (r as any).publisher ?? null,
-      upc: (r as any).upc ?? null,
+      publisher: row.publisher ?? null,
+      upc: row.upc ?? null,
 
-      release_year: toIntOrNull((r as any).release_year),
-      release_month: toIntOrNull((r as any).release_month),
-      release_day: toIntOrNull((r as any).release_day),
+      release_year: toIntOrNull(row.release_year),
+      release_month: toIntOrNull(row.release_month),
+      release_day: toIntOrNull(row.release_day),
 
-      end_year: toIntOrNull((r as any).end_year),
-      end_month: toIntOrNull((r as any).end_month),
-      end_day: toIntOrNull((r as any).end_day),
+      end_year: toIntOrNull(row.end_year),
+      end_month: toIntOrNull(row.end_month),
+      end_day: toIntOrNull(row.end_day),
 
-      epid_ebay: (r as any).epid_ebay ?? null,
+      epid_ebay: row.epid_ebay ?? null,
 
-      card_set_id: (r as any).card_set_id ?? null,
-      card_number: (r as any).card_number ?? null,
-      tcgplayer_id: (r as any).tcgplayer_id ?? null,
+      card_set_id: row.card_set_id ?? null,
+      card_number: row.card_number ?? null,
+      tcgplayer_id: row.tcgplayer_id ?? null,
 
-      platform_id: (r as any).platform_id ?? null,
-      game_publisher_id: (r as any).game_publisher_id ?? null,
+      platform_id: platformId ? String(platformId) : null,
+      game_publisher_id: publisherId ? String(publisherId) : null,
 
-      platform_name: (r as any).game_platforms?.name ?? null,
-      publisher_name: (r as any).game_publishers?.name ?? null,
+      // Best-effort names from joins (only works if your FK is clean)
+      platform_name: row.game_platforms?.name ?? null,
+      publisher_name: row.game_publishers?.name ?? null,
 
       building_blocks: bb0
         ? {
@@ -199,6 +230,7 @@ export async function fetchCatalogListRows(params: {
     };
   });
 
+  // ✅ If ids were provided, return rows in the same order as ids
   if (ids.length) {
     const byId = new Map(normalised.map((r) => [r.id, r]));
     return ids.map((id) => byId.get(id)).filter(Boolean) as CatalogListRow[];
