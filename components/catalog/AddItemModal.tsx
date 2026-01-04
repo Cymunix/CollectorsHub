@@ -1,7 +1,7 @@
 // components/catalog/AddItemModal.tsx
 "use client";
 
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 
 import AddItemModalShell from "./AddItemModal.shell";
 
@@ -38,6 +38,9 @@ import ItemFranchiseEditor from "@/components/catalog/ItemFranchiseEditor";
 
 type NamedRow = { id: string; name: string };
 
+type GenreRow = { id: string; name: string };
+type AgeRatingRow = { id: string; system: string; code: string; label: string };
+
 type CatalogMeta = {
   categories: any[];
   subcategories: any[];
@@ -62,6 +65,10 @@ type CatalogMeta = {
   gamePublishers: NamedRow[];
 
   comicPublishers: any[];
+
+  // ✅ NEW
+  genres?: GenreRow[];
+  ageRatings?: AgeRatingRow[];
 
   [key: string]: any;
 };
@@ -273,6 +280,11 @@ export default function AddItemModal({
   const [bundleResults, setBundleResults] = useState<CatalogSearchRow[]>([]);
   const [bundleUiErr, setBundleUiErr] = useState<string | null>(null);
 
+  // ✅ Local fallback state for Genre/Age Rating if your form hook doesn’t yet expose setters
+  const [localGenreIds, setLocalGenreIds] = useState<string[]>([]);
+  const [localAgeRatingId, setLocalAgeRatingId] = useState<string>("");
+  const [localExplicit, setLocalExplicit] = useState<boolean>(false);
+
   const kind = String(form.itemKind || "building_blocks");
 
   const title = useMemo(() => {
@@ -300,6 +312,11 @@ export default function AddItemModal({
     setBundleQuery("");
     setBundleResults([]);
     setBundleUiErr(null);
+
+    // ✅ reset local genre/rating
+    setLocalGenreIds([]);
+    setLocalAgeRatingId("");
+    setLocalExplicit(false);
 
     setBanner(null);
     setCreatedCatalogItemId(null);
@@ -339,7 +356,11 @@ export default function AddItemModal({
       return;
     }
 
-    const row = await insertLookupRowSafe<any>("bb_themes", { name, subcategory_id: form.subcategoryId }, setBanner);
+    const row = await insertLookupRowSafe<any>(
+      "bb_themes",
+      { name, subcategory_id: form.subcategoryId },
+      setBanner
+    );
     if (!row) return;
 
     setMeta((m) => ({ ...m, bbThemes: sortByName([...(m.bbThemes ?? []), row]) }));
@@ -355,7 +376,11 @@ export default function AddItemModal({
       return;
     }
 
-    const row = await insertLookupRowSafe<any>("bb_subthemes", { name, theme_id: form.bbThemeId }, setBanner);
+    const row = await insertLookupRowSafe<any>(
+      "bb_subthemes",
+      { name, theme_id: form.bbThemeId },
+      setBanner
+    );
     if (!row) return;
 
     setMeta((m) => ({ ...m, bbSubthemes: sortByName([...(m.bbSubthemes ?? []), row]) }));
@@ -369,7 +394,10 @@ export default function AddItemModal({
     const row = await insertWithSlugSafe<any>("card_manufacturers", { name }, setBanner);
     if (!row) return;
 
-    setMeta((m) => ({ ...m, cardManufacturers: sortByName([...(m.cardManufacturers ?? []), row]) }));
+    setMeta((m) => ({
+      ...m,
+      cardManufacturers: sortByName([...(m.cardManufacturers ?? []), row]),
+    }));
     form.setCardManufacturerId?.(row.id);
   };
 
@@ -382,7 +410,11 @@ export default function AddItemModal({
       return;
     }
 
-    const row = await insertWithSlugSafe<any>("card_sets", { name, manufacturer_id: form.cardManufacturerId }, setBanner);
+    const row = await insertWithSlugSafe<any>(
+      "card_sets",
+      { name, manufacturer_id: form.cardManufacturerId },
+      setBanner
+    );
     if (!row) return;
 
     setMeta((m) => ({ ...m, cardSets: sortByName([...(m.cardSets ?? []), row]) }));
@@ -421,6 +453,91 @@ export default function AddItemModal({
     setMeta((m) => ({ ...m, people: sortByName([...(m.people ?? []), row]) }));
     return row;
   };
+
+  /* ---------------- meta: genres + age ratings ---------------- */
+
+  useEffect(() => {
+    if (!open) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const [{ data: g, error: gErr }, { data: ar, error: arErr }] = await Promise.all([
+          supabase.from("genres").select("id,name").order("name", { ascending: true }),
+          supabase
+            .from("age_ratings")
+            .select("id,system,code,label")
+            .order("system", { ascending: true })
+            .order("code", { ascending: true }),
+        ]);
+
+        if (cancelled) return;
+        if (gErr) throw gErr;
+        if (arErr) throw arErr;
+
+        setMeta((m) => ({
+          ...m,
+          genres: (g ?? []) as GenreRow[],
+          ageRatings: (ar ?? []) as AgeRatingRow[],
+        }));
+      } catch (e: any) {
+        // Don’t hard-fail the whole modal; just show a banner so you see it immediately.
+        if (!cancelled) {
+          setBanner({ type: "error", msg: e?.message ?? "Failed to load genres/age ratings." });
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, setMeta]);
+
+  const genres = useMemo(() => sortByName((meta.genres ?? []) as GenreRow[]), [meta.genres]);
+  const ageRatings = useMemo(() => (meta.ageRatings ?? []) as AgeRatingRow[], [meta.ageRatings]);
+
+  const ratingSystemForKind = useMemo(() => {
+    if (kind === "movie") return "MPAA";
+    if (kind === "gaming") return "ESRB";
+    if (kind === "music") return "MUSIC";
+    return null;
+  }, [kind]);
+
+  const filteredRatings = useMemo(() => {
+    if (!ratingSystemForKind) return [];
+    return ageRatings.filter((r) => String(r.system).toUpperCase() === String(ratingSystemForKind).toUpperCase());
+  }, [ageRatings, ratingSystemForKind]);
+
+  // Bind form or local fallback
+  const genreIds: string[] = (form.genreIds ?? localGenreIds) as string[];
+  const setGenreIds = (ids: string[]) => {
+    if (typeof form.setGenreIds === "function") form.setGenreIds(ids);
+    else setLocalGenreIds(ids);
+  };
+
+  const ageRatingId: string = String(form.ageRatingId ?? localAgeRatingId ?? "");
+  const setAgeRatingId = (id: string) => {
+    if (typeof form.setAgeRatingId === "function") form.setAgeRatingId(id);
+    else setLocalAgeRatingId(id);
+  };
+
+  const explicitContent: boolean = Boolean(form.explicitContent ?? localExplicit);
+  const setExplicitContent = (v: boolean) => {
+    if (typeof form.setExplicitContent === "function") form.setExplicitContent(v);
+    else setLocalExplicit(v);
+  };
+
+  // When kind changes, prevent stale rating from wrong system
+  useEffect(() => {
+    if (!open) return;
+    if (!ratingSystemForKind) return;
+    if (!ageRatingId) return;
+
+    const found = filteredRatings.some((r) => String(r.id) === String(ageRatingId));
+    if (!found) setAgeRatingId("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind]);
 
   /* ---------------- bundle helpers ---------------- */
 
@@ -519,6 +636,11 @@ export default function AddItemModal({
         catalogVersion: form.catalogVersion,
 
         productionStatus: form.productionStatus ?? "unknown",
+
+        // ✅ NEW: Save to catalog_items
+        genreIds: uniqStrings(genreIds ?? []),
+        ageRatingId: ageRatingId ? ageRatingId : null,
+        explicitContent: kind === "music" ? !!explicitContent : null,
 
         wikiSummary: form.wikiSummary,
         wikiDescription: form.wikiDescription,
@@ -657,6 +779,8 @@ export default function AddItemModal({
     return cardSets.filter((s: any) => String(s.manufacturer_id) === manId);
   }, [cardSets, form.cardManufacturerId]);
 
+  const showGenreAndRating = kind === "movie" || kind === "music" || kind === "gaming";
+
   /* ---------------- render ---------------- */
 
   return (
@@ -712,6 +836,121 @@ export default function AddItemModal({
           />
 
           <GlobalDetailsSection {...form} />
+
+          {/* ✅ Genre + Age Rating */}
+          {showGenreAndRating ? (
+            <SectionShell
+              title="Genre & Age Rating"
+              subtitle={
+                kind === "movie"
+                  ? "Pick genres (multi) and an MPAA rating."
+                  : kind === "gaming"
+                    ? "Pick genres (multi) and an ESRB rating."
+                    : "Pick genres (multi) and mark explicit content."
+              }
+            >
+              <div className="space-y-4">
+                {/* Genres */}
+                <div>
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-semibold text-[#0F172A]">Genres</div>
+                    <div className="text-[11px] text-[#64748B]">{(genreIds?.length ?? 0) || 0} selected</div>
+                  </div>
+
+                  {genres.length === 0 ? (
+                    <div className="mt-2 rounded-xl border bg-[#F8FAFC] p-3 text-xs text-[#64748B]">
+                      No genres found. Seed the <span className="font-mono">genres</span> table.
+                    </div>
+                  ) : (
+                    <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      {genres.map((g) => {
+                        const checked = (genreIds ?? []).includes(g.id);
+                        return (
+                          <label
+                            key={g.id}
+                            className="flex items-center gap-2 rounded-xl border border-[#E5E9F2] bg-white p-3 text-sm"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => setGenreIds(toggleId(genreIds ?? [], g.id))}
+                              disabled={saving}
+                              className="h-4 w-4"
+                            />
+                            <span className="min-w-0 truncate">{g.name}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Age rating / Explicit */}
+                {kind === "music" ? (
+                  <div className="rounded-2xl border border-[#E5E9F2] bg-white p-4">
+                    <div className="text-xs font-semibold text-[#0F172A]">Explicit</div>
+                    <div className="mt-1 text-[11px] text-[#64748B]">Use this for Parental filters and browsing.</div>
+                    <label className="mt-3 inline-flex items-center gap-2 text-sm text-[#0F172A]">
+                      <input
+                        type="checkbox"
+                        checked={!!explicitContent}
+                        onChange={(e) => setExplicitContent(!!e.target.checked)}
+                        disabled={saving}
+                        className="h-4 w-4"
+                      />
+                      Explicit content
+                    </label>
+
+                    {/* Optional: allow MUSIC CLEAN/EXPLICIT rating too if you want */}
+                    {filteredRatings.length ? (
+                      <div className="mt-4">
+                        <div className="text-xs font-semibold text-[#0F172A]">Rating</div>
+                        <select
+                          value={ageRatingId ?? ""}
+                          onChange={(e) => setAgeRatingId(e.target.value)}
+                          disabled={saving}
+                          className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+                        >
+                          <option value="">Select…</option>
+                          {filteredRatings.map((r) => (
+                            <option key={r.id} value={r.id}>
+                              {r.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div>
+                    <div className="text-xs font-semibold text-[#0F172A]">
+                      Age rating{ratingSystemForKind ? ` (${ratingSystemForKind})` : ""}
+                    </div>
+                    <select
+                      value={ageRatingId ?? ""}
+                      onChange={(e) => setAgeRatingId(e.target.value)}
+                      disabled={saving}
+                      className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+                    >
+                      <option value="">Select rating…</option>
+                      {filteredRatings.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.label}
+                        </option>
+                      ))}
+                    </select>
+
+                    {ratingSystemForKind && filteredRatings.length === 0 ? (
+                      <div className="mt-2 rounded-xl border bg-[#F8FAFC] p-3 text-xs text-[#64748B]">
+                        No ratings found for <b>{ratingSystemForKind}</b>. Seed the{" "}
+                        <span className="font-mono">age_ratings</span> table.
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+              </div>
+            </SectionShell>
+          ) : null}
 
           {/* =========================
               KIND-SPECIFIC FIELDS
@@ -1012,6 +1251,7 @@ export default function AddItemModal({
 
           {kind === "movie" ? (
             <SectionShell title="Movie" subtitle="Search people and add them as Directors / Actors.">
+              {/* ... unchanged movie section ... */}
               <div className="space-y-4">
                 {(people as any).peopleUiErr ? (
                   <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800">
@@ -1019,7 +1259,6 @@ export default function AddItemModal({
                   </div>
                 ) : null}
 
-                {/* Search */}
                 <div>
                   <div className="text-xs font-semibold text-[#0F172A]">Find person</div>
                   <div className="mt-2 flex items-center gap-2">
@@ -1043,17 +1282,13 @@ export default function AddItemModal({
                       {(people as any).peopleSearching ? "Searching..." : "Search"}
                     </button>
 
-                    {/* ✅ FIXED: create uses local createPerson() (real DB insert), then re-search */}
                     <button
                       type="button"
                       onClick={async () => {
-                        const row = await createPerson(); // prompts + inserts into "people"
+                        const row = await createPerson();
                         if (!row) return;
-
-                        // re-search so it shows up immediately in results
                         (people as any).setPeopleQuery?.(row.name);
                         await (people as any).searchPeople?.();
-
                         setBanner({ type: "success", msg: `Created ${row.name}. Now add them as Director/Actor.` });
                       }}
                       disabled={saving}
@@ -1063,7 +1298,6 @@ export default function AddItemModal({
                     </button>
                   </div>
 
-                  {/* Results */}
                   <div className="mt-3 space-y-2">
                     {((people as any).peopleResults ?? []).map((r: any) => (
                       <div
@@ -1098,7 +1332,6 @@ export default function AddItemModal({
                   </div>
                 </div>
 
-                {/* Selected Directors */}
                 <div className="rounded-2xl border border-[#E5E9F2] bg-white p-4">
                   <div className="text-sm font-semibold text-[#0F172A]">Directors</div>
                   <div className="mt-2 space-y-2">
@@ -1128,7 +1361,6 @@ export default function AddItemModal({
                   </div>
                 </div>
 
-                {/* Selected Actors */}
                 <div className="rounded-2xl border border-[#E5E9F2] bg-white p-4">
                   <div className="text-sm font-semibold text-[#0F172A]">Actors</div>
                   <div className="mt-2 space-y-2">
