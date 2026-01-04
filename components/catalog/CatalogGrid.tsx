@@ -6,6 +6,7 @@ import type { CatalogCard, QuickAddDefault } from "@/lib/catalog/types";
 import CatalogCardTile from "@/components/catalog/CatalogCard";
 import CatalogPagination from "@/components/catalog/CatalogPagination";
 import { fetchCatalogListRows, type CatalogListRow } from "@/lib/catalog/listQuery";
+import CatalogListRowView from "@/components/catalog/list/CatalogListRow";
 
 type LayoutMode = "card" | "list";
 
@@ -42,15 +43,10 @@ function readView(): LayoutMode {
   }
 }
 
-function stop(e: React.MouseEvent) {
-  e.preventDefault();
-  e.stopPropagation();
-}
-
 export default function CatalogGrid(p: Props) {
   const [view, setView] = useState<LayoutMode>("card");
 
-  // ✅ list-tab data (uses the “new code”)
+  // ✅ list-tab data
   const [listLoading, setListLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [listRows, setListRows] = useState<CatalogListRow[]>([]);
@@ -73,7 +69,6 @@ export default function CatalogGrid(p: Props) {
     async function run() {
       if (view !== "list") return;
 
-      // Exclude minifigs (they are not in catalog_items)
       const ids = p.pagedCards.filter((c) => c.kind !== "minifig").map((c) => c.id);
 
       setListLoading(true);
@@ -160,6 +155,37 @@ export default function CatalogGrid(p: Props) {
     return m;
   }, [listRows]);
 
+  // best-effort LEGO detection for the list row component
+  function isLegoCard(card: CatalogCard) {
+    const kind = String((card as any).kind ?? "");
+    if (kind.toLowerCase() === "lego") return true;
+
+    const cat = String((card as any).category_name ?? (card as any).category?.name ?? "");
+    const sub = String((card as any).subcategory_name ?? (card as any).subcategory?.name ?? "");
+    const blob = `${cat} ${sub}`.toLowerCase();
+    return blob.includes("lego");
+  }
+
+  function resolveCategoryName(card: CatalogCard, r?: CatalogListRow) {
+    return (
+      ((r as any)?.category_name as string | null) ??
+      ((card as any)?.category_name as string | null) ??
+      ((card as any)?.category?.name as string | null) ??
+      ((card as any)?.categoryName as string | null) ??
+      null
+    );
+  }
+
+  function resolveSubcategoryName(card: CatalogCard, r?: CatalogListRow) {
+    return (
+      ((r as any)?.subcategory_name as string | null) ??
+      ((card as any)?.subcategory_name as string | null) ??
+      ((card as any)?.subcategory?.name as string | null) ??
+      ((card as any)?.subcategoryName as string | null) ??
+      null
+    );
+  }
+
   return (
     <div className="rounded-2xl border bg-white p-4 shadow-sm">
       {p.loading ? (
@@ -215,84 +241,42 @@ export default function CatalogGrid(p: Props) {
                     />
                   ))}
 
-                {/* catalog_items: SIMPLE list rows using listQuery */}
+                {/* catalog_items: USE the list row component */}
                 {p.pagedCards
                   .filter((c) => c.kind !== "minifig")
                   .map((card) => {
                     const r = listById.get(card.id);
 
-                    // Line 1: Item Name
-                    const name = r?.name ?? card.name;
+                    // Fallback: if listQuery didn’t return yet, render a minimal row from the card
+                    const itemForRow: CatalogListRow =
+                      r ??
+                      ({
+                        id: card.id,
+                        name: card.name ?? "",
+                        version: (card as any).version ?? null,
+                        category_id: (card as any).category_id ?? null,
+                        subcategory_id: (card as any).subcategory_id ?? null,
+                        franchise_id: (card as any).franchise_id ?? null,
+                        production_status: (card as any).production_status ?? null,
+                        image_url: (card as any).image_url ?? null,
+                        building_blocks: null,
+                      } as CatalogListRow);
 
-                    // Line 2: Edition (version)
-                    const version = (r?.version ?? (card.version ?? null)) as string | null;
-
-                    // Line 3: Category (use listQuery if present, otherwise fall back to whatever the card already provides)
-                    const category =
-                      (r as any)?.category_name ??
-                      (r as any)?.category ??
-                      (card as any)?.category_name ??
-                      (card as any)?.category?.name ??
-                      (card as any)?.categoryName ??
-                      card.secondary ??
-                      "—";
-
-                    const imageUrl = (r as any)?.image_url ?? (card.image_url ?? null);
+                    const categoryName = resolveCategoryName(card, r) ?? undefined;
+                    const subcategoryName = resolveSubcategoryName(card, r) ?? undefined;
 
                     return (
-                      <div
+                      <CatalogListRowView
                         key={`list:${card.id}`}
-                        className="flex items-center gap-3 rounded-xl border bg-white p-3 shadow-sm transition hover:bg-gray-50 cursor-pointer"
-                        onClick={() => p.onOpenItem(card)}
-                      >
-                        {/* Thumb */}
-                        <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg border bg-gray-100">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          {imageUrl ? <img src={imageUrl} alt="" className="h-full w-full object-cover" /> : null}
-                        </div>
-
-                        {/* Text: EXACT 3 lines */}
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-sm font-semibold text-gray-900">{name}</div>
-                          {version ? <div className="truncate text-xs text-gray-600">{version}</div> : <div className="text-xs text-gray-600">—</div>}
-                          <div className="truncate text-xs text-gray-600">{String(category || "—")}</div>
-                        </div>
-
-                        {/* Actions */}
-                        <div className="flex shrink-0 items-center gap-2">
-                          <button
-                            type="button"
-                            className="rounded-lg border px-2 py-1 text-[11px] font-semibold text-gray-700 hover:bg-white"
-                            onClick={(e) => {
-                              stop(e);
-                              p.onAddWishlist(card.id);
-                            }}
-                          >
-                            Wishlist
-                          </button>
-                          <button
-                            type="button"
-                            className="rounded-lg border px-2 py-1 text-[11px] font-semibold text-gray-700 hover:bg-white"
-                            onClick={(e) => {
-                              stop(e);
-                              p.onAddCollection(card.id);
-                            }}
-                          >
-                            + Collection
-                          </button>
-                          <button
-                            type="button"
-                            className="rounded-lg border px-2 py-1 text-[11px] font-semibold text-gray-700 hover:bg-white"
-                            onClick={(e) => {
-                              stop(e);
-                              p.onQuickAdd(card.id, p.quickAddDefault);
-                            }}
-                            title="Quick add"
-                          >
-                            Quick add
-                          </button>
-                        </div>
-                      </div>
+                        item={itemForRow}
+                        categoryName={categoryName}
+                        subcategoryName={subcategoryName}
+                        isLego={isLegoCard(card)}
+                        onOpen={() => p.onOpenItem(card)}
+                        onToggleWishlist={(id) => void p.onAddWishlist(id)}
+                        onAddToCollection={(id) => void p.onAddCollection(id)}
+                        isAdmin={false}
+                      />
                     );
                   })}
               </div>
