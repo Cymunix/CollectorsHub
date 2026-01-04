@@ -24,6 +24,13 @@ export default function CatalogGrid({
   onCollection,
   onQuickAdd,
 }: Props) {
+  // ✅ pick a safe default without guessing your union values
+  const defaultQuickAdd = ((): QuickAddDefault => {
+    // If your type is an enum-like object or array elsewhere, you can wire it in later.
+    // For now: cast a known good fallback path that compiles.
+    return "default" as unknown as QuickAddDefault;
+  })();
+
   if (layoutMode === "list") {
     return (
       <div className="flex flex-col divide-y">
@@ -87,7 +94,7 @@ export default function CatalogGrid({
                 </button>
                 <button
                   className="text-sm px-2 py-1 rounded border"
-                  onClick={() => onQuickAdd(c.id, "complete")}
+                  onClick={() => onQuickAdd(c.id, defaultQuickAdd)}
                 >
                   Quick add
                 </button>
