@@ -6,15 +6,14 @@ import Select from "../blocks/Select";
 import InlineCreateButton from "../blocks/InlineCreateButton";
 import type { Category, Subcategory, Franchise } from "@/lib/catalog/types";
 
-// Adding the missing types for the props
 export default function ClassificationSection({
   metaLoading,
   metaError,
   categories,
   subcategories,
   franchises,
-  genres,      // Added
-  ageRatings,  // Added
+  genres,           // From meta hook
+  ageRatings,       // From meta hook
 
   categoryId,
   setCategoryId,
@@ -22,10 +21,10 @@ export default function ClassificationSection({
   setSubcategoryId,
   franchiseId,
   setFranchiseId,
-  genreIds,    // Added
-  setGenreIds, // Added
-  ageRatingId, // Added
-  setAgeRatingId, // Added
+  genreIds,         // State from Modal
+  setGenreIds,      // State from Modal
+  ageRatingId,      // State from Modal
+  setAgeRatingId,   // State from Modal
 
   onCreateFranchise,
 }: {
@@ -34,8 +33,8 @@ export default function ClassificationSection({
   categories: Category[];
   subcategories: Subcategory[];
   franchises: Franchise[];
-  genres: any[];      // Added
-  ageRatings: any[];  // Added
+  genres: any[];
+  ageRatings: any[];
 
   categoryId: string;
   setCategoryId: (v: string) => void;
@@ -43,19 +42,22 @@ export default function ClassificationSection({
   setSubcategoryId: (v: string) => void;
   franchiseId: string;
   setFranchiseId: (v: string) => void;
-  genreIds: string[];      // Added
-  setGenreIds: (v: string[]) => void; // Added
-  ageRatingId: string;     // Added
-  setAgeRatingId: (v: string) => void; // Added
+  genreIds: string[];
+  setGenreIds: (v: string[]) => void;
+  ageRatingId: string;
+  setAgeRatingId: (v: string) => void;
 
   onCreateFranchise: () => void;
 }) {
-  const modalSubcategories = subcategories.filter((sc) => !categoryId || sc.category_id === categoryId);
+  // Filters subcategories based on the selected category
+  const modalSubcategories = subcategories.filter(
+    (sc) => !categoryId || sc.category_id === categoryId
+  );
 
-  // Helper to toggle genres in the array
+  // Helper to add/remove genres from the array
   const toggleGenre = (id: string) => {
     if (genreIds.includes(id)) {
-      setGenreIds(genreIds.filter(g => g !== id));
+      setGenreIds(genreIds.filter((g) => g !== id));
     } else {
       setGenreIds([...genreIds, id]);
     }
@@ -64,8 +66,14 @@ export default function ClassificationSection({
   return (
     <div className="rounded-2xl border p-4 mb-4 bg-white shadow-sm">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">Classification</h3>
-        {metaLoading && <span className="text-[10px] animate-pulse text-blue-500 font-bold">Fetching Data…</span>}
+        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
+          Classification
+        </h3>
+        {metaLoading && (
+          <span className="text-[10px] animate-pulse text-blue-500 font-bold">
+            Updating Data...
+          </span>
+        )}
       </div>
 
       {metaError && <p className="text-[11px] text-red-600 mb-2">{metaError}</p>}
@@ -82,9 +90,11 @@ export default function ClassificationSection({
               setFranchiseId("");
             }}
           >
-            <option value="">Select…</option>
+            <option value="">Select Category…</option>
             {categories.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
             ))}
           </Select>
         </div>
@@ -97,24 +107,28 @@ export default function ClassificationSection({
             onChange={(e) => setSubcategoryId(e.target.value)}
             disabled={!categoryId}
           >
-            <option value="">{categoryId ? "Select…" : "Select category first"}</option>
+            <option value="">
+              {categoryId ? "Select Subcategory…" : "Select category first"}
+            </option>
             {modalSubcategories.map((sc) => (
-              <option key={sc.id} value={sc.id}>{sc.name}</option>
+              <option key={sc.id} value={sc.id}>
+                {sc.name}
+              </option>
             ))}
           </Select>
         </div>
 
-        {/* Age Rating - NEW */}
+        {/* Age Rating */}
         <div className="space-y-1">
           <FieldLabel>Age Rating</FieldLabel>
-          <Select 
-            value={ageRatingId} 
+          <Select
+            value={ageRatingId}
             onChange={(e) => setAgeRatingId(e.target.value)}
           >
             <option value="">Select Rating…</option>
             {ageRatings.map((ar) => (
               <option key={ar.id} value={ar.id}>
-                {ar.code} {ar.label ? `(${ar.label})` : ""}
+                {ar.code} {ar.label ? `- ${ar.label}` : ""}
               </option>
             ))}
           </Select>
@@ -124,21 +138,33 @@ export default function ClassificationSection({
         <div className="space-y-1">
           <div className="flex items-center justify-between">
             <FieldLabel>Franchise</FieldLabel>
-            <InlineCreateButton onClick={onCreateFranchise}>+ New</InlineCreateButton>
+            <InlineCreateButton onClick={onCreateFranchise}>
+              + New
+            </InlineCreateButton>
           </div>
-          <Select value={franchiseId} onChange={(e) => setFranchiseId(e.target.value)}>
+          <Select
+            value={franchiseId}
+            onChange={(e) => setFranchiseId(e.target.value)}
+          >
             <option value="">(none)</option>
             {franchises.map((f) => (
-              <option key={f.id} value={f.id}>{f.name}</option>
+              <option key={f.id} value={f.id}>
+                {f.name}
+              </option>
             ))}
           </Select>
         </div>
       </div>
 
-      {/* Genres - NEW */}
+      {/* Genres Section */}
       <div className="mt-4 pt-4 border-t border-slate-100">
-        <FieldLabel className="mb-2 block">Genres (Select Multiple)</FieldLabel>
+        <div className="mb-2">
+          <FieldLabel>Genres (Select Multiple)</FieldLabel>
+        </div>
         <div className="flex flex-wrap gap-2">
+          {genres.length === 0 && (
+            <span className="text-slate-400 italic">Loading genres...</span>
+          )}
           {genres.map((g) => {
             const isSelected = genreIds.includes(g.id);
             return (
@@ -147,8 +173,8 @@ export default function ClassificationSection({
                 type="button"
                 onClick={() => toggleGenre(g.id)}
                 className={`px-3 py-1 rounded-full text-[10px] font-bold transition-all border ${
-                  isSelected 
-                    ? "bg-blue-600 border-blue-600 text-white" 
+                  isSelected
+                    ? "bg-blue-600 border-blue-600 text-white shadow-sm"
                     : "bg-white border-slate-200 text-slate-500 hover:border-blue-300"
                 }`}
               >
