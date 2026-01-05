@@ -882,6 +882,15 @@ export default function AddItemModal({
             categories={meta.categories}
             subcategories={meta.subcategories}
             franchises={meta.franchises}
+            
+            // ✅ ADD THESE 6 LINES TO FIX THE UI
+            genres={meta.genres || []}
+            ageRatings={meta.ageRatings || []}
+            genreIds={genreIds}
+            setGenreIds={setGenreIds}
+            ageRatingId={ageRatingId}
+            setAgeRatingId={setAgeRatingId}
+
             categoryId={form.categoryId}
             setCategoryId={form.setCategoryId}
             subcategoryId={form.subcategoryId}
@@ -1776,4 +1785,5 @@ export default function AddItemModal({
     </>
   );
 }
+
 
