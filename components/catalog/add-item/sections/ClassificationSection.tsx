@@ -13,6 +13,10 @@ type Props = {
   categories: Category[];
   subcategories: Subcategory[];
   franchises: Franchise[];
+  
+  // ✅ ADDED THESE
+  genres: any[];
+  ageRatings: any[];
 
   categoryId: string;
   setCategoryId: (v: string) => void;
@@ -22,6 +26,12 @@ type Props = {
 
   franchiseId: string;
   setFranchiseId: (v: string) => void;
+  
+  // ✅ ADDED THESE
+  genreIds: string[];
+  setGenreIds: (v: string[]) => void;
+  ageRatingId: string;
+  setAgeRatingId: (v: string) => void;
 
   onCreateFranchise: () => void;
 };
@@ -32,6 +42,8 @@ export default function ClassificationSection({
   categories,
   subcategories,
   franchises,
+  genres = [],
+  ageRatings = [],
 
   categoryId,
   setCategoryId,
@@ -39,6 +51,11 @@ export default function ClassificationSection({
   setSubcategoryId,
   franchiseId,
   setFranchiseId,
+  
+  genreIds = [],
+  setGenreIds,
+  ageRatingId,
+  setAgeRatingId,
 
   onCreateFranchise,
 }: Props) {
@@ -46,6 +63,14 @@ export default function ClassificationSection({
   const modalSubcategories = subcategories.filter(
     (sc) => !categoryId || sc.category_id === categoryId
   );
+
+  const toggleGenre = (id: string) => {
+    if (genreIds.includes(id)) {
+      setGenreIds(genreIds.filter((gid) => gid !== id));
+    } else {
+      setGenreIds([...genreIds, id]);
+    }
+  };
 
   return (
     <div className="rounded-2xl border p-4 mb-4 bg-white shadow-sm">
@@ -70,17 +95,13 @@ export default function ClassificationSection({
             value={categoryId}
             onChange={(e) => {
               setCategoryId(e.target.value);
-
-              // hard reset dependent filters
               setSubcategoryId("");
               setFranchiseId("");
             }}
           >
             <option value="">Select Category…</option>
             {categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
+              <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </Select>
         </div>
@@ -97,15 +118,29 @@ export default function ClassificationSection({
               {categoryId ? "Select Subcategory…" : "Select category first"}
             </option>
             {modalSubcategories.map((sc) => (
-              <option key={sc.id} value={sc.id}>
-                {sc.name}
+              <option key={sc.id} value={sc.id}>{sc.name}</option>
+            ))}
+          </Select>
+        </div>
+
+        {/* Age Rating - MOVED HERE */}
+        <div className="space-y-1">
+          <FieldLabel>Age Rating</FieldLabel>
+          <Select
+            value={ageRatingId}
+            onChange={(e) => setAgeRatingId(e.target.value)}
+          >
+            <option value="">Select Rating…</option>
+            {ageRatings.map((ar) => (
+              <option key={ar.id} value={ar.id}>
+                {ar.code} {ar.label ? `- ${ar.label}` : ""}
               </option>
             ))}
           </Select>
         </div>
 
         {/* Franchise */}
-        <div className="space-y-1 md:col-span-2">
+        <div className="space-y-1">
           <div className="flex items-center justify-between">
             <FieldLabel>Franchise</FieldLabel>
             <InlineCreateButton onClick={onCreateFranchise}>
@@ -115,11 +150,36 @@ export default function ClassificationSection({
           <Select value={franchiseId} onChange={(e) => setFranchiseId(e.target.value)}>
             <option value="">(none)</option>
             {franchises.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.name}
-              </option>
+              <option key={f.id} value={f.id}>{f.name}</option>
             ))}
           </Select>
+        </div>
+      </div>
+
+      {/* Genres - MOVED HERE */}
+      <div className="mt-4 pt-4 border-t border-slate-100">
+        <div className="mb-2">
+           <FieldLabel>Genres (Select Multiple)</FieldLabel>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {genres.length === 0 && <span className="text-slate-400">Loading...</span>}
+          {genres.map((g) => {
+            const isSelected = genreIds.includes(g.id);
+            return (
+              <button
+                key={g.id}
+                type="button"
+                onClick={() => toggleGenre(g.id)}
+                className={`px-3 py-1 rounded-full text-[10px] font-bold border transition-all ${
+                  isSelected 
+                    ? "bg-blue-600 border-blue-600 text-white" 
+                    : "bg-white border-slate-200 text-slate-500 hover:border-blue-300"
+                }`}
+              >
+                {g.name}
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>
