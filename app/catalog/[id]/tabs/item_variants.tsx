@@ -33,10 +33,10 @@ export default function ItemVariantsTab({ catalogItemId }: { catalogItemId: stri
       setItems([]);
       setGroupId(null);
 
-      // 1) Get this item's group id
+      // 1) Load current item (we need it regardless)
       const baseRes = await supabase
         .from("catalog_items")
-        .select("id, variant_group_id")
+        .select("id, name, upc, variant_name, variant_rank, variant_group_id, base_catalog_item_id")
         .eq("id", catalogItemId)
         .single();
 
@@ -48,21 +48,53 @@ export default function ItemVariantsTab({ catalogItemId }: { catalogItemId: stri
         return;
       }
 
-      const vg = (baseRes.data as any)?.variant_group_id ? String((baseRes.data as any).variant_group_id) : null;
-      setGroupId(vg);
+      const base = baseRes.data as any;
+
+      // 2) Determine variant group id:
+      //    - prefer the item's own variant_group_id
+      //    - otherwise, try to derive from children where base_catalog_item_id = this id
+      let vg: string | null = base?.variant_group_id ? String(base.variant_group_id) : null;
 
       if (!vg) {
-        // Not in a group → no variants
-        setItems([]);
+        const childGroupRes = await supabase
+          .from("catalog_items")
+          .select("variant_group_id")
+          .eq("base_catalog_item_id", catalogItemId)
+          .not("variant_group_id", "is", null)
+          .limit(1)
+          .maybeSingle();
+
+        if (cancelled) return;
+
+        if (!childGroupRes.error) {
+          vg = (childGroupRes.data as any)?.variant_group_id ? String((childGroupRes.data as any).variant_group_id) : null;
+        }
+      }
+
+      setGroupId(vg);
+
+      // If still no group id, then there truly are no linked variants
+      if (!vg) {
+        setItems([
+          {
+            id: String(base.id),
+            name: String(base.name ?? "Item"),
+            upc: base.upc ?? null,
+            variant_name: base.variant_name ?? null,
+            variant_rank: typeof base.variant_rank === "number" ? base.variant_rank : null,
+            variant_group_id: base.variant_group_id ? String(base.variant_group_id) : null,
+            base_catalog_item_id: base.base_catalog_item_id ? String(base.base_catalog_item_id) : null,
+          },
+        ]);
         setLoading(false);
         return;
       }
 
-      // 2) Load all items in the group
+      // 3) Load all items in the group *OR* the current item id (in case the base has no group id stored)
       const itemsRes = await supabase
         .from("catalog_items")
         .select("id,name,upc,variant_name,variant_rank,variant_group_id,base_catalog_item_id")
-        .eq("variant_group_id", vg)
+        .or(`variant_group_id.eq.${vg},id.eq.${catalogItemId}`)
         .order("variant_rank", { ascending: true, nullsFirst: true })
         .order("name", { ascending: true });
 
@@ -77,7 +109,6 @@ export default function ItemVariantsTab({ catalogItemId }: { catalogItemId: stri
 
       const rows = (itemsRes.data ?? []) as any[];
 
-      // Keep the current item first (nice UX), then others
       const normalized: CatalogItemVariantRow[] = rows.map((r) => ({
         id: String(r.id),
         name: String(r.name ?? "Variant"),
@@ -88,6 +119,7 @@ export default function ItemVariantsTab({ catalogItemId }: { catalogItemId: stri
         base_catalog_item_id: r.base_catalog_item_id ? String(r.base_catalog_item_id) : null,
       }));
 
+      // Keep the current item first (nice UX), then others
       const current = normalized.find((x) => x.id === catalogItemId);
       const others = normalized.filter((x) => x.id !== catalogItemId);
 
