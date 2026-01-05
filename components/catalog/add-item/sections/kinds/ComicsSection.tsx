@@ -2,73 +2,94 @@
 "use client";
 
 import React from "react";
-import FieldLabel from "../../blocks/FieldLabel";
-import Select from "../../blocks/Select";
-import TextInput from "../../blocks/TextInput";
-import InlineCreateButton from "../../blocks/InlineCreateButton";
-import type { ComicPublisher } from "@/lib/catalog/types";
 
-export default function ComicsSection({
-  comicPublishers,
-  comicPublisherId,
-  setComicPublisherId,
-  comicSeries,
-  setComicSeries,
-  comicIssueNumber,
-  setComicIssueNumber,
-  comicVariant,
-  setComicVariant,
-  onCreateComicPublisher,
+function SectionShell({
+  title,
+  subtitle,
+  children,
 }: {
-  comicPublishers: ComicPublisher[];
-  comicPublisherId: string;
-  setComicPublisherId: (v: string) => void;
-  comicSeries: string;
-  setComicSeries: (v: string) => void;
-  comicIssueNumber: string;
-  setComicIssueNumber: (v: string) => void;
-  comicVariant: string;
-  setComicVariant: (v: string) => void;
-  onCreateComicPublisher: () => void;
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-2xl border p-4 mb-4">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-xs font-semibold">Comics</h3>
-        <span className="text-[11px] text-gray-500">Required: Publisher, Series, Issue #, Release Year</span>
-      </div>
+    <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
+      <div className="text-sm font-semibold text-[#0F172A]">{title}</div>
+      {subtitle ? <div className="mt-1 text-xs text-[#64748B]">{subtitle}</div> : null}
+      <div className="mt-3">{children}</div>
+    </div>
+  );
+}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-        <div className="space-y-1 md:col-span-2">
-          <div className="flex items-center justify-between">
-            <FieldLabel req>Publisher</FieldLabel>
-            <InlineCreateButton onClick={onCreateComicPublisher}>+ New</InlineCreateButton>
-          </div>
-          <Select value={comicPublisherId} onChange={(e) => setComicPublisherId(e.target.value)}>
-            <option value="">Select…</option>
-            {comicPublishers.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
+export default function ComicsSection(p: {
+  saving: boolean;
+
+  comicPublishers: any[];
+  comicPublisherId: string;
+  setComicPublisherId: (v: string) => void;
+
+  comicSeries: string;
+  setComicSeries: (v: string) => void;
+
+  comicIssueNumber: string;
+  setComicIssueNumber: (v: string) => void;
+
+  comicVariant: string;
+  setComicVariant: (v: string) => void;
+}) {
+  return (
+    <SectionShell title="Comics" subtitle="Publisher and issue details.">
+      <div className="space-y-3">
+        <div>
+          <div className="text-xs font-semibold text-[#0F172A]">Publisher</div>
+          <select
+            value={p.comicPublisherId ?? ""}
+            onChange={(e) => p.setComicPublisherId(e.target.value)}
+            disabled={p.saving}
+            className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+          >
+            <option value="">Select publisher…</option>
+            {(p.comicPublishers ?? []).map((x: any) => (
+              <option key={x.id} value={x.id}>
+                {x.name}
               </option>
             ))}
-          </Select>
+          </select>
         </div>
 
-        <div className="space-y-1">
-          <FieldLabel req>Series</FieldLabel>
-          <TextInput value={comicSeries} onChange={(e) => setComicSeries(e.target.value)} placeholder="e.g. Spider-Man" />
-        </div>
-
-        <div className="space-y-1">
-          <FieldLabel req>Issue #</FieldLabel>
-          <TextInput value={comicIssueNumber} onChange={(e) => setComicIssueNumber(e.target.value)} placeholder="e.g. 300" />
-        </div>
-
-        <div className="space-y-1 md:col-span-2">
-          <FieldLabel>Variant</FieldLabel>
-          <TextInput value={comicVariant} onChange={(e) => setComicVariant(e.target.value)} placeholder="(optional)" />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div>
+            <div className="text-xs font-semibold text-[#0F172A]">Series</div>
+            <input
+              value={p.comicSeries ?? ""}
+              onChange={(e) => p.setComicSeries(e.target.value)}
+              disabled={p.saving}
+              className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+              placeholder="e.g., Amazing Spider-Man"
+            />
+          </div>
+          <div>
+            <div className="text-xs font-semibold text-[#0F172A]">Issue #</div>
+            <input
+              value={p.comicIssueNumber ?? ""}
+              onChange={(e) => p.setComicIssueNumber(e.target.value)}
+              disabled={p.saving}
+              className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+              placeholder="e.g., 129"
+            />
+          </div>
+          <div>
+            <div className="text-xs font-semibold text-[#0F172A]">Variant</div>
+            <input
+              value={p.comicVariant ?? ""}
+              onChange={(e) => p.setComicVariant(e.target.value)}
+              disabled={p.saving}
+              className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+              placeholder="e.g., Cover B"
+            />
+          </div>
         </div>
       </div>
-    </div>
+    </SectionShell>
   );
 }
