@@ -181,13 +181,25 @@ export default function AddItemModal({
         form,
         setBanner,
       }),
-    // meta is stable enough; if it churns too much we can narrow deps later
     [kind, meta, setMeta, form]
   );
 
   const submit = async () => {
     if (createdDone && createdCatalogItemId) {
       finish();
+      return;
+    }
+
+    // ✅ HARD VALIDATION (prevents subcategory_id NOT NULL crash)
+    const categoryOk = !!String(form.categoryId ?? "").trim();
+    const subcategoryOk = !!String(form.subcategoryId ?? "").trim();
+
+    if (!categoryOk) {
+      setBanner({ type: "error", msg: "Category is required." });
+      return;
+    }
+    if (!subcategoryOk) {
+      setBanner({ type: "error", msg: "Subcategory is required." });
       return;
     }
 
@@ -354,7 +366,6 @@ export default function AddItemModal({
                 onCreateMusicArtist={lookups.createMusicArtist}
               />
 
-              {/* Reuse your existing people picker fields as "Producers / Featured" for now */}
               <PeopleSection
                 saving={saving}
                 title="People"
@@ -406,7 +417,6 @@ export default function AddItemModal({
             />
           ) : null}
 
-          {/* Gaming stays as-is */}
           {kind === "gaming" ? (
             <GamingSection
               gamePlatforms={meta.gamePlatforms ?? []}
