@@ -6,14 +6,32 @@ import Select from "../blocks/Select";
 import InlineCreateButton from "../blocks/InlineCreateButton";
 import type { Category, Subcategory, Franchise } from "@/lib/catalog/types";
 
+type Props = {
+  metaLoading: boolean;
+  metaError: string | null;
+
+  categories: Category[];
+  subcategories: Subcategory[];
+  franchises: Franchise[];
+
+  categoryId: string;
+  setCategoryId: (v: string) => void;
+
+  subcategoryId: string;
+  setSubcategoryId: (v: string) => void;
+
+  franchiseId: string;
+  setFranchiseId: (v: string) => void;
+
+  onCreateFranchise: () => void;
+};
+
 export default function ClassificationSection({
   metaLoading,
   metaError,
   categories,
   subcategories,
   franchises,
-  genres,           // From meta hook
-  ageRatings,       // From meta hook
 
   categoryId,
   setCategoryId,
@@ -21,47 +39,13 @@ export default function ClassificationSection({
   setSubcategoryId,
   franchiseId,
   setFranchiseId,
-  genreIds,         // State from Modal
-  setGenreIds,      // State from Modal
-  ageRatingId,      // State from Modal
-  setAgeRatingId,   // State from Modal
 
   onCreateFranchise,
-}: {
-  metaLoading: boolean;
-  metaError: string | null;
-  categories: Category[];
-  subcategories: Subcategory[];
-  franchises: Franchise[];
-  genres: any[];
-  ageRatings: any[];
-
-  categoryId: string;
-  setCategoryId: (v: string) => void;
-  subcategoryId: string;
-  setSubcategoryId: (v: string) => void;
-  franchiseId: string;
-  setFranchiseId: (v: string) => void;
-  genreIds: string[];
-  setGenreIds: (v: string[]) => void;
-  ageRatingId: string;
-  setAgeRatingId: (v: string) => void;
-
-  onCreateFranchise: () => void;
-}) {
-  // Filters subcategories based on the selected category
+}: Props) {
+  // Filter subcategories based on selected category
   const modalSubcategories = subcategories.filter(
     (sc) => !categoryId || sc.category_id === categoryId
   );
-
-  // Helper to add/remove genres from the array
-  const toggleGenre = (id: string) => {
-    if (genreIds.includes(id)) {
-      setGenreIds(genreIds.filter((g) => g !== id));
-    } else {
-      setGenreIds([...genreIds, id]);
-    }
-  };
 
   return (
     <div className="rounded-2xl border p-4 mb-4 bg-white shadow-sm">
@@ -76,7 +60,7 @@ export default function ClassificationSection({
         )}
       </div>
 
-      {metaError && <p className="text-[11px] text-red-600 mb-2">{metaError}</p>}
+      {metaError ? <p className="text-[11px] text-red-600 mb-2">{metaError}</p> : null}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
         {/* Category */}
@@ -86,6 +70,8 @@ export default function ClassificationSection({
             value={categoryId}
             onChange={(e) => {
               setCategoryId(e.target.value);
+
+              // hard reset dependent filters
               setSubcategoryId("");
               setFranchiseId("");
             }}
@@ -118,34 +104,15 @@ export default function ClassificationSection({
           </Select>
         </div>
 
-        {/* Age Rating */}
-        <div className="space-y-1">
-          <FieldLabel>Age Rating</FieldLabel>
-          <Select
-            value={ageRatingId}
-            onChange={(e) => setAgeRatingId(e.target.value)}
-          >
-            <option value="">Select Rating…</option>
-            {ageRatings.map((ar) => (
-              <option key={ar.id} value={ar.id}>
-                {ar.code} {ar.label ? `- ${ar.label}` : ""}
-              </option>
-            ))}
-          </Select>
-        </div>
-
         {/* Franchise */}
-        <div className="space-y-1">
+        <div className="space-y-1 md:col-span-2">
           <div className="flex items-center justify-between">
             <FieldLabel>Franchise</FieldLabel>
             <InlineCreateButton onClick={onCreateFranchise}>
               + New
             </InlineCreateButton>
           </div>
-          <Select
-            value={franchiseId}
-            onChange={(e) => setFranchiseId(e.target.value)}
-          >
+          <Select value={franchiseId} onChange={(e) => setFranchiseId(e.target.value)}>
             <option value="">(none)</option>
             {franchises.map((f) => (
               <option key={f.id} value={f.id}>
@@ -153,35 +120,6 @@ export default function ClassificationSection({
               </option>
             ))}
           </Select>
-        </div>
-      </div>
-
-      {/* Genres Section */}
-      <div className="mt-4 pt-4 border-t border-slate-100">
-        <div className="mb-2">
-          <FieldLabel>Genres (Select Multiple)</FieldLabel>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {genres.length === 0 && (
-            <span className="text-slate-400 italic">Loading genres...</span>
-          )}
-          {genres.map((g) => {
-            const isSelected = genreIds.includes(g.id);
-            return (
-              <button
-                key={g.id}
-                type="button"
-                onClick={() => toggleGenre(g.id)}
-                className={`px-3 py-1 rounded-full text-[10px] font-bold transition-all border ${
-                  isSelected
-                    ? "bg-blue-600 border-blue-600 text-white shadow-sm"
-                    : "bg-white border-slate-200 text-slate-500 hover:border-blue-300"
-                }`}
-              >
-                {g.name}
-              </button>
-            );
-          })}
         </div>
       </div>
     </div>
