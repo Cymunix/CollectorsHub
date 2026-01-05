@@ -75,10 +75,14 @@ export default function AddItemModal({
   const [isBundle, setIsBundle] = useState(false);
   const [bundleRows, setBundleRows] = useState<BundleDraftRow[]>([]);
 
-  // Media meta (single source of truth – no "local vs form" nonsense)
+  // Media meta selections (single source of truth)
   const [genreIds, setGenreIds] = useState<string[]>([]);
   const [ageRatingId, setAgeRatingId] = useState<string>("");
   const [explicitContent, setExplicitContent] = useState<boolean>(false);
+
+  // ✅ LOOKUPS STORED LOCALLY (NOT in meta, so they can't get overwritten)
+  const [genreOptions, setGenreOptions] = useState<GenreRow[]>([]);
+  const [ageRatingOptions, setAgeRatingOptions] = useState<AgeRatingRow[]>([]);
 
   const kind = String(form.itemKind || "building_blocks");
 
@@ -87,11 +91,12 @@ export default function AddItemModal({
     return `Create Catalog Item • ${k}`;
   }, [kind]);
 
-  // load genres + ratings once the modal opens
+  // ✅ Load genres + ratings once the modal opens (LOCAL STATE)
   useEffect(() => {
     if (!open) return;
 
     let cancelled = false;
+
     (async () => {
       try {
         const [{ data: g, error: gErr }, { data: ar, error: arErr }] = await Promise.all([
@@ -107,11 +112,8 @@ export default function AddItemModal({
         if (gErr) throw gErr;
         if (arErr) throw arErr;
 
-        setMeta((m: any) => ({
-          ...m,
-          genres: (g ?? []) as GenreRow[],
-          ageRatings: (ar ?? []) as AgeRatingRow[],
-        }));
+        setGenreOptions((g ?? []) as GenreRow[]);
+        setAgeRatingOptions((ar ?? []) as AgeRatingRow[]);
       } catch (e: any) {
         if (!cancelled) setBanner({ type: "error", msg: e?.message ?? "Failed to load genres/age ratings." });
       }
@@ -120,22 +122,28 @@ export default function AddItemModal({
     return () => {
       cancelled = true;
     };
-  }, [open, setMeta]);
+  }, [open]);
 
-  // wipe stale rating when kind changes (prevents MPAA rating stuck on gaming, etc.)
+  // ✅ wipe stale rating when kind changes + enforce correct system
   useEffect(() => {
     if (!open) return;
 
-    const system = kind === "movie" ? "MPAA" : kind === "gaming" ? "ESRB" : kind === "music" ? "MUSIC" : null;
+    const system =
+      kind === "movie" ? "MPAA" :
+      kind === "gaming" ? "ESRB" :
+      kind === "music" ? "MUSIC" :
+      null;
+
     if (!system) {
       setAgeRatingId("");
       return;
     }
 
-    const list: AgeRatingRow[] = (meta.ageRatings ?? []) as any;
-    const ok = list.some((r) => String(r.id) === String(ageRatingId) && String(r.system).toUpperCase() === system);
+    const ok = ageRatingOptions.some(
+      (r) => String(r.id) === String(ageRatingId) && String(r.system).toUpperCase() === system
+    );
     if (!ok) setAgeRatingId("");
-  }, [kind, open]); // intentional: doesn't depend on meta to avoid churn
+  }, [kind, open, ageRatingId, ageRatingOptions]);
 
   const safeClose = () => {
     if (!saving) {
@@ -258,7 +266,6 @@ export default function AddItemModal({
             onCreateFranchise={lookups.createFranchise}
           />
 
-          {/* Franchise/Crossover editor: only after create */}
           <div className="mt-4">
             {createdCatalogItemId ? (
               <ItemFranchiseEditor catalogItemId={createdCatalogItemId} disabled={saving} />
@@ -297,20 +304,21 @@ export default function AddItemModal({
             <MediaMetaSection
               kind={kind}
               saving={saving}
-              genres={sortByName((meta.genres ?? []) as GenreRow[])}
-              ageRatings={(meta.ageRatings ?? []) as AgeRatingRow[]}
+              genres={sortByName(genreOptions)}
+              ageRatings={ageRatingOptions}
               genreIds={genreIds}
               setGenreIds={setGenreIds}
               ageRatingId={ageRatingId}
               setAgeRatingId={setAgeRatingId}
               explicitContent={explicitContent}
               setExplicitContent={setExplicitContent}
-              onCreateGenre={() => lookups.createGenre((id) => setGenreIds((prev) => uniqStrings([...prev, id])))}
-              onCreateAgeRating={() => lookups.createAgeRating((id) => setAgeRatingId(id))}
+              onCreateGenre={() =>
+                lookups.createGenre((id: string) => setGenreIds((prev) => uniqStrings([...prev, id])))
+              }
+              onCreateAgeRating={() => lookups.createAgeRating((id: string) => setAgeRatingId(id))}
             />
           ) : null}
 
-          {/* Kind-specific */}
           {kind === "building_blocks" ? (
             <BuildingBlocksSection
               saving={saving}
