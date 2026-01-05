@@ -1,186 +1,165 @@
 // components/catalog/add-item/sections/kinds/CardsSection.tsx
 "use client";
 
-import React from "react";
-import FieldLabel from "../../blocks/FieldLabel";
-import Select from "../../blocks/Select";
-import TextInput from "../../blocks/TextInput";
-import InlineCreateButton from "../../blocks/InlineCreateButton";
-import type { CardManufacturer, CardSet, CardType, ItemKind } from "@/lib/catalog/types";
+import React, { useMemo } from "react";
 
-const RARITY_OPTIONS = [
-  "",
-  "Common",
-  "Uncommon",
-  "Rare",
-  "Ultra Rare",
-  "Secret Rare",
-  "Chase",
-  "Promo",
-  "Parallel",
-  "Holofoil",
-];
-
-export default function CardsSection({
-  itemKind,
-
-  cardManufacturers,
-  cardSets,
-  cardTypes,
-
-  cardManufacturerId,
-  setCardManufacturerId,
-  cardSetId,
-  setCardSetId,
-  cardTypeId,
-  setCardTypeId,
-  cardNumber,
-  setCardNumber,
-  cardYear,
-  setCardYear,
-
-  // ✅ rarity
-  cardRarityDropdown,
-  setCardRarityDropdown,
-  cardRarityCustom,
-  setCardRarityCustom,
-
-  cardSetOptions,
-
-  onCreateCardManufacturer,
-  onCreateCardSet,
-  onCreateCardType,
+function SectionShell({
+  title,
+  subtitle,
+  children,
 }: {
-  itemKind: ItemKind;
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
+      <div className="text-sm font-semibold text-[#0F172A]">{title}</div>
+      {subtitle ? <div className="mt-1 text-xs text-[#64748B]">{subtitle}</div> : null}
+      <div className="mt-3">{children}</div>
+    </div>
+  );
+}
 
-  cardManufacturers: CardManufacturer[];
-  cardSets: CardSet[];
-  cardTypes: CardType[];
+function CreateLinkButton({
+  onClick,
+  disabled,
+  label = "Create",
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  label?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={!!disabled}
+      className="text-xs font-semibold text-[#0F172A] underline disabled:opacity-50"
+    >
+      {label}
+    </button>
+  );
+}
+
+export default function CardsSection(p: {
+  saving: boolean;
+
+  cardManufacturers: any[];
+  cardSets: any[];
+  cardTypes: any[];
 
   cardManufacturerId: string;
   setCardManufacturerId: (v: string) => void;
+
   cardSetId: string;
   setCardSetId: (v: string) => void;
+
   cardTypeId: string;
   setCardTypeId: (v: string) => void;
+
   cardNumber: string;
   setCardNumber: (v: string) => void;
+
   cardYear: string;
   setCardYear: (v: string) => void;
-
-  cardRarityDropdown: string;
-  setCardRarityDropdown: (v: string) => void;
-  cardRarityCustom: string;
-  setCardRarityCustom: (v: string) => void;
-
-  cardSetOptions: CardSet[];
 
   onCreateCardManufacturer: () => void;
   onCreateCardSet: () => void;
   onCreateCardType: () => void;
 }) {
-  const title = itemKind === "sports_card" ? "Sports Cards" : "Trading Cards";
+  const filteredCardSets = useMemo(() => {
+    const manId = String(p.cardManufacturerId ?? "");
+    if (!manId) return p.cardSets ?? [];
+    return (p.cardSets ?? []).filter((s: any) => String(s.manufacturer_id) === manId);
+  }, [p.cardSets, p.cardManufacturerId]);
 
   return (
-    <div className="rounded-2xl border p-4 mb-4">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-xs font-semibold">{title}</h3>
-        <span className="text-[11px] text-gray-500">Required: Manufacturer, Set, Type, Card #, Year</span>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-        <div className="space-y-1">
+    <SectionShell title="Cards" subtitle="Manufacturer, set, and type.">
+      <div className="space-y-3">
+        <div>
           <div className="flex items-center justify-between">
-            <FieldLabel req>Manufacturer</FieldLabel>
-            <InlineCreateButton onClick={onCreateCardManufacturer}>+ New</InlineCreateButton>
+            <div className="text-xs font-semibold text-[#0F172A]">Manufacturer</div>
+            <CreateLinkButton onClick={p.onCreateCardManufacturer} disabled={p.saving} />
           </div>
-          <Select
-            value={cardManufacturerId}
-            onChange={(e) => {
-              setCardManufacturerId(e.target.value);
-              setCardSetId("");
-            }}
+          <select
+            value={p.cardManufacturerId ?? ""}
+            onChange={(e) => p.setCardManufacturerId(e.target.value)}
+            disabled={p.saving}
+            className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
           >
-            <option value="">Select…</option>
-            {cardManufacturers.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}
+            <option value="">Select manufacturer…</option>
+            {(p.cardManufacturers ?? []).map((x: any) => (
+              <option key={x.id} value={x.id}>
+                {x.name}
               </option>
             ))}
-          </Select>
+          </select>
         </div>
 
-        <div className="space-y-1">
+        <div>
           <div className="flex items-center justify-between">
-            <FieldLabel req>Set</FieldLabel>
-            <InlineCreateButton onClick={onCreateCardSet} disabled={!cardManufacturerId}>
-              + New
-            </InlineCreateButton>
+            <div className="text-xs font-semibold text-[#0F172A]">Set</div>
+            <CreateLinkButton onClick={p.onCreateCardSet} disabled={p.saving || !p.cardManufacturerId} />
           </div>
-          <Select value={cardSetId} onChange={(e) => setCardSetId(e.target.value)} disabled={!cardManufacturerId}>
-            <option value="">{cardManufacturerId ? "Select…" : "Select manufacturer first"}</option>
-            {cardSetOptions.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
+          <select
+            value={p.cardSetId ?? ""}
+            onChange={(e) => p.setCardSetId(e.target.value)}
+            disabled={p.saving}
+            className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+          >
+            <option value="">Select set…</option>
+            {filteredCardSets.map((x: any) => (
+              <option key={x.id} value={x.id}>
+                {x.name}
               </option>
             ))}
-          </Select>
+          </select>
         </div>
 
-        <div className="space-y-1">
+        <div>
           <div className="flex items-center justify-between">
-            <FieldLabel req>Card Type</FieldLabel>
-            <InlineCreateButton onClick={onCreateCardType}>+ New</InlineCreateButton>
+            <div className="text-xs font-semibold text-[#0F172A]">Type</div>
+            <CreateLinkButton onClick={p.onCreateCardType} disabled={p.saving} />
           </div>
-          <Select value={cardTypeId} onChange={(e) => setCardTypeId(e.target.value)}>
-            <option value="">Select…</option>
-            {cardTypes.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
+          <select
+            value={p.cardTypeId ?? ""}
+            onChange={(e) => p.setCardTypeId(e.target.value)}
+            disabled={p.saving}
+            className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+          >
+            <option value="">Select type…</option>
+            {(p.cardTypes ?? []).map((x: any) => (
+              <option key={x.id} value={x.id}>
+                {x.name}
               </option>
             ))}
-          </Select>
+          </select>
         </div>
 
-        <div className="space-y-1">
-          <FieldLabel req>Card Number</FieldLabel>
-          <TextInput value={cardNumber} onChange={(e) => setCardNumber(e.target.value)} placeholder="e.g. 123" />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <div className="text-xs font-semibold text-[#0F172A]">Card Number</div>
+            <input
+              value={p.cardNumber ?? ""}
+              onChange={(e) => p.setCardNumber(e.target.value)}
+              disabled={p.saving}
+              className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+              placeholder="e.g., XH-3"
+            />
+          </div>
+          <div>
+            <div className="text-xs font-semibold text-[#0F172A]">Card Year</div>
+            <input
+              value={p.cardYear ?? ""}
+              onChange={(e) => p.setCardYear(e.target.value)}
+              disabled={p.saving}
+              className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+              placeholder="e.g., 1992"
+            />
+          </div>
         </div>
-
-        <div className="space-y-1">
-          <FieldLabel req>Year</FieldLabel>
-          <TextInput value={cardYear} onChange={(e) => setCardYear(e.target.value)} inputMode="numeric" placeholder="e.g. 1999" />
-        </div>
-
-        {/* ✅ RARITY (TRADING CARD ONLY - requested) */}
-        {itemKind === "trading_card" && (
-          <>
-            <div className="space-y-1">
-              <FieldLabel>Rarity (dropdown)</FieldLabel>
-              <Select value={cardRarityDropdown} onChange={(e) => setCardRarityDropdown(e.target.value)}>
-                {RARITY_OPTIONS.map((opt) => (
-                  <option key={opt || "none"} value={opt}>
-                    {opt || "(none)"}
-                  </option>
-                ))}
-              </Select>
-              <div className="text-[11px] text-gray-500">Optional. Used if Custom rarity is blank.</div>
-            </div>
-
-            <div className="space-y-1">
-              <FieldLabel>Custom rarity</FieldLabel>
-              <TextInput
-                value={cardRarityCustom}
-                onChange={(e) => setCardRarityCustom(e.target.value)}
-                placeholder='Optional override (e.g. "SP", "SR", "1st Edition Holo")'
-              />
-              <div className="text-[11px] text-gray-500">If filled, this overrides the dropdown.</div>
-            </div>
-          </>
-        )}
-
-        <p className="text-[11px] text-gray-500 md:col-span-2">Note: Release Year is captured in Item Details above.</p>
       </div>
-    </div>
+    </SectionShell>
   );
 }
