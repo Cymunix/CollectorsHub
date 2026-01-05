@@ -291,6 +291,61 @@ async function safeCountAny(
   return 0;
 }
 
+/**
+ * ✅ Variants truth check aligned with ItemVariantsTab:
+ * - Prefer catalog_items.variant_group_id on this item
+ * - Else derive from child variants (base_catalog_item_id = this id)
+ * - Variants exist if group has > 1 item OR children exist
+ */
+async function computeHasVariants(catalogItemId: string): Promise<boolean> {
+  try {
+    const baseRes = await supabase
+      .from("catalog_items")
+      .select("variant_group_id")
+      .eq("id", catalogItemId)
+      .maybeSingle();
+
+    if (baseRes.error) return false;
+
+    let vg: string | null =
+      (baseRes.data as any)?.variant_group_id ? String((baseRes.data as any).variant_group_id) : null;
+
+    if (!vg) {
+      const childRes = await supabase
+        .from("catalog_items")
+        .select("variant_group_id")
+        .eq("base_catalog_item_id", catalogItemId)
+        .not("variant_group_id", "is", null)
+        .limit(1)
+        .maybeSingle();
+
+      if (!childRes.error) {
+        vg = (childRes.data as any)?.variant_group_id ? String((childRes.data as any).variant_group_id) : null;
+      }
+    }
+
+    if (vg) {
+      const groupCountRes = await supabase
+        .from("catalog_items")
+        .select("id", { count: "exact", head: true })
+        .eq("variant_group_id", vg);
+
+      if (groupCountRes.error) return false;
+      return (groupCountRes.count ?? 0) > 1;
+    }
+
+    const childCountRes = await supabase
+      .from("catalog_items")
+      .select("id", { count: "exact", head: true })
+      .eq("base_catalog_item_id", catalogItemId);
+
+    if (childCountRes.error) return false;
+    return (childCountRes.count ?? 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
 export default function Page({ params }: { params: { id: string } }) {
   const router = useRouter();
   const sp = useSearchParams();
@@ -304,7 +359,7 @@ export default function Page({ params }: { params: { id: string } }) {
   const [authOpen, setAuthOpen] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
 
-  // ✅ NEW: admin flag (derived from profiles)
+  // ✅ admin flag (derived from profiles)
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
 
   // Minimal header data only
@@ -319,19 +374,19 @@ export default function Page({ params }: { params: { id: string } }) {
   const [subcategory, setSubcategory] = useState<Subcategory | null>(null);
   const [franchise, setFranchise] = useState<Franchise | null>(null);
 
-  // ✅ NEW: catalog item photos for carousel
+  // photos for carousel
   const [itemPhotos, setItemPhotos] = useState<Photo[]>([]);
 
-  // Reviews summary for stars beside name
+  // Reviews summary
   const [reviewAvg, setReviewAvg] = useState<number>(0);
   const [reviewCount, setReviewCount] = useState<number>(0);
 
-  // ✅ Tab content flags (hide empty tabs except Reviews/Listings)
+  // Tab content flags
   const [hasVariants, setHasVariants] = useState(false);
   const [hasSalesHistory, setHasSalesHistory] = useState(false);
   const [listingsCount, setListingsCount] = useState(0);
 
-  // ✅ Shared condition state (meta-first)
+  // Shared condition state
   const [conditionValues, setConditionValues] = useState<Record<string, any>>({});
   const [conditionMeta, setConditionMeta] = useState<ConditionMeta | null>(null);
 
@@ -367,7 +422,7 @@ export default function Page({ params }: { params: { id: string } }) {
     };
   }, []);
 
-  // ✅ NEW: derive admin status from profiles.role
+  // ✅ derive admin status from profiles.role
   useEffect(() => {
     let cancelled = false;
 
@@ -549,7 +604,7 @@ export default function Page({ params }: { params: { id: string } }) {
 
           setItem(it);
 
-          // ✅ NEW: photos (carousel)
+          // ✅ photos (carousel)
           try {
             const photosRes = await supabase
               .from("catalog_item_photos")
@@ -571,19 +626,13 @@ export default function Page({ params }: { params: { id: string } }) {
               if (!cancelled) setItemPhotos(normalized);
             }
           } catch (e) {
-            // don't block the page if photos fail
             console.error("Failed to load item photos:", e);
             if (!cancelled) setItemPhotos([]);
           }
 
-          // ✅ Tab probes (hide empty tabs except Reviews/Listings)
-          // NOTE: we try multiple likely table names so this doesn't hard-fail if your schema differs.
-          const [vCount, shCount, lCount] = await Promise.all([
-            safeCountAny([
-              { table: "variant_group_links", filters: [{ col: "catalog_item_id", value: it.id }] },
-              { table: "catalog_item_variant_links", filters: [{ col: "catalog_item_id", value: it.id }] },
-              { table: "catalog_item_variants", filters: [{ col: "catalog_item_id", value: it.id }] },
-            ]),
+          // ✅ Tab probes
+          const [variantsOk, shCount, lCount] = await Promise.all([
+            computeHasVariants(it.id),
             safeCountAny([
               { table: "catalog_item_sales_history", filters: [{ col: "catalog_item_id", value: it.id }] },
               { table: "catalog_sales_history", filters: [{ col: "catalog_item_id", value: it.id }] },
@@ -597,7 +646,7 @@ export default function Page({ params }: { params: { id: string } }) {
           ]);
 
           if (!cancelled) {
-            setHasVariants(vCount > 0);
+            setHasVariants(variantsOk);
             setHasSalesHistory(shCount > 0);
             setListingsCount(lCount);
           }
@@ -632,7 +681,8 @@ export default function Page({ params }: { params: { id: string } }) {
               const count = reviewsRes.count ?? rows.length;
 
               if (count > 0) {
-                const rawAvg = rows.reduce((sum: number, r: any) => sum + Number(r?.rating ?? 0), 0) / count;
+                const rawAvg =
+                  rows.reduce((sum: number, r: any) => sum + Number(r?.rating ?? 0), 0) / count;
                 const avg = Math.round(rawAvg * 10) / 10;
 
                 if (!cancelled) {
@@ -795,11 +845,6 @@ export default function Page({ params }: { params: { id: string } }) {
     return c.includes("comic") || c.includes("trading") || c.includes("sports card") || c.includes("cards");
   }, [category?.name, isBuildingBlocks]);
 
-  const isCardCategory = useMemo(() => {
-    const c = (category?.name ?? "").toLowerCase();
-    return c.includes("trading card") || c.includes("trading") || c.includes("sports card") || c === "cards";
-  }, [category?.name]);
-
   const reviewText = useMemo(() => {
     if (reviewCount > 0) {
       const avgStr = reviewAvg.toFixed(1);
@@ -810,7 +855,7 @@ export default function Page({ params }: { params: { id: string } }) {
 
   const displayName = loadingHeader ? "Loading..." : safeText(isMinifigPage ? minifigItem?.name : item?.name);
 
-  // ✅ IMPORTANT: Decide BB mode WITHOUT relying on bbIsSet
+  // ✅ Decide BB mode WITHOUT relying on bbIsSet
   const bbMode: "set" | "minifig" = isBuildingBlocks && (isMinifigPage || bbIsMinifig) ? "minifig" : "set";
 
   const showIncludedItemsTab = !isMinifigPage && !!item?.id && isBundle;
@@ -820,6 +865,7 @@ export default function Page({ params }: { params: { id: string } }) {
   /* =========================
      Conditional tabs registry
      Hide if empty EXCEPT: Reviews + Listings
+     Admin can always see Variants
      ========================= */
 
   type VisibilityMode = "always" | "hide_if_empty" | "show_even_if_empty";
@@ -854,7 +900,12 @@ export default function Page({ params }: { params: { id: string } }) {
     }
 
     defs.push(
-      { key: "variants", label: "Variants", visibility: "hide_if_empty", hasContent: () => hasVariants },
+      {
+        key: "variants",
+        label: "Variants",
+        visibility: isAdmin ? "show_even_if_empty" : "hide_if_empty",
+        hasContent: () => hasVariants,
+      },
       {
         key: "reviews",
         label: "Reviews",
@@ -884,6 +935,7 @@ export default function Page({ params }: { params: { id: string } }) {
     hasVariants,
     hasSalesHistory,
     reviewCount,
+    isAdmin, // ✅ IMPORTANT
   ]);
 
   const visibleTabs = useMemo(() => {
@@ -943,7 +995,7 @@ export default function Page({ params }: { params: { id: string } }) {
                 </span>
               ) : null}
 
-              {/* ✅ Reviews moved up beside title, same row as version */}
+              {/* ✅ Reviews beside title */}
               <button
                 type="button"
                 onClick={() => setTab("reviews")}
@@ -955,7 +1007,7 @@ export default function Page({ params }: { params: { id: string } }) {
               </button>
             </div>
 
-            {/* ✅ Subtitle line (NO version here anymore) */}
+            {/* Subtitle */}
             <div className="mt-1 text-xs text-[#6B7280]">
               {safeText(category?.name)}
               {subcategory?.name ? ` • ${subcategory.name}` : ""}
@@ -1066,7 +1118,6 @@ export default function Page({ params }: { params: { id: string } }) {
               <ItemDescription
                 catalogItemId={catalogItemId}
                 isAdmin={isAdmin}
-                // ✅ NEW: pass category so ItemDescription can gate card-only fields
                 categoryName={category?.name ?? null}
               />
             ) : null}
@@ -1139,7 +1190,8 @@ export default function Page({ params }: { params: { id: string } }) {
               </div>
             ) : null}
 
-            {tab === "variants" ? <ItemVariantsTab catalogItemId={catalogItemId} /> : null}
+            {/* ✅ FIX: pass isAdmin */}
+            {tab === "variants" ? <ItemVariantsTab catalogItemId={catalogItemId} isAdmin={isAdmin} /> : null}
             {tab === "reviews" ? <ItemReviewsTab catalogItemId={catalogItemId} /> : null}
             {tab === "sales_history" ? (
               <ItemSalesHistoryTab catalogItemId={catalogItemId} selectedConditionJson={conditionValues} />
