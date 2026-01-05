@@ -1,270 +1,265 @@
 // components/catalog/add-item/sections/kinds/BuildingBlocksSection.tsx
 "use client";
 
-import React from "react";
-import FieldLabel from "../../blocks/FieldLabel";
-import TextInput from "../../blocks/TextInput";
-import Select from "../../blocks/Select";
-import InlineCreateButton from "../../blocks/InlineCreateButton";
-import ChipList from "../../blocks/ChipList";
-import type { BbTheme, BbSubtheme, CatalogMinifig, SelectedMinifig } from "@/lib/catalog/types";
+import React, { useMemo } from "react";
 
-export default function BuildingBlocksSection({
-  subcategoryId,
+function safeText(v: any) {
+  if (v === null || v === undefined) return "—";
+  const s = String(v).trim();
+  return s.length ? s : "—";
+}
 
-  bbThemeId,
-  setBbThemeId,
-  bbSubthemeId,
-  setBbSubthemeId,
-  bbSetNumber,
-  setBbSetNumber,
-  bbPieceCount,
-  setBbPieceCount,
-  bbRetailCad,
-  setBbRetailCad,
-  bbRetailUsd,
-  setBbRetailUsd,
-
-  bbThemeOptions,
-  bbSubthemeOptions,
-
-  onCreateBbTheme,
-  onCreateBbSubtheme,
-
-  // minifigs
-  minifigQuery,
-  setMinifigQuery,
-  minifigSearching,
-  minifigResults,
-  selectedMinifigs,
-  onSearchMinifigs,
-  onAddMinifig,
-  onRemoveMinifig,
-  onSetMinifigQty,
-  onBumpMinifigQty,
-  onOpenCreateMinifig,
+function SectionShell({
+  title,
+  subtitle,
+  children,
 }: {
-  subcategoryId: string;
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
+      <div className="text-sm font-semibold text-[#0F172A]">{title}</div>
+      {subtitle ? <div className="mt-1 text-xs text-[#64748B]">{subtitle}</div> : null}
+      <div className="mt-3">{children}</div>
+    </div>
+  );
+}
+
+function CreateLinkButton({
+  onClick,
+  disabled,
+  label = "Create",
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  label?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={!!disabled}
+      className="text-xs font-semibold text-[#0F172A] underline disabled:opacity-50"
+    >
+      {label}
+    </button>
+  );
+}
+
+export default function BuildingBlocksSection(p: {
+  saving: boolean;
+
+  bbThemes: any[];
+  bbSubthemes: any[];
 
   bbThemeId: string;
   setBbThemeId: (v: string) => void;
+
   bbSubthemeId: string;
   setBbSubthemeId: (v: string) => void;
+
   bbSetNumber: string;
   setBbSetNumber: (v: string) => void;
+
   bbPieceCount: string;
   setBbPieceCount: (v: string) => void;
+
   bbRetailCad: string;
   setBbRetailCad: (v: string) => void;
+
   bbRetailUsd: string;
   setBbRetailUsd: (v: string) => void;
-
-  bbThemeOptions: BbTheme[];
-  bbSubthemeOptions: BbSubtheme[];
 
   onCreateBbTheme: () => void;
   onCreateBbSubtheme: () => void;
 
-  minifigQuery: string;
-  setMinifigQuery: (v: string) => void;
-  minifigSearching: boolean;
-  minifigResults: CatalogMinifig[];
-  selectedMinifigs: SelectedMinifig[];
-  onSearchMinifigs: () => void;
-  onAddMinifig: (mf: CatalogMinifig) => void;
-  onRemoveMinifig: (id: string) => void;
-  onSetMinifigQty: (id: string, qty: number) => void;
-  onBumpMinifigQty: (id: string, delta: number) => void;
-  onOpenCreateMinifig: () => void;
+  minifigs: any;
 }) {
-  const totalMinifigs = selectedMinifigs.reduce((sum, mf) => sum + (mf.qty || 1), 0);
+  const filteredSubthemes = useMemo(() => {
+    const themeId = String(p.bbThemeId ?? "");
+    if (!themeId) return p.bbSubthemes ?? [];
+    return (p.bbSubthemes ?? []).filter((s: any) => String(s.theme_id) === themeId);
+  }, [p.bbSubthemes, p.bbThemeId]);
 
   return (
-    <div className="rounded-2xl border p-4 mb-4">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-xs font-semibold">Building Blocks</h3>
-        <span className="text-[11px] text-gray-500">Subcategory = Brand</span>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-        <div className="space-y-1">
+    <SectionShell title="Building Blocks" subtitle="Themes, set details, and minifigs.">
+      <div className="space-y-3">
+        <div>
           <div className="flex items-center justify-between">
-            <FieldLabel req>Theme</FieldLabel>
-            <InlineCreateButton onClick={onCreateBbTheme}>+ New</InlineCreateButton>
+            <div className="text-xs font-semibold text-[#0F172A]">Theme</div>
+            <CreateLinkButton onClick={p.onCreateBbTheme} disabled={p.saving} />
           </div>
-          <Select
-            value={bbThemeId}
-            onChange={(e) => {
-              setBbThemeId(e.target.value);
-              setBbSubthemeId("");
-            }}
-            disabled={!subcategoryId}
+          <select
+            value={p.bbThemeId ?? ""}
+            onChange={(e) => p.setBbThemeId(e.target.value)}
+            disabled={p.saving}
+            className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
           >
-            <option value="">{subcategoryId ? "Select…" : "Select brand first"}</option>
-            {bbThemeOptions.map((t) => (
+            <option value="">Select theme…</option>
+            {(p.bbThemes ?? []).map((t: any) => (
               <option key={t.id} value={t.id}>
                 {t.name}
               </option>
             ))}
-          </Select>
+          </select>
         </div>
 
-        <div className="space-y-1">
+        <div>
           <div className="flex items-center justify-between">
-            <FieldLabel req>Subtheme</FieldLabel>
-            <InlineCreateButton onClick={onCreateBbSubtheme} disabled={!bbThemeId}>
-              + New
-            </InlineCreateButton>
+            <div className="text-xs font-semibold text-[#0F172A]">Subtheme</div>
+            <CreateLinkButton onClick={p.onCreateBbSubtheme} disabled={p.saving || !p.bbThemeId} />
           </div>
-          <Select value={bbSubthemeId} onChange={(e) => setBbSubthemeId(e.target.value)} disabled={!bbThemeId}>
-            <option value="">{bbThemeId ? "Select…" : "Select theme first"}</option>
-            {bbSubthemeOptions.map((st) => (
-              <option key={st.id} value={st.id}>
-                {st.name}
+          <select
+            value={p.bbSubthemeId ?? ""}
+            onChange={(e) => p.setBbSubthemeId(e.target.value)}
+            disabled={p.saving}
+            className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+          >
+            <option value="">Select subtheme…</option>
+            {filteredSubthemes.map((t: any) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
               </option>
             ))}
-          </Select>
+          </select>
         </div>
 
-        <div className="space-y-1">
-          <FieldLabel req>Set Number</FieldLabel>
-          <TextInput value={bbSetNumber} onChange={(e) => setBbSetNumber(e.target.value)} />
-        </div>
-
-        <div className="space-y-1">
-          <FieldLabel req>Piece Count</FieldLabel>
-          <TextInput value={bbPieceCount} onChange={(e) => setBbPieceCount(e.target.value)} inputMode="numeric" />
-        </div>
-
-        <div className="space-y-1">
-          <FieldLabel>Retail Price (CAD)</FieldLabel>
-          <TextInput
-            value={bbRetailCad}
-            onChange={(e) => setBbRetailCad(e.target.value)}
-            inputMode="decimal"
-            placeholder="(optional)"
-          />
-        </div>
-
-        <div className="space-y-1">
-          <FieldLabel>Retail Price (USD)</FieldLabel>
-          <TextInput
-            value={bbRetailUsd}
-            onChange={(e) => setBbRetailUsd(e.target.value)}
-            inputMode="decimal"
-            placeholder="(optional)"
-          />
-        </div>
-      </div>
-
-      {/* MINIFIGS */}
-      <div className="mt-4 rounded-2xl border p-4">
-        <div className="flex items-center justify-between mb-2">
-          <h4 className="text-xs font-semibold">Minifigs (optional)</h4>
-          <button type="button" onClick={onOpenCreateMinifig} className="text-[11px] text-blue-600 hover:underline">
-            + New Minifig
-          </button>
-        </div>
-
-        <div className="flex gap-2">
-          <TextInput
-            value={minifigQuery}
-            onChange={(e) => setMinifigQuery(e.target.value)}
-            className="flex-1"
-            placeholder="Search by fig # or name…"
-          />
-          <button
-            type="button"
-            onClick={onSearchMinifigs}
-            className="rounded-xl border bg-white px-3 py-2 text-xs"
-            disabled={minifigSearching}
-          >
-            {minifigSearching ? "Searching…" : "Search"}
-          </button>
-        </div>
-
-        {minifigResults.length > 0 && (
-          <div className="mt-3 max-h-44 overflow-y-auto rounded-xl border">
-            {minifigResults.map((mf) => (
-              <button
-                key={mf.id}
-                type="button"
-                onClick={() => onAddMinifig(mf)} // ✅ now increments qty if already selected
-                className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 border-b last:border-b-0 flex items-center gap-3"
-              >
-                <div className="h-10 w-10 rounded-md bg-gray-100 overflow-hidden border shrink-0 flex items-center justify-center">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  {mf.image_url ? (
-                    <img src={mf.image_url} alt={mf.name || mf.minifig_number} className="h-full w-full object-cover" />
-                  ) : (
-                    <span className="text-[10px] text-gray-400">N/A</span>
-                  )}
-                </div>
-                <div>
-                  <div className="font-semibold">{mf.minifig_number}</div>
-                  <div className="text-gray-600">{mf.name}</div>
-                </div>
-              </button>
-            ))}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <div className="text-xs font-semibold text-[#0F172A]">Set Number</div>
+            <input
+              value={p.bbSetNumber ?? ""}
+              onChange={(e) => p.setBbSetNumber(e.target.value)}
+              disabled={p.saving}
+              className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+              placeholder="e.g., 75313"
+            />
           </div>
-        )}
+          <div>
+            <div className="text-xs font-semibold text-[#0F172A]">Piece Count</div>
+            <input
+              value={p.bbPieceCount ?? ""}
+              onChange={(e) => p.setBbPieceCount(e.target.value)}
+              disabled={p.saving}
+              className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+              placeholder="e.g., 1022"
+            />
+          </div>
+          <div>
+            <div className="text-xs font-semibold text-[#0F172A]">Retail CAD</div>
+            <input
+              value={p.bbRetailCad ?? ""}
+              onChange={(e) => p.setBbRetailCad(e.target.value)}
+              disabled={p.saving}
+              className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+              placeholder="e.g., 199.99"
+            />
+          </div>
+          <div>
+            <div className="text-xs font-semibold text-[#0F172A]">Retail USD</div>
+            <input
+              value={p.bbRetailUsd ?? ""}
+              onChange={(e) => p.setBbRetailUsd(e.target.value)}
+              disabled={p.saving}
+              className="mt-1 w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+              placeholder="e.g., 159.99"
+            />
+          </div>
+        </div>
 
-        <div className="mt-3">
-          <p className="text-[11px] text-gray-500 mb-2">
-            Selected minifigs:{" "}
-            <span className="font-semibold">
-              {selectedMinifigs.length} unique / {totalMinifigs} total
-            </span>
-          </p>
+        {/* Minifigs */}
+        <div className="mt-2 rounded-2xl border border-[#E5E9F2] bg-white p-4">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-semibold text-[#0F172A]">Minifigs</div>
+            <CreateLinkButton
+              label="Create Minifig"
+              onClick={() => (p.minifigs as any).setMinifigCreateOpen?.(true)}
+              disabled={p.saving}
+            />
+          </div>
 
-          <ChipList
-            items={selectedMinifigs}
-            getKey={(x) => x.id}
-            render={(mf) => (
-              <div className="flex items-center gap-2 rounded-full border bg-white px-3 py-1 text-xs">
-                <span className="font-semibold">{mf.minifig_number}</span>
-                <span className="text-gray-600">{mf.name}</span>
+          <div className="mt-3 flex items-center gap-2">
+            <input
+              value={(p.minifigs as any).minifigQuery ?? ""}
+              onChange={(e) => (p.minifigs as any).setMinifigQuery?.(e.target.value)}
+              placeholder="Search minifigs..."
+              disabled={p.saving}
+              className="w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+            />
+            <button
+              type="button"
+              onClick={() => (p.minifigs as any).searchMinifigs?.()}
+              disabled={p.saving || !!(p.minifigs as any).minifigSearching}
+              className="rounded-xl bg-[#0F172A] px-3 py-2 text-xs font-semibold text-white disabled:bg-gray-200 disabled:text-gray-600"
+            >
+              {(p.minifigs as any).minifigSearching ? "Searching..." : "Search"}
+            </button>
+          </div>
 
-                <div className="flex items-center gap-1 ml-2">
-                  <button
-                    type="button"
-                    className="h-6 w-6 rounded-full border bg-white text-xs"
-                    onClick={() => onBumpMinifigQty(mf.id, -1)}
-                    title="Decrease"
-                  >
-                    −
-                  </button>
-
-                  <input
-                    value={String(mf.qty || 1)}
-                    onChange={(e) => onSetMinifigQty(mf.id, Number(e.target.value))}
-                    className="h-6 w-10 rounded-md border px-2 text-xs text-center"
-                    inputMode="numeric"
-                  />
-
-                  <button
-                    type="button"
-                    className="h-6 w-6 rounded-full border bg-white text-xs"
-                    onClick={() => onBumpMinifigQty(mf.id, +1)}
-                    title="Increase"
-                  >
-                    +
-                  </button>
+          <div className="mt-3 space-y-2">
+            {((p.minifigs as any).minifigResults ?? []).map((r: any) => (
+              <div
+                key={r.id}
+                className="flex items-center justify-between gap-3 rounded-xl border border-[#E5E9F2] bg-white p-3"
+              >
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-[#0F172A]">{safeText(r.name)}</div>
+                  <div className="text-[11px] text-[#64748B]">{safeText(r.minifig_number)}</div>
                 </div>
-
                 <button
                   type="button"
-                  onClick={() => onRemoveMinifig(mf.id)}
-                  className="text-gray-400 hover:text-red-600 ml-1"
-                  aria-label="Remove"
+                  onClick={() => (p.minifigs as any).addMinifig?.(r)}
+                  disabled={p.saving}
+                  className="rounded-lg border px-3 py-1 text-xs font-semibold hover:bg-[#F8FAFC]"
                 >
-                  ✕
+                  Add
                 </button>
               </div>
-            )}
-          />
+            ))}
+          </div>
+
+          <div className="mt-4">
+            <div className="text-xs font-semibold text-[#0F172A]">Selected</div>
+            <div className="mt-2 space-y-2">
+              {((p.minifigs as any).selectedMinifigs ?? []).length === 0 ? (
+                <div className="rounded-xl border bg-[#F8FAFC] p-3 text-xs text-[#64748B]">None selected.</div>
+              ) : (
+                ((p.minifigs as any).selectedMinifigs ?? []).map((m: any) => (
+                  <div
+                    key={m.instance_key ?? m.id}
+                    className="flex items-center justify-between gap-3 rounded-xl border border-[#E5E9F2] bg-white p-3"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-semibold text-[#0F172A]">{safeText(m.name)}</div>
+                      <div className="text-[11px] text-[#64748B]">{safeText(m.minifig_number)}</div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={1}
+                        value={m.qty ?? 1}
+                        onChange={(e) => (p.minifigs as any).updateMinifigQty?.(m, e.target.value)}
+                        disabled={p.saving}
+                        className="w-20 rounded-lg border border-[#E5E9F2] px-2 py-1 text-sm"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => (p.minifigs as any).removeMinifig?.(m)}
+                        disabled={p.saving}
+                        className="rounded-lg border px-2 py-1 text-xs font-semibold hover:bg-[#F8FAFC]"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </div>
       </div>
-    </div>
+    </SectionShell>
   );
 }
