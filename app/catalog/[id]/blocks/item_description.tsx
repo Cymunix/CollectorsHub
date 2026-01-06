@@ -15,13 +15,15 @@ type CatalogItemRow = {
   genre_ids?: string[] | null;
   age_rating_id?: string | null;
 
-  // ✅ FK IDs (what your DB should be using)
+  // ✅ FK IDs on catalog_items
   publisher_id?: string | null;
   manufacturer_id?: string | null;
 
   upc: string | null;
 
+  // card-only
   card_number?: string | null;
+  tcgplayer_id?: string | null;
 
   release_year: number | null;
   release_month: number | null;
@@ -34,7 +36,6 @@ type CatalogItemRow = {
   end_day: number | null;
 
   epid_ebay: string | null;
-  tcgplayer_id?: string | null;
 };
 
 type LookupRow = { id: string; name: string };
@@ -56,23 +57,44 @@ function toIntOrNull(v: string): number | null {
   const t = v.trim();
   if (!t) return null;
   const n = Number(t);
-  return Number.isFinite(n) ? (Math.trunc(n) as number) : null;
+  return Number.isFinite(n) ? Math.trunc(n) : null;
 }
 
-async function safeLookup(table: string): Promise<LookupRow[]> {
-  try {
-    const { data, error } = await supabase.from(table).select("*");
-    if (error) return [];
-    return (data || []).map((r: any) => ({
+/**
+ * ✅ Explicit lookup loader (no guessing column names).
+ * If your label column differs, change the labelColumn for that table below.
+ */
+async function fetchLookup(table: string, labelColumn: string): Promise<LookupRow[]> {
+  const { data, error } = await supabase
+    .from(table)
+    .select(`id, ${labelColumn}`)
+    .order(labelColumn, { ascending: true });
+
+  if (error) return [];
+
+  return (data || [])
+    .map((r: any) => ({
       id: String(r.id),
-      name: String(r.rating || r.name || r.label || r.title || r.code || ""),
-    }));
-  } catch {
-    return [];
-  }
+      name: String(r[labelColumn] ?? "").trim(),
+    }))
+    .filter((r) => r.id && r.name);
 }
 
-const PRODUCTION_STATUSES = [
+async function fetchAgeRatings(): Promise<LookupRow[]> {
+  // Commonly `rating` not `name`
+  const { data, error } = await supabase
+    .from("age_ratings")
+    .select("id, rating")
+    .order("rating", { ascending: true });
+
+  if (error) return [];
+
+  return (data || [])
+    .map((r: any) => ({ id: String(r.id), name: String(r.rating ?? "").trim() }))
+    .filter((r) => r.id && r.name);
+}
+
+const PRODUCTION_STATUSES: Array<{ id: string; name: string }> = [
   { id: "in_production", name: "In production" },
   { id: "out_of_production", name: "Out of production" },
   { id: "discontinued", name: "Discontinued" },
@@ -83,7 +105,11 @@ export default function ItemDescription({
   catalogItemId,
   isAdmin,
   categoryName = null,
-}: any) {
+}: {
+  catalogItemId: string;
+  isAdmin: boolean;
+  categoryName?: string | null;
+}) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -114,6 +140,7 @@ export default function ItemDescription({
       setLoadError(null);
 
       try {
+        // Item
         const { data: it, error: itErr } = await supabase
           .from("catalog_items")
           .select("*")
@@ -122,13 +149,15 @@ export default function ItemDescription({
 
         if (itErr) throw itErr;
 
+        // Lookups (explicit label columns)
+        // If your tables use different label columns, change them here.
         const [frs, sets, gen, age, mans, pubs] = await Promise.all([
-          safeLookup("franchises"),
-          safeLookup("card_sets"),
-          safeLookup("genres"),
-          safeLookup("age_ratings"),
-          safeLookup("manufacturers"),
-          safeLookup("publishers"),
+          fetchLookup("franchises", "name"),
+          fetchLookup("card_sets", "name"),
+          fetchLookup("genres", "name"),
+          fetchAgeRatings(),
+          fetchLookup("manufacturers", "name"),
+          fetchLookup("publishers", "name"),
         ]);
 
         setFranchises(frs);
@@ -147,15 +176,19 @@ export default function ItemDescription({
         setLoading(false);
       }
     }
-    load();
+
+    if (catalogItemId) load();
   }, [catalogItemId]);
 
-  // Data resolution
+  // Resolve names
   const fName = franchises.find((f) => f.id === item?.franchise_id)?.name;
   const sName = cardSets.find((s) => s.id === item?.card_set_id)?.name;
 
   const pubName = publishers.find((p) => p.id === item?.publisher_id)?.name;
   const mName = manufacturers.find((m) => m.id === item?.manufacturer_id)?.name;
+
+  // single-line: Publisher OR Manufacturer
+  const pubOrManName = pubName || mName;
 
   const gNames = (item?.genre_ids || [])
     .map((id) => genres.find((g) => g.id === id)?.name)
@@ -170,9 +203,7 @@ export default function ItemDescription({
 
   // UI bits
   const Section = ({ children }: { children: React.ReactNode }) => (
-    <div className="rounded-2xl border border-[#E5E9F2] bg-white p-5">
-      {children}
-    </div>
+    <div className="rounded-2xl border border-[#E5E9F2] bg-white p-5">{children}</div>
   );
 
   const Label = ({ children }: { children: React.ReactNode }) => (
@@ -181,7 +212,17 @@ export default function ItemDescription({
     </div>
   );
 
-  const Value = ({ children, isLink, href, className = "" }: any) => (
+  const Value = ({
+    children,
+    isLink,
+    href,
+    className = "",
+  }: {
+    children: any;
+    isLink?: boolean;
+    href?: string;
+    className?: string;
+  }) => (
     <div className={`text-sm text-[#0F172A] font-medium truncate ${className}`}>
       {isLink && href && children ? (
         <Link href={href} className="text-blue-600 hover:underline">
@@ -234,17 +275,16 @@ export default function ItemDescription({
 
   async function saveEdit() {
     if (!draft) return;
+
     setSaving(true);
     setSaveError(null);
 
     try {
-      // Only send the columns we actually allow editing here
       const payload: Partial<CatalogItemRow> = {
         description: draft.description ?? null,
         franchise_id: draft.franchise_id ?? null,
         card_set_id: draft.card_set_id ?? null,
 
-        // ✅ write IDs back to catalog_items
         publisher_id: draft.publisher_id ?? null,
         manufacturer_id: draft.manufacturer_id ?? null,
 
@@ -287,19 +327,21 @@ export default function ItemDescription({
     }
   }
 
-  if (loading)
+  if (loading) {
     return (
       <div className="p-8 text-center animate-pulse text-slate-400 text-sm">
         Loading details...
       </div>
     );
+  }
 
-  if (loadError)
+  if (loadError) {
     return (
       <div className="p-6 rounded-2xl border border-red-200 bg-red-50 text-sm text-red-700">
         {loadError}
       </div>
     );
+  }
 
   const current = editing ? draft : item;
 
@@ -360,7 +402,7 @@ export default function ItemDescription({
         )}
       </Section>
 
-      {/* Row 2: Identity & Connection */}
+      {/* Row 2: Franchise — Set — Card Number/UPC */}
       <Section>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div>
@@ -373,14 +415,7 @@ export default function ItemDescription({
               <Select
                 value={current?.franchise_id ?? ""}
                 onChange={(e) =>
-                  setDraft((d) =>
-                    d
-                      ? {
-                          ...d,
-                          franchise_id: e.target.value || null,
-                        }
-                      : d
-                  )
+                  setDraft((d) => (d ? { ...d, franchise_id: e.target.value || null } : d))
                 }
               >
                 <option value="">—</option>
@@ -394,7 +429,7 @@ export default function ItemDescription({
           </div>
 
           <div>
-            <Label>Set / Theme</Label>
+            <Label>Set</Label>
             {!editing ? (
               <Value isLink href={`/catalog?set=${item?.card_set_id}`}>
                 {sName}
@@ -403,14 +438,7 @@ export default function ItemDescription({
               <Select
                 value={current?.card_set_id ?? ""}
                 onChange={(e) =>
-                  setDraft((d) =>
-                    d
-                      ? {
-                          ...d,
-                          card_set_id: e.target.value || null,
-                        }
-                      : d
-                  )
+                  setDraft((d) => (d ? { ...d, card_set_id: e.target.value || null } : d))
                 }
               >
                 <option value="">—</option>
@@ -444,51 +472,35 @@ export default function ItemDescription({
         </div>
       </Section>
 
-      {/* Row 3: Classification */}
+      {/* Row 3: Publisher/Manufacturer — Genre — Age Rating */}
       <Section>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div>
-            <Label>Publisher</Label>
-            {!editing ? (
-              <Value>{pubName}</Value>
-            ) : (
-              <Select
-                value={current?.publisher_id ?? ""}
-                onChange={(e) =>
-                  setDraft((d) =>
-                    d
-                      ? {
-                          ...d,
-                          publisher_id: e.target.value || null,
-                        }
-                      : d
-                  )
-                }
-              >
-                <option value="">— Publisher —</option>
-                {publishers.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </Select>
-            )}
+            <Label>Publisher / Manufacturer</Label>
 
-            <div className="mt-4">
-              <Label>Manufacturer</Label>
-              {!editing ? (
-                <Value>{mName}</Value>
-              ) : (
+            {!editing ? (
+              <Value>{pubOrManName}</Value>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <Select
+                  value={current?.publisher_id ?? ""}
+                  onChange={(e) =>
+                    setDraft((d) => (d ? { ...d, publisher_id: e.target.value || null } : d))
+                  }
+                >
+                  <option value="">— Publisher —</option>
+                  {publishers.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </Select>
+
                 <Select
                   value={current?.manufacturer_id ?? ""}
                   onChange={(e) =>
                     setDraft((d) =>
-                      d
-                        ? {
-                            ...d,
-                            manufacturer_id: e.target.value || null,
-                          }
-                        : d
+                      d ? { ...d, manufacturer_id: e.target.value || null } : d
                     )
                   }
                 >
@@ -499,7 +511,11 @@ export default function ItemDescription({
                     </option>
                   ))}
                 </Select>
-              )}
+              </div>
+            )}
+
+            <div className="mt-2 text-xs text-slate-500">
+              Displays Publisher if set; otherwise Manufacturer.
             </div>
           </div>
 
@@ -512,9 +528,7 @@ export default function ItemDescription({
                 multiple
                 value={current?.genre_ids ?? []}
                 onChange={(e) => {
-                  const opts = Array.from(e.target.selectedOptions).map(
-                    (o) => o.value
-                  );
+                  const opts = Array.from(e.target.selectedOptions).map((o) => o.value);
                   setDraft((d) => (d ? { ...d, genre_ids: opts } : d));
                 }}
                 className="h-[120px]"
@@ -536,9 +550,7 @@ export default function ItemDescription({
               <Select
                 value={current?.age_rating_id ?? ""}
                 onChange={(e) =>
-                  setDraft((d) =>
-                    d ? { ...d, age_rating_id: e.target.value || null } : d
-                  )
+                  setDraft((d) => (d ? { ...d, age_rating_id: e.target.value || null } : d))
                 }
               >
                 <option value="">—</option>
@@ -553,18 +565,14 @@ export default function ItemDescription({
         </div>
       </Section>
 
-      {/* Row 4: Lifecycle */}
+      {/* Row 4: Release — Status — End */}
       <Section>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div>
             <Label>Release Date</Label>
             {!editing ? (
               <Value>
-                {formatPartialDate(
-                  item?.release_year,
-                  item?.release_month,
-                  item?.release_day
-                )}
+                {formatPartialDate(item?.release_year, item?.release_month, item?.release_day)}
               </Value>
             ) : (
               <div className="grid grid-cols-3 gap-2">
@@ -584,9 +592,7 @@ export default function ItemDescription({
                   value={current?.release_month ?? ""}
                   onChange={(e) =>
                     setDraft((d) =>
-                      d
-                        ? { ...d, release_month: toIntOrNull(e.target.value) }
-                        : d
+                      d ? { ...d, release_month: toIntOrNull(e.target.value) } : d
                     )
                   }
                 />
@@ -607,9 +613,7 @@ export default function ItemDescription({
           <div>
             <Label>Production Status</Label>
             {!editing ? (
-              <Value className="capitalize">
-                {item?.production_status?.replace(/_/g, " ")}
-              </Value>
+              <Value className="capitalize">{item?.production_status?.replace(/_/g, " ")}</Value>
             ) : (
               <Select
                 value={current?.production_status ?? ""}
@@ -633,9 +637,7 @@ export default function ItemDescription({
             <Label>End Date</Label>
             {!editing ? (
               showEndDate ? (
-                <Value>
-                  {formatPartialDate(item?.end_year, item?.end_month, item?.end_day)}
-                </Value>
+                <Value>{formatPartialDate(item?.end_year, item?.end_month, item?.end_day)}</Value>
               ) : (
                 <Value>—</Value>
               )
@@ -646,9 +648,7 @@ export default function ItemDescription({
                   placeholder="YYYY"
                   value={current?.end_year ?? ""}
                   onChange={(e) =>
-                    setDraft((d) =>
-                      d ? { ...d, end_year: toIntOrNull(e.target.value) } : d
-                    )
+                    setDraft((d) => (d ? { ...d, end_year: toIntOrNull(e.target.value) } : d))
                   }
                 />
                 <Input
@@ -666,9 +666,7 @@ export default function ItemDescription({
                   placeholder="DD"
                   value={current?.end_day ?? ""}
                   onChange={(e) =>
-                    setDraft((d) =>
-                      d ? { ...d, end_day: toIntOrNull(e.target.value) } : d
-                    )
+                    setDraft((d) => (d ? { ...d, end_day: toIntOrNull(e.target.value) } : d))
                   }
                 />
               </div>
@@ -677,7 +675,7 @@ export default function ItemDescription({
         </div>
       </Section>
 
-      {/* Row 5: Technical Identifiers */}
+      {/* Row 5: IDs */}
       <Section>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div>
