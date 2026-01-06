@@ -15,8 +15,10 @@ type CatalogItemRow = {
   genre_ids?: string[] | null;
   age_rating_id?: string | null;
 
-  publisher: string | null;
-  manufacture_id?: string | null; // (keeping your column name as-is)
+  // ✅ FK IDs (what your DB should be using)
+  publisher_id?: string | null;
+  manufacturer_id?: string | null;
+
   upc: string | null;
 
   card_number?: string | null;
@@ -93,6 +95,7 @@ export default function ItemDescription({
   const [genres, setGenres] = useState<LookupRow[]>([]);
   const [ageRatings, setAgeRatings] = useState<LookupRow[]>([]);
   const [manufacturers, setManufacturers] = useState<LookupRow[]>([]);
+  const [publishers, setPublishers] = useState<LookupRow[]>([]);
 
   // Admin edit state
   const [editing, setEditing] = useState(false);
@@ -119,12 +122,13 @@ export default function ItemDescription({
 
         if (itErr) throw itErr;
 
-        const [frs, sets, gen, age, mans] = await Promise.all([
+        const [frs, sets, gen, age, mans, pubs] = await Promise.all([
           safeLookup("franchises"),
           safeLookup("card_sets"),
           safeLookup("genres"),
           safeLookup("age_ratings"),
           safeLookup("manufacturers"),
+          safeLookup("publishers"),
         ]);
 
         setFranchises(frs);
@@ -132,6 +136,7 @@ export default function ItemDescription({
         setGenres(gen);
         setAgeRatings(age);
         setManufacturers(mans);
+        setPublishers(pubs);
 
         setItem(it as any);
         setDraft(it as any);
@@ -148,7 +153,9 @@ export default function ItemDescription({
   // Data resolution
   const fName = franchises.find((f) => f.id === item?.franchise_id)?.name;
   const sName = cardSets.find((s) => s.id === item?.card_set_id)?.name;
-  const mName = manufacturers.find((m) => m.id === item?.manufacture_id)?.name;
+
+  const pubName = publishers.find((p) => p.id === item?.publisher_id)?.name;
+  const mName = manufacturers.find((m) => m.id === item?.manufacturer_id)?.name;
 
   const gNames = (item?.genre_ids || [])
     .map((id) => genres.find((g) => g.id === id)?.name)
@@ -195,9 +202,7 @@ export default function ItemDescription({
     />
   );
 
-  const Textarea = (
-    props: React.TextareaHTMLAttributes<HTMLTextAreaElement>
-  ) => (
+  const Textarea = (props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) => (
     <textarea
       {...props}
       className={`w-full min-h-[110px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-slate-200 ${
@@ -239,8 +244,9 @@ export default function ItemDescription({
         franchise_id: draft.franchise_id ?? null,
         card_set_id: draft.card_set_id ?? null,
 
-        publisher: draft.publisher ?? null,
-        manufacture_id: draft.manufacture_id ?? null,
+        // ✅ write IDs back to catalog_items
+        publisher_id: draft.publisher_id ?? null,
+        manufacturer_id: draft.manufacturer_id ?? null,
 
         upc: draft.upc ?? null,
         card_number: draft.card_number ?? null,
@@ -442,26 +448,45 @@ export default function ItemDescription({
       <Section>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div>
-            <Label>Publisher / Manufacture</Label>
+            <Label>Publisher</Label>
             {!editing ? (
-              <Value>{item?.publisher || mName}</Value>
+              <Value>{pubName}</Value>
             ) : (
-              <div className="flex flex-col gap-2">
-                <Input
-                  value={current?.publisher ?? ""}
-                  onChange={(e) =>
-                    setDraft((d) => (d ? { ...d, publisher: e.target.value } : d))
-                  }
-                  placeholder="Publisher (optional)"
-                />
+              <Select
+                value={current?.publisher_id ?? ""}
+                onChange={(e) =>
+                  setDraft((d) =>
+                    d
+                      ? {
+                          ...d,
+                          publisher_id: e.target.value || null,
+                        }
+                      : d
+                  )
+                }
+              >
+                <option value="">— Publisher —</option>
+                {publishers.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </Select>
+            )}
+
+            <div className="mt-4">
+              <Label>Manufacturer</Label>
+              {!editing ? (
+                <Value>{mName}</Value>
+              ) : (
                 <Select
-                  value={current?.manufacture_id ?? ""}
+                  value={current?.manufacturer_id ?? ""}
                   onChange={(e) =>
                     setDraft((d) =>
                       d
                         ? {
                             ...d,
-                            manufacture_id: e.target.value || null,
+                            manufacturer_id: e.target.value || null,
                           }
                         : d
                     )
@@ -474,8 +499,8 @@ export default function ItemDescription({
                     </option>
                   ))}
                 </Select>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
           <div>
@@ -512,9 +537,7 @@ export default function ItemDescription({
                 value={current?.age_rating_id ?? ""}
                 onChange={(e) =>
                   setDraft((d) =>
-                    d
-                      ? { ...d, age_rating_id: e.target.value || null }
-                      : d
+                    d ? { ...d, age_rating_id: e.target.value || null } : d
                   )
                 }
               >
@@ -561,7 +584,9 @@ export default function ItemDescription({
                   value={current?.release_month ?? ""}
                   onChange={(e) =>
                     setDraft((d) =>
-                      d ? { ...d, release_month: toIntOrNull(e.target.value) } : d
+                      d
+                        ? { ...d, release_month: toIntOrNull(e.target.value) }
+                        : d
                     )
                   }
                 />
@@ -590,9 +615,7 @@ export default function ItemDescription({
                 value={current?.production_status ?? ""}
                 onChange={(e) =>
                   setDraft((d) =>
-                    d
-                      ? { ...d, production_status: e.target.value || null }
-                      : d
+                    d ? { ...d, production_status: e.target.value || null } : d
                   )
                 }
               >
@@ -686,9 +709,7 @@ export default function ItemDescription({
                 <Input
                   value={current?.tcgplayer_id ?? ""}
                   onChange={(e) =>
-                    setDraft((d) =>
-                      d ? { ...d, tcgplayer_id: e.target.value } : d
-                    )
+                    setDraft((d) => (d ? { ...d, tcgplayer_id: e.target.value } : d))
                   }
                   placeholder="TCGPlayer ID"
                 />
