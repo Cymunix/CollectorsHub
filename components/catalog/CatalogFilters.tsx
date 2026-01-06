@@ -6,8 +6,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import type {
   BbSubtheme,
   BbTheme,
-  // ✅ If you have a real type for sets, import it here (e.g. BbSet)
-  // BbSet,
   CardManufacturer,
   CardSet,
   CardType,
@@ -52,17 +50,17 @@ type Props = {
   showMinifigs: boolean;
   setShowMinifigs: (v: boolean) => void;
 
-  // ✅ ADD: Set filter for Building Blocks
-  bbSetId: string;
-  setBbSetId: (v: string) => void;
-  bbSetOptions: IdName[]; // replace with BbSet[] if you have it
-
   bbThemeId: string;
   setBbThemeId: (v: string) => void;
   bbSubthemeId: string;
   setBbSubthemeId: (v: string) => void;
   bbThemeOptions: BbTheme[];
   bbSubthemeOptions: BbSubtheme[];
+
+  // ✅ NEW: Building Blocks Set filter (optional so build doesn't break until wired)
+  bbSetId?: string;
+  setBbSetId?: (v: string) => void;
+  bbSetOptions?: IdName[];
 
   // Toys
   toyManufacturers: ToyManufacturer[];
@@ -115,12 +113,19 @@ export default function CatalogFilters(p: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  const hasBbSetSupport =
+    typeof p.bbSetId === "string" &&
+    typeof p.setBbSetId === "function" &&
+    Array.isArray(p.bbSetOptions);
+
   /* -----------------------------
      Reset helpers
      ----------------------------- */
   const clearBuildingBlocks = () => {
     p.setShowMinifigs(false);
-    p.setBbSetId("");
+
+    if (hasBbSetSupport) p.setBbSetId!("");
+
     p.setBbThemeId("");
     p.setBbSubthemeId("");
   };
@@ -161,6 +166,9 @@ export default function CatalogFilters(p: Props) {
 
   /* -----------------------------
      Header search reset hook
+     If URL has ?search=...&reset=1
+     then nuke all left-side filters.
+     Then remove reset=1 so it only happens once.
      ----------------------------- */
   const lastResetSigRef = useRef<string>("");
 
@@ -183,8 +191,7 @@ export default function CatalogFilters(p: Props) {
   }, [searchParams, router]);
 
   /* -----------------------------
-     When kind changes, clear
-     kind-specific filters
+     When kind changes, clear kind-specific filters
      ----------------------------- */
   const prevKindRef = useRef<Props["selectedKind"]>(p.selectedKind);
   useEffect(() => {
@@ -196,14 +203,16 @@ export default function CatalogFilters(p: Props) {
   }, [p.selectedKind]);
 
   /* -----------------------------
-     Change handlers with cascading resets
+     Change handlers with proper cascading resets
      ----------------------------- */
   const onCategoryChange = (nextCategoryId: string) => {
     p.setCategoryId(nextCategoryId);
 
+    // downstream globals
     p.setSubcategoryId("");
     p.setFranchiseId("");
 
+    // downstream kind-specific
     clearKindSpecific();
   };
 
@@ -245,7 +254,9 @@ export default function CatalogFilters(p: Props) {
       {p.metaError && <p className="text-[11px] text-red-600">{p.metaError}</p>}
 
       <div className="mt-3 space-y-3 text-xs">
-        {/* Global filters */}
+        {/* -----------------------------
+            Global filters
+           ----------------------------- */}
         <div className="space-y-1">
           <label className="font-medium">Category</label>
           <select
@@ -320,14 +331,16 @@ export default function CatalogFilters(p: Props) {
           </div>
         </div>
 
-        {/* Building Blocks */}
+        {/* -----------------------------
+            Building Blocks
+           ----------------------------- */}
         {p.selectedKind === "building_blocks" && (
           <div className="pt-2 border-t space-y-3">
             <p className="text-[11px] text-gray-500">
               Building Blocks filters
             </p>
 
-            {/* ✅ Toggle: minifigs */}
+            {/* ✅ Toggle: Show/Hide minifigs */}
             <div className="flex items-center justify-between rounded-xl border bg-white px-3 py-2">
               <div>
                 <p className="font-medium text-xs">Show Minifigs</p>
@@ -342,28 +355,31 @@ export default function CatalogFilters(p: Props) {
               />
             </div>
 
-            {/* ✅ NEW: Set filter */}
-            <div className="space-y-1">
-              <label className="font-medium">Set</label>
-              <select
-                value={p.bbSetId}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  p.setBbSetId(v);
-                  // If set changes, reset dependent filters
-                  p.setBbThemeId("");
-                  p.setBbSubthemeId("");
-                }}
-                className="w-full rounded-xl border bg-white px-3 py-2"
-              >
-                <option value="">All</option>
-                {p.bbSetOptions.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {/* ✅ Set filter (only renders when wired from CatalogScreen) */}
+            {hasBbSetSupport && (
+              <div className="space-y-1">
+                <label className="font-medium">Set</label>
+                <select
+                  value={p.bbSetId}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    p.setBbSetId!(v);
+
+                    // changing set should reset theme hierarchy unless you're sure they're independent
+                    p.setBbThemeId("");
+                    p.setBbSubthemeId("");
+                  }}
+                  className="w-full rounded-xl border bg-white px-3 py-2"
+                >
+                  <option value="">All</option>
+                  {p.bbSetOptions!.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <div className="space-y-1">
               <label className="font-medium">Theme</label>
@@ -405,7 +421,9 @@ export default function CatalogFilters(p: Props) {
           </div>
         )}
 
-        {/* Toys */}
+        {/* -----------------------------
+            Toys
+           ----------------------------- */}
         {p.selectedKind === "toy" && (
           <div className="pt-2 border-t space-y-3">
             <p className="text-[11px] text-gray-500">Toys filters</p>
@@ -475,7 +493,9 @@ export default function CatalogFilters(p: Props) {
           </div>
         )}
 
-        {/* Gaming */}
+        {/* -----------------------------
+            Gaming
+           ----------------------------- */}
         {p.selectedKind === "gaming" && (
           <div className="pt-2 border-t space-y-3">
             <p className="text-[11px] text-gray-500">Gaming filters</p>
@@ -502,7 +522,9 @@ export default function CatalogFilters(p: Props) {
           </div>
         )}
 
-        {/* Music */}
+        {/* -----------------------------
+            Music
+           ----------------------------- */}
         {p.selectedKind === "music" && (
           <div className="pt-2 border-t space-y-3">
             <p className="text-[11px] text-gray-500">Music filters</p>
@@ -525,7 +547,9 @@ export default function CatalogFilters(p: Props) {
           </div>
         )}
 
-        {/* Comics */}
+        {/* -----------------------------
+            Comics
+           ----------------------------- */}
         {p.selectedKind === "comic" && (
           <div className="pt-2 border-t space-y-3">
             <p className="text-[11px] text-gray-500">Comics filters</p>
@@ -548,8 +572,11 @@ export default function CatalogFilters(p: Props) {
           </div>
         )}
 
-        {/* Cards */}
-        {(p.selectedKind === "trading_card" || p.selectedKind === "sports_card") && (
+        {/* -----------------------------
+            Cards
+           ----------------------------- */}
+        {(p.selectedKind === "trading_card" ||
+          p.selectedKind === "sports_card") && (
           <div className="pt-2 border-t space-y-3">
             <p className="text-[11px] text-gray-500">Cards filters</p>
 
