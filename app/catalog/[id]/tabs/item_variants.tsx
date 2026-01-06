@@ -284,33 +284,64 @@ export default function ItemVariantsTab({
     }
   };
 
-  const onCreateNewVariant = async () => {
-    if (!baseItem || !newVariantName.trim()) return;
+const onCreateNewVariant = async () => {
+    const vn = newVariantName.trim();
+    if (!baseItem) {
+      setAdminMsg("Error: Base item data is missing.");
+      return;
+    }
+    if (!vn) {
+      setAdminMsg("Error: Please enter a variant label.");
+      return;
+    }
+
     try {
       setAdminBusy(true);
+      setAdminMsg("Creating variant..."); // Feedback so you know it started
+
       const vg = await ensureGroup();
       const rk = newVariantRank.trim();
+      const rankVal = rk !== "" && Number.isFinite(Number(rk)) ? Number(rk) : null;
+
       const insertRes = await supabase
         .from("catalog_items")
-        .insert([{
-          name: baseItem.name,
-          category_id: baseItem.category_id,
-          subcategory_id: baseItem.subcategory_id,
-          franchise_id: baseItem.franchise_id,
-          release_year: baseItem.release_year,
-          version: baseItem.version,
-          variant_group_id: vg,
-          base_catalog_item_id: catalogItemId,
-          variant_name: newVariantName.trim(),
-          variant_rank: rk !== "" ? Number(rk) : null,
-        }])
+        .insert([
+          {
+            name: baseItem.name,
+            category_id: baseItem.category_id,
+            subcategory_id: baseItem.subcategory_id,
+            franchise_id: baseItem.franchise_id,
+            release_year: baseItem.release_year,
+            version: baseItem.version,
+            variant_group_id: vg,
+            base_catalog_item_id: catalogItemId,
+            variant_name: vn,
+            variant_rank: rankVal,
+            // IF YOUR BUILD FAILS HERE: 
+            // Add other required fields from your table with default values, e.g.:
+            // description: "", 
+            // slug: `${baseItem.name.toLowerCase()}-${vn.toLowerCase()}-${Date.now()}`
+          },
+        ])
         .select("id")
         .single();
 
-      if (insertRes.error) throw insertRes.error;
-      router.push(`/catalog/${insertRes.data.id}`);
+      if (insertRes.error) {
+        // This will now show you EXACTLY why the database rejected it
+        throw new Error(`DB Error: ${insertRes.error.message} - ${insertRes.error.details}`);
+      }
+
+      const newId = insertRes.data?.id;
+      if (!newId) throw new Error("Created variant but did not receive a new ID.");
+
+      setAdminMsg("Success! Redirecting...");
+      
+      // Use window.location for a "hard" redirect if router.push feels stuck
+      router.push(`/catalog/${newId}`);
+      
     } catch (e: any) {
-      setAdminMsg(e?.message ?? "Creation failed.");
+      console.error("Variant Creation Failed:", e);
+      setAdminMsg(e.message || "Failed to create variant.");
     } finally {
       setAdminBusy(false);
     }
@@ -425,3 +456,4 @@ export default function ItemVariantsTab({
     </div>
   );
 }
+
