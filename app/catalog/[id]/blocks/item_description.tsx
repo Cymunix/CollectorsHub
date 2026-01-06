@@ -15,7 +15,7 @@ type CatalogItemRow = {
   genre_ids?: string[] | null;
   age_rating_id?: string | null;
 
-  // ✅ FK IDs on catalog_items
+  // FK IDs on catalog_items
   publisher_id?: string | null;
   manufacturer_id?: string | null;
 
@@ -61,8 +61,8 @@ function toIntOrNull(v: string): number | null {
 }
 
 /**
- * ✅ Explicit lookup loader (no guessing column names).
- * If your label column differs, change the labelColumn for that table below.
+ * Explicit lookup loader (no guessing).
+ * Change labelColumn if your table uses something else.
  */
 async function fetchLookup(table: string, labelColumn: string): Promise<LookupRow[]> {
   const { data, error } = await supabase
@@ -81,7 +81,6 @@ async function fetchLookup(table: string, labelColumn: string): Promise<LookupRo
 }
 
 async function fetchAgeRatings(): Promise<LookupRow[]> {
-  // Commonly `rating` not `name`
   const { data, error } = await supabase
     .from("age_ratings")
     .select("id, rating")
@@ -92,6 +91,15 @@ async function fetchAgeRatings(): Promise<LookupRow[]> {
   return (data || [])
     .map((r: any) => ({ id: String(r.id), name: String(r.rating ?? "").trim() }))
     .filter((r) => r.id && r.name);
+}
+
+function mergeLookups(a: LookupRow[], b: LookupRow[]) {
+  const m = new Map<string, string>();
+  for (const r of a) m.set(r.id, r.name);
+  for (const r of b) if (!m.has(r.id)) m.set(r.id, r.name);
+  return Array.from(m.entries())
+    .map(([id, name]) => ({ id, name }))
+    .sort((x, y) => x.name.localeCompare(y.name));
 }
 
 const PRODUCTION_STATUSES: Array<{ id: string; name: string }> = [
@@ -121,7 +129,10 @@ export default function ItemDescription({
   const [genres, setGenres] = useState<LookupRow[]>([]);
   const [ageRatings, setAgeRatings] = useState<LookupRow[]>([]);
   const [manufacturers, setManufacturers] = useState<LookupRow[]>([]);
-  const [publishers, setPublishers] = useState<LookupRow[]>([]);
+
+  // ✅ publishers are split by kind
+  const [gamePublishers, setGamePublishers] = useState<LookupRow[]>([]);
+  const [comicPublishers, setComicPublishers] = useState<LookupRow[]>([]);
 
   // Admin edit state
   const [editing, setEditing] = useState(false);
@@ -129,10 +140,21 @@ export default function ItemDescription({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [draft, setDraft] = useState<CatalogItemRow | null>(null);
 
-  const isCard = useMemo(() => {
-    const c = String(categoryName ?? "").toLowerCase();
-    return c.includes("card") || c.includes("tcg");
-  }, [categoryName]);
+  const cat = useMemo(() => String(categoryName ?? "").toLowerCase(), [categoryName]);
+
+  const isCard = useMemo(() => cat.includes("card") || cat.includes("tcg"), [cat]);
+  const isGame = useMemo(
+    () => cat.includes("game") || cat.includes("video") || cat.includes("xbox") || cat.includes("playstation") || cat.includes("nintendo"),
+    [cat]
+  );
+  const isComic = useMemo(() => cat.includes("comic") || cat.includes("manga"), [cat]);
+
+  // Which publisher options to show in the dropdown
+  const publisherOptions = useMemo(() => {
+    if (isGame) return gamePublishers;
+    if (isComic) return comicPublishers;
+    return mergeLookups(gamePublishers, comicPublishers);
+  }, [isGame, isComic, gamePublishers, comicPublishers]);
 
   useEffect(() => {
     async function load() {
@@ -140,7 +162,6 @@ export default function ItemDescription({
       setLoadError(null);
 
       try {
-        // Item
         const { data: it, error: itErr } = await supabase
           .from("catalog_items")
           .select("*")
@@ -149,15 +170,15 @@ export default function ItemDescription({
 
         if (itErr) throw itErr;
 
-        // Lookups (explicit label columns)
-        // If your tables use different label columns, change them here.
-        const [frs, sets, gen, age, mans, pubs] = await Promise.all([
+        const [frs, sets, gen, age, mans, gPubs, cPubs] = await Promise.all([
           fetchLookup("franchises", "name"),
           fetchLookup("card_sets", "name"),
           fetchLookup("genres", "name"),
           fetchAgeRatings(),
           fetchLookup("manufacturers", "name"),
-          fetchLookup("publishers", "name"),
+          // ✅ THESE are your real publisher tables
+          fetchLookup("game_publishers", "name"),
+          fetchLookup("comic_publishers", "name"),
         ]);
 
         setFranchises(frs);
@@ -165,7 +186,8 @@ export default function ItemDescription({
         setGenres(gen);
         setAgeRatings(age);
         setManufacturers(mans);
-        setPublishers(pubs);
+        setGamePublishers(gPubs);
+        setComicPublishers(cPubs);
 
         setItem(it as any);
         setDraft(it as any);
@@ -184,7 +206,11 @@ export default function ItemDescription({
   const fName = franchises.find((f) => f.id === item?.franchise_id)?.name;
   const sName = cardSets.find((s) => s.id === item?.card_set_id)?.name;
 
-  const pubName = publishers.find((p) => p.id === item?.publisher_id)?.name;
+  // ✅ Resolve publisher name across BOTH tables
+  const pubName =
+    gamePublishers.find((p) => p.id === item?.publisher_id)?.name ||
+    comicPublishers.find((p) => p.id === item?.publisher_id)?.name;
+
   const mName = manufacturers.find((m) => m.id === item?.manufacturer_id)?.name;
 
   // single-line: Publisher OR Manufacturer
@@ -489,7 +515,7 @@ export default function ItemDescription({
                   }
                 >
                   <option value="">— Publisher —</option>
-                  {publishers.map((p) => (
+                  {publisherOptions.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
                     </option>
