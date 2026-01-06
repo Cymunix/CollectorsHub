@@ -60,7 +60,8 @@ function ts(ts: string) {
 }
 
 function statusBadge(s: Status) {
-  const base = "inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold border";
+  const base =
+    "inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold border";
   if (s === "approved") return `${base} border-emerald-200 bg-emerald-50 text-emerald-800`;
   if (s === "rejected") return `${base} border-red-200 bg-red-50 text-red-700`;
   if (s === "needs_info") return `${base} border-amber-200 bg-amber-50 text-amber-800`;
@@ -163,7 +164,6 @@ export default function AdminSuggestionsPage() {
   };
 
   const loadLookups = async () => {
-    // If any of these tables differ in your schema, change names here.
     const [f, t, s] = await Promise.all([
       supabase.from("franchises").select("id,name").order("name"),
       supabase.from("bb_themes").select("id,name").order("name"),
@@ -273,12 +273,94 @@ export default function AdminSuggestionsPage() {
     setBusyId(null);
   };
 
+  const enrichFromBrickset = async (r: SuggestionRow) => {
+    if (!isAdmin) return;
+
+    const setNo = String(r.bb_set_number || "").trim();
+    if (!setNo) {
+      setErr("Missing bb_set_number on this suggestion.");
+      return;
+    }
+
+    setBusyId(r.id);
+    setErr(null);
+
+    try {
+      const res = await fetch(`/api/lego/enrich?setNumber=${encodeURIComponent(setNo)}`);
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Brickset enrich failed.");
+      }
+
+      const s = json?.set ?? {};
+
+      // Best-effort theme/subtheme mapping by NAME to your internal bb_* tables
+      const themeName = String(s?.theme || "").trim();
+      const subthemeName = String(s?.subtheme || "").trim();
+
+      const themeMatch =
+        themeName.length > 0
+          ? bbThemes.find((t) => (t.name || "").trim().toLowerCase() === themeName.toLowerCase())
+          : undefined;
+
+      const subthemeMatch =
+        subthemeName.length > 0 && themeMatch
+          ? bbSubthemes.find(
+              (st) =>
+                String(st.theme_id) === String(themeMatch.id) &&
+                (st.name || "").trim().toLowerCase() === subthemeName.toLowerCase()
+            )
+          : undefined;
+
+      const patch: Partial<SuggestionRow> = {
+        // core suggestion fields
+        name: s?.name ?? r.name,
+        release_year: Number.isFinite(Number(s?.year)) ? Number(s.year) : r.release_year,
+        image_url: s?.imageUrl ?? r.image_url,
+        source_url: s?.bricksetURL ?? r.source_url,
+
+        // lego fields
+        bb_set_number: s?.setNumber ?? r.bb_set_number,
+        bb_piece_count: Number.isFinite(Number(s?.pieces)) ? Number(s.pieces) : r.bb_piece_count,
+        bb_retail_cad: s?.retailCAD ?? r.bb_retail_cad,
+        bb_retail_usd: s?.retailUSD ?? r.bb_retail_usd,
+
+        // internal mapping
+        bb_theme_id: themeMatch?.id ?? r.bb_theme_id ?? null,
+        bb_subtheme_id: subthemeMatch?.id ?? r.bb_subtheme_id ?? null,
+
+        // raw proof for debugging
+        details_json: {
+          ...(r.details_json || {}),
+          brickset: json,
+        },
+
+        // idempotency metadata
+        source: "brickset",
+        source_key: s?.setNumber ?? r.source_key ?? r.bb_set_number ?? null,
+      };
+
+      const upd = await supabase.from("catalog_item_suggestions").update(patch).eq("id", r.id);
+      if (upd.error) throw upd.error;
+
+      await load();
+    } catch (e: any) {
+      console.error(e);
+      setErr(e?.message || "Brickset enrich failed.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   if (profileLoading) {
     return (
       <main className="min-h-screen w-full bg-[#F4F7FD] text-[#0F172A] dark:bg-[#020617] dark:text-[#E5E7EB]">
         <Header />
         <SecondaryNav />
-        <div className="mx-auto max-w-5xl px-6 py-8 text-sm text-[#64748B] dark:text-[#9CA3AF]">Loading…</div>
+        <div className="mx-auto max-w-5xl px-6 py-8 text-sm text-[#64748B] dark:text-[#9CA3AF]">
+          Loading…
+        </div>
       </main>
     );
   }
@@ -342,7 +424,9 @@ export default function AdminSuggestionsPage() {
         </div>
 
         {err ? (
-          <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{err}</div>
+          <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+            {err}
+          </div>
         ) : null}
 
         {loading ? (
@@ -382,7 +466,10 @@ export default function AdminSuggestionsPage() {
 
                       {r.source_key ? (
                         <div className="mt-1 text-[11px] text-[#64748B] dark:text-[#9CA3AF] truncate">
-                          Source key: <span className="font-mono">{r.source}:{r.source_key}</span>
+                          Source key:{" "}
+                          <span className="font-mono">
+                            {r.source}:{r.source_key}
+                          </span>
                         </div>
                       ) : null}
 
@@ -411,7 +498,9 @@ export default function AdminSuggestionsPage() {
                   {/* Inline editors */}
                   <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
-                      <div className="text-xs font-semibold text-[#0F172A] dark:text-[#E5E7EB]">Franchise</div>
+                      <div className="text-xs font-semibold text-[#0F172A] dark:text-[#E5E7EB]">
+                        Franchise
+                      </div>
                       <select
                         value={r.franchise_id ?? ""}
                         disabled={busyId === r.id}
@@ -432,7 +521,9 @@ export default function AdminSuggestionsPage() {
 
                     {lego ? (
                       <div>
-                        <div className="text-xs font-semibold text-[#0F172A] dark:text-[#E5E7EB]">LEGO Theme</div>
+                        <div className="text-xs font-semibold text-[#0F172A] dark:text-[#E5E7EB]">
+                          LEGO Theme
+                        </div>
                         <select
                           value={r.bb_theme_id ?? ""}
                           disabled={busyId === r.id}
@@ -456,7 +547,9 @@ export default function AdminSuggestionsPage() {
 
                     {lego ? (
                       <div>
-                        <div className="text-xs font-semibold text-[#0F172A] dark:text-[#E5E7EB]">LEGO Subtheme</div>
+                        <div className="text-xs font-semibold text-[#0F172A] dark:text-[#E5E7EB]">
+                          LEGO Subtheme
+                        </div>
                         <select
                           value={r.bb_subtheme_id ?? ""}
                           disabled={busyId === r.id}
@@ -476,11 +569,15 @@ export default function AdminSuggestionsPage() {
                     {lego ? (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:col-span-2">
                         <div>
-                          <div className="text-xs font-semibold text-[#0F172A] dark:text-[#E5E7EB]">Set Number</div>
+                          <div className="text-xs font-semibold text-[#0F172A] dark:text-[#E5E7EB]">
+                            Set Number
+                          </div>
                           <input
                             value={r.bb_set_number ?? ""}
                             disabled={busyId === r.id}
-                            onChange={(e) => patchSuggestion(r.id, { bb_set_number: toNullableString(e.target.value) })}
+                            onChange={(e) =>
+                              patchSuggestion(r.id, { bb_set_number: toNullableString(e.target.value) })
+                            }
                             placeholder="e.g. 75313-1"
                             className="mt-1 w-full rounded-xl border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#0B1220] px-3 py-2 text-sm"
                           />
@@ -490,33 +587,45 @@ export default function AdminSuggestionsPage() {
                         </div>
 
                         <div>
-                          <div className="text-xs font-semibold text-[#0F172A] dark:text-[#E5E7EB]">Piece Count</div>
+                          <div className="text-xs font-semibold text-[#0F172A] dark:text-[#E5E7EB]">
+                            Piece Count
+                          </div>
                           <input
                             value={r.bb_piece_count ?? ""}
                             disabled={busyId === r.id}
-                            onChange={(e) => patchSuggestion(r.id, { bb_piece_count: toNullableInt(e.target.value) as any })}
+                            onChange={(e) =>
+                              patchSuggestion(r.id, { bb_piece_count: toNullableInt(e.target.value) as any })
+                            }
                             placeholder="e.g. 1022"
                             className="mt-1 w-full rounded-xl border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#0B1220] px-3 py-2 text-sm"
                           />
                         </div>
 
                         <div>
-                          <div className="text-xs font-semibold text-[#0F172A] dark:text-[#E5E7EB]">Retail CAD</div>
+                          <div className="text-xs font-semibold text-[#0F172A] dark:text-[#E5E7EB]">
+                            Retail CAD
+                          </div>
                           <input
                             value={r.bb_retail_cad ?? ""}
                             disabled={busyId === r.id}
-                            onChange={(e) => patchSuggestion(r.id, { bb_retail_cad: toNullableNumber(e.target.value) as any })}
+                            onChange={(e) =>
+                              patchSuggestion(r.id, { bb_retail_cad: toNullableNumber(e.target.value) as any })
+                            }
                             placeholder="e.g. 199.99"
                             className="mt-1 w-full rounded-xl border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#0B1220] px-3 py-2 text-sm"
                           />
                         </div>
 
                         <div>
-                          <div className="text-xs font-semibold text-[#0F172A] dark:text-[#E5E7EB]">Retail USD</div>
+                          <div className="text-xs font-semibold text-[#0F172A] dark:text-[#E5E7EB]">
+                            Retail USD
+                          </div>
                           <input
                             value={r.bb_retail_usd ?? ""}
                             disabled={busyId === r.id}
-                            onChange={(e) => patchSuggestion(r.id, { bb_retail_usd: toNullableNumber(e.target.value) as any })}
+                            onChange={(e) =>
+                              patchSuggestion(r.id, { bb_retail_usd: toNullableNumber(e.target.value) as any })
+                            }
                             placeholder="e.g. 159.99"
                             className="mt-1 w-full rounded-xl border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#0B1220] px-3 py-2 text-sm"
                           />
@@ -536,6 +645,22 @@ export default function AdminSuggestionsPage() {
                     />
 
                     <div className="flex flex-wrap items-center gap-2 justify-start lg:justify-end">
+                      {lego ? (
+                        <button
+                          type="button"
+                          disabled={busyId === r.id || !String(r.bb_set_number || "").trim()}
+                          onClick={() => enrichFromBrickset(r)}
+                          className="rounded-xl border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#020617] px-3 py-2 text-xs font-semibold hover:bg-[#F8FAFC] dark:hover:bg-[#0B1220] disabled:opacity-60"
+                          title={
+                            !String(r.bb_set_number || "").trim()
+                              ? "Enter a set number first."
+                              : "Fetch details from Brickset and auto-fill fields."
+                          }
+                        >
+                          Enrich (Brickset)
+                        </button>
+                      ) : null}
+
                       <button
                         type="button"
                         disabled={busyId === r.id}
