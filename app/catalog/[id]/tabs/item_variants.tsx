@@ -18,6 +18,7 @@ type CatalogItemVariantRow = {
 type BaseItemLite = {
   id: string;
   name: string;
+  kind: string; // Added to satisfy DB constraints during variant creation
   category_id: string | null;
   subcategory_id: string | null;
   franchise_id: string | null;
@@ -62,10 +63,10 @@ export default function ItemVariantsTab({
     setGroupId(null);
     setBaseItem(null);
 
-    // 1) Load base item
+    // 1) Load base item including 'kind'
     const baseRes = await supabase
       .from("catalog_items")
-      .select("id,name,category_id,subcategory_id,franchise_id,upc,release_year,version,variant_group_id")
+      .select("id,name,kind,category_id,subcategory_id,franchise_id,upc,release_year,version,variant_group_id")
       .eq("id", catalogItemId)
       .single();
 
@@ -79,6 +80,7 @@ export default function ItemVariantsTab({
     const baseLite: BaseItemLite = {
       id: String(base.id),
       name: String(base.name ?? "Item"),
+      kind: String(base.kind ?? ""),
       category_id: base.category_id ?? null,
       subcategory_id: base.subcategory_id ?? null,
       franchise_id: base.franchise_id ?? null,
@@ -185,7 +187,6 @@ export default function ItemVariantsTab({
   };
 
   const createVariantGroup = async (baseId: string): Promise<string> => {
-    // Corrected to include the required base_catalog_item_id
     const create = await supabase
       .from("variant_groups")
       .insert([{ base_catalog_item_id: baseId }])
@@ -234,7 +235,6 @@ export default function ItemVariantsTab({
       if (up.error) throw up.error;
     }
 
-    // CLEANUP: Delete the empty old group
     await supabase.from("variant_groups").delete().eq("id", fromGroupId);
   };
 
@@ -245,7 +245,6 @@ export default function ItemVariantsTab({
       return baseItem.variant_group_id;
     }
     
-    // Pass the current catalog item ID as the base for the new group
     const vg = await createVariantGroup(catalogItemId);
     await assignItemToGroup({
       itemId: catalogItemId,
@@ -260,7 +259,7 @@ export default function ItemVariantsTab({
   const onLinkExisting = async () => {
     const targetId = linkExistingId.trim();
     if (!targetId || targetId === catalogItemId) {
-        setAdminMsg("Please provide a valid, different target ID.");
+        setAdminMsg("Error: Invalid target ID.");
         return;
     }
     try {
@@ -297,7 +296,7 @@ export default function ItemVariantsTab({
 
   const onCreateNewVariant = async () => {
     if (!baseItem || !newVariantName.trim()) {
-        setAdminMsg("Missing base data or variant label.");
+        setAdminMsg("Error: Missing base data or variant label.");
         return;
     }
     try {
@@ -310,6 +309,7 @@ export default function ItemVariantsTab({
         .from("catalog_items")
         .insert([{
           name: baseItem.name,
+          kind: baseItem.kind, // Now included from baseItem
           category_id: baseItem.category_id,
           subcategory_id: baseItem.subcategory_id,
           franchise_id: baseItem.franchise_id,
