@@ -6,6 +6,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import type {
   BbSubtheme,
   BbTheme,
+  // ✅ If you have a real type for sets, import it here (e.g. BbSet)
+  // BbSet,
   CardManufacturer,
   CardSet,
   CardType,
@@ -20,6 +22,8 @@ import type {
   ToyManufacturer,
   ItemKind,
 } from "@/lib/catalog/types";
+
+type IdName = { id: string; name: string };
 
 type Props = {
   metaLoading: boolean;
@@ -47,6 +51,12 @@ type Props = {
   // Building blocks
   showMinifigs: boolean;
   setShowMinifigs: (v: boolean) => void;
+
+  // ✅ ADD: Set filter for Building Blocks
+  bbSetId: string;
+  setBbSetId: (v: string) => void;
+  bbSetOptions: IdName[]; // replace with BbSet[] if you have it
+
   bbThemeId: string;
   setBbThemeId: (v: string) => void;
   bbSubthemeId: string;
@@ -72,7 +82,7 @@ type Props = {
   gamePlatformId: string;
   setGamePlatformId: (v: string) => void;
 
-  // ✅ ADD: optional mirror state used elsewhere (platform_id)
+  // optional mirror state used elsewhere (platform_id)
   platformId?: string;
   setPlatformId?: (v: string) => void;
 
@@ -110,6 +120,7 @@ export default function CatalogFilters(p: Props) {
      ----------------------------- */
   const clearBuildingBlocks = () => {
     p.setShowMinifigs(false);
+    p.setBbSetId("");
     p.setBbThemeId("");
     p.setBbSubthemeId("");
   };
@@ -149,11 +160,7 @@ export default function CatalogFilters(p: Props) {
   };
 
   /* -----------------------------
-     ✅ Header search reset hook
-     If URL has ?search=...&reset=1
-     then nuke all left-side filters.
-     Then remove reset=1 so it only
-     happens once.
+     Header search reset hook
      ----------------------------- */
   const lastResetSigRef = useRef<string>("");
 
@@ -162,17 +169,13 @@ export default function CatalogFilters(p: Props) {
     const reset = searchParams.get("reset") === "1";
     if (!reset || !q) return;
 
-    // Prevent double-firing if Next re-renders with same params
     const sig = `${q}::${searchParams.toString()}`;
     if (lastResetSigRef.current === sig) return;
     lastResetSigRef.current = sig;
 
-    // Clear *everything* on the left
     p.clearFilters();
-    // Belt + braces: ensure kind-specific fields are cleared even if clearFilters misses them
     clearKindSpecific();
 
-    // Remove reset=1 so it doesn't keep wiping state on back/forward/refresh
     const next = new URLSearchParams(searchParams.toString());
     next.delete("reset");
     router.replace(`/catalog?${next.toString()}`);
@@ -181,9 +184,7 @@ export default function CatalogFilters(p: Props) {
 
   /* -----------------------------
      When kind changes, clear
-     kind-specific filters so we
-     don't keep "invisible" filters
-     applied.
+     kind-specific filters
      ----------------------------- */
   const prevKindRef = useRef<Props["selectedKind"]>(p.selectedKind);
   useEffect(() => {
@@ -195,29 +196,34 @@ export default function CatalogFilters(p: Props) {
   }, [p.selectedKind]);
 
   /* -----------------------------
-     Change handlers with proper
-     cascading resets
+     Change handlers with cascading resets
      ----------------------------- */
   const onCategoryChange = (nextCategoryId: string) => {
     p.setCategoryId(nextCategoryId);
 
-    // downstream globals
     p.setSubcategoryId("");
     p.setFranchiseId("");
 
-    // downstream kind-specific
     clearKindSpecific();
   };
 
   const onSubcategoryChange = (nextSubcategoryId: string) => {
     p.setSubcategoryId(nextSubcategoryId);
-
-    // subcategory can invalidate kind-specific option trees
     clearKindSpecific();
   };
 
   const onFranchiseChange = (nextFranchiseId: string) => {
     p.setFranchiseId(nextFranchiseId);
+  };
+
+  const onMinYearChange = (v: string) => {
+    const cleaned = v.replace(/\D/g, "").slice(0, 4);
+    p.setMinYear(cleaned);
+  };
+
+  const onMaxYearChange = (v: string) => {
+    const cleaned = v.replace(/\D/g, "").slice(0, 4);
+    p.setMaxYear(cleaned);
   };
 
   return (
@@ -239,9 +245,7 @@ export default function CatalogFilters(p: Props) {
       {p.metaError && <p className="text-[11px] text-red-600">{p.metaError}</p>}
 
       <div className="mt-3 space-y-3 text-xs">
-        {/* -----------------------------
-            Global filters
-           ----------------------------- */}
+        {/* Global filters */}
         <div className="space-y-1">
           <label className="font-medium">Category</label>
           <select
@@ -298,7 +302,7 @@ export default function CatalogFilters(p: Props) {
             <label className="font-medium">Min Year</label>
             <input
               value={p.minYear}
-              onChange={(e) => p.setMinYear(e.target.value)}
+              onChange={(e) => onMinYearChange(e.target.value)}
               inputMode="numeric"
               className="w-full rounded-xl border px-3 py-2"
               placeholder="e.g. 1990"
@@ -308,7 +312,7 @@ export default function CatalogFilters(p: Props) {
             <label className="font-medium">Max Year</label>
             <input
               value={p.maxYear}
-              onChange={(e) => p.setMaxYear(e.target.value)}
+              onChange={(e) => onMaxYearChange(e.target.value)}
               inputMode="numeric"
               className="w-full rounded-xl border px-3 py-2"
               placeholder="e.g. 2025"
@@ -316,20 +320,19 @@ export default function CatalogFilters(p: Props) {
           </div>
         </div>
 
-        {/* -----------------------------
-            Building Blocks
-           ----------------------------- */}
+        {/* Building Blocks */}
         {p.selectedKind === "building_blocks" && (
           <div className="pt-2 border-t space-y-3">
             <p className="text-[11px] text-gray-500">
               Building Blocks filters
             </p>
 
+            {/* ✅ Toggle: minifigs */}
             <div className="flex items-center justify-between rounded-xl border bg-white px-3 py-2">
               <div>
                 <p className="font-medium text-xs">Show Minifigs</p>
                 <p className="text-[10px] text-gray-500">
-                  Display minifigs as catalog cards
+                  Include minifigs in results
                 </p>
               </div>
               <input
@@ -337,6 +340,29 @@ export default function CatalogFilters(p: Props) {
                 checked={p.showMinifigs}
                 onChange={(e) => p.setShowMinifigs(e.target.checked)}
               />
+            </div>
+
+            {/* ✅ NEW: Set filter */}
+            <div className="space-y-1">
+              <label className="font-medium">Set</label>
+              <select
+                value={p.bbSetId}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  p.setBbSetId(v);
+                  // If set changes, reset dependent filters
+                  p.setBbThemeId("");
+                  p.setBbSubthemeId("");
+                }}
+                className="w-full rounded-xl border bg-white px-3 py-2"
+              >
+                <option value="">All</option>
+                {p.bbSetOptions.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div className="space-y-1">
@@ -348,11 +374,8 @@ export default function CatalogFilters(p: Props) {
                   p.setBbSubthemeId("");
                 }}
                 className="w-full rounded-xl border bg-white px-3 py-2"
-                disabled={!p.subcategoryId}
               >
-                <option value="">
-                  {p.subcategoryId ? "All" : "Select subcategory first"}
-                </option>
+                <option value="">All</option>
                 {p.bbThemeOptions.map((t) => (
                   <option key={t.id} value={t.id}>
                     {t.name}
@@ -382,9 +405,7 @@ export default function CatalogFilters(p: Props) {
           </div>
         )}
 
-        {/* -----------------------------
-            Toys
-           ----------------------------- */}
+        {/* Toys */}
         {p.selectedKind === "toy" && (
           <div className="pt-2 border-t space-y-3">
             <p className="text-[11px] text-gray-500">Toys filters</p>
@@ -454,9 +475,7 @@ export default function CatalogFilters(p: Props) {
           </div>
         )}
 
-        {/* -----------------------------
-            Gaming
-           ----------------------------- */}
+        {/* Gaming */}
         {p.selectedKind === "gaming" && (
           <div className="pt-2 border-t space-y-3">
             <p className="text-[11px] text-gray-500">Gaming filters</p>
@@ -483,9 +502,7 @@ export default function CatalogFilters(p: Props) {
           </div>
         )}
 
-        {/* -----------------------------
-            Music
-           ----------------------------- */}
+        {/* Music */}
         {p.selectedKind === "music" && (
           <div className="pt-2 border-t space-y-3">
             <p className="text-[11px] text-gray-500">Music filters</p>
@@ -508,9 +525,7 @@ export default function CatalogFilters(p: Props) {
           </div>
         )}
 
-        {/* -----------------------------
-            Comics
-           ----------------------------- */}
+        {/* Comics */}
         {p.selectedKind === "comic" && (
           <div className="pt-2 border-t space-y-3">
             <p className="text-[11px] text-gray-500">Comics filters</p>
@@ -533,11 +548,8 @@ export default function CatalogFilters(p: Props) {
           </div>
         )}
 
-        {/* -----------------------------
-            Cards
-           ----------------------------- */}
-        {(p.selectedKind === "trading_card" ||
-          p.selectedKind === "sports_card") && (
+        {/* Cards */}
+        {(p.selectedKind === "trading_card" || p.selectedKind === "sports_card") && (
           <div className="pt-2 border-t space-y-3">
             <p className="text-[11px] text-gray-500">Cards filters</p>
 
