@@ -184,8 +184,14 @@ export default function ItemVariantsTab({
     return res.data?.variant_group_id ? String(res.data.variant_group_id) : null;
   };
 
-  const createVariantGroup = async (): Promise<string> => {
-    const create = await supabase.from("variant_groups").insert([{}]).select("id").single();
+  const createVariantGroup = async (baseId: string): Promise<string> => {
+    // Corrected to include the required base_catalog_item_id
+    const create = await supabase
+      .from("variant_groups")
+      .insert([{ base_catalog_item_id: baseId }])
+      .select("id")
+      .single();
+
     if (create.error) throw create.error;
     const vg = String((create.data as any)?.id ?? "");
     if (!vg) throw new Error("Failed to create variant group.");
@@ -238,7 +244,9 @@ export default function ItemVariantsTab({
       setGroupId(baseItem.variant_group_id);
       return baseItem.variant_group_id;
     }
-    const vg = await createVariantGroup();
+    
+    // Pass the current catalog item ID as the base for the new group
+    const vg = await createVariantGroup(catalogItemId);
     await assignItemToGroup({
       itemId: catalogItemId,
       groupId: vg,
@@ -251,10 +259,13 @@ export default function ItemVariantsTab({
 
   const onLinkExisting = async () => {
     const targetId = linkExistingId.trim();
-    if (!targetId || targetId === catalogItemId) return;
+    if (!targetId || targetId === catalogItemId) {
+        setAdminMsg("Please provide a valid, different target ID.");
+        return;
+    }
     try {
       setAdminBusy(true);
-      setAdminMsg(null);
+      setAdminMsg("Linking items...");
       const baseGroupId = await ensureGroup();
       const targetGroupId = await fetchItemGroup(targetId);
 
@@ -284,64 +295,40 @@ export default function ItemVariantsTab({
     }
   };
 
-const onCreateNewVariant = async () => {
-    const vn = newVariantName.trim();
-    if (!baseItem) {
-      setAdminMsg("Error: Base item data is missing.");
-      return;
+  const onCreateNewVariant = async () => {
+    if (!baseItem || !newVariantName.trim()) {
+        setAdminMsg("Missing base data or variant label.");
+        return;
     }
-    if (!vn) {
-      setAdminMsg("Error: Please enter a variant label.");
-      return;
-    }
-
     try {
       setAdminBusy(true);
-      setAdminMsg("Creating variant..."); // Feedback so you know it started
-
+      setAdminMsg("Creating new variant...");
       const vg = await ensureGroup();
       const rk = newVariantRank.trim();
-      const rankVal = rk !== "" && Number.isFinite(Number(rk)) ? Number(rk) : null;
-
+      
       const insertRes = await supabase
         .from("catalog_items")
-        .insert([
-          {
-            name: baseItem.name,
-            category_id: baseItem.category_id,
-            subcategory_id: baseItem.subcategory_id,
-            franchise_id: baseItem.franchise_id,
-            release_year: baseItem.release_year,
-            version: baseItem.version,
-            variant_group_id: vg,
-            base_catalog_item_id: catalogItemId,
-            variant_name: vn,
-            variant_rank: rankVal,
-            // IF YOUR BUILD FAILS HERE: 
-            // Add other required fields from your table with default values, e.g.:
-            // description: "", 
-            // slug: `${baseItem.name.toLowerCase()}-${vn.toLowerCase()}-${Date.now()}`
-          },
-        ])
+        .insert([{
+          name: baseItem.name,
+          category_id: baseItem.category_id,
+          subcategory_id: baseItem.subcategory_id,
+          franchise_id: baseItem.franchise_id,
+          release_year: baseItem.release_year,
+          version: baseItem.version,
+          variant_group_id: vg,
+          base_catalog_item_id: catalogItemId,
+          variant_name: newVariantName.trim(),
+          variant_rank: rk !== "" ? Number(rk) : null,
+        }])
         .select("id")
         .single();
 
-      if (insertRes.error) {
-        // This will now show you EXACTLY why the database rejected it
-        throw new Error(`DB Error: ${insertRes.error.message} - ${insertRes.error.details}`);
-      }
-
-      const newId = insertRes.data?.id;
-      if (!newId) throw new Error("Created variant but did not receive a new ID.");
-
-      setAdminMsg("Success! Redirecting...");
+      if (insertRes.error) throw insertRes.error;
       
-      // Use window.location for a "hard" redirect if router.push feels stuck
-      router.push(`/catalog/${newId}`);
-      
+      setAdminMsg("Variant created. Redirecting...");
+      router.push(`/catalog/${insertRes.data.id}`);
     } catch (e: any) {
-      console.error("Variant Creation Failed:", e);
-      setAdminMsg(e.message || "Failed to create variant.");
+      setAdminMsg(e?.message ?? "Creation failed.");
     } finally {
       setAdminBusy(false);
     }
@@ -375,7 +362,11 @@ const onCreateNewVariant = async () => {
               )}
             </div>
 
-            {adminMsg && <div className="text-xs font-medium text-blue-600">{adminMsg}</div>}
+            {adminMsg && (
+                <div className={`text-xs font-medium ${adminMsg.includes("Error") || adminMsg.includes("failed") ? "text-red-600" : "text-blue-600"}`}>
+                    {adminMsg}
+                </div>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -456,4 +447,3 @@ const onCreateNewVariant = async () => {
     </div>
   );
 }
-
