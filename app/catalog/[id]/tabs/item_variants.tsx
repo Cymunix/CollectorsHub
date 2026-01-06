@@ -40,22 +40,20 @@ export default function ItemVariantsTab({
   const [err, setErr] = useState<string | null>(null);
 
   const [baseItem, setBaseItem] = useState<BaseItemLite | null>(null);
+
   const [groupId, setGroupId] = useState<string | null>(null);
   const [items, setItems] = useState<CatalogItemVariantRow[]>([]);
 
+  // Admin form state
   const [adminBusy, setAdminBusy] = useState(false);
   const [adminMsg, setAdminMsg] = useState<string | null>(null);
 
   const [linkExistingId, setLinkExistingId] = useState("");
   const [linkVariantName, setLinkVariantName] = useState("");
-  const [linkVariantRank, setLinkVariantRank] = useState("");
+  const [linkVariantRank, setLinkVariantRank] = useState<string>("");
 
   const [newVariantName, setNewVariantName] = useState("");
-  const [newVariantRank, setNewVariantRank] = useState("");
-
-  /* =========================
-     Load
-     ========================= */
+  const [newVariantRank, setNewVariantRank] = useState<string>("");
 
   const load = async () => {
     setLoading(true);
@@ -64,40 +62,40 @@ export default function ItemVariantsTab({
     setGroupId(null);
     setBaseItem(null);
 
+    // 1) Load base item
     const baseRes = await supabase
       .from("catalog_items")
-      .select(
-        "id,name,category_id,subcategory_id,franchise_id,upc,release_year,version,variant_group_id"
-      )
+      .select("id,name,category_id,subcategory_id,franchise_id,upc,release_year,version,variant_group_id")
       .eq("id", catalogItemId)
       .single();
 
     if (baseRes.error) {
-      setErr(baseRes.error.message);
+      setErr(baseRes.error.message || "Failed to load item.");
       setLoading(false);
       return;
     }
 
-    const base: BaseItemLite = {
-      id: String(baseRes.data.id),
-      name: baseRes.data.name ?? "Item",
-      category_id: baseRes.data.category_id ?? null,
-      subcategory_id: baseRes.data.subcategory_id ?? null,
-      franchise_id: baseRes.data.franchise_id ?? null,
-      upc: baseRes.data.upc ?? null,
-      release_year: baseRes.data.release_year ?? null,
-      version: baseRes.data.version ?? null,
-      variant_group_id: baseRes.data.variant_group_id
-        ? String(baseRes.data.variant_group_id)
-        : null,
+    const base = baseRes.data as any;
+    const baseLite: BaseItemLite = {
+      id: String(base.id),
+      name: String(base.name ?? "Item"),
+      category_id: base.category_id ?? null,
+      subcategory_id: base.subcategory_id ?? null,
+      franchise_id: base.franchise_id ?? null,
+      upc: base.upc ?? null,
+      release_year: base.release_year ?? null,
+      version: base.version ?? null,
+      variant_group_id: base.variant_group_id ? String(base.variant_group_id) : null,
     };
+    setBaseItem(baseLite);
 
-    setBaseItem(base);
-
-    let vg = base.variant_group_id;
+    // 2) Determine group id:
+    //    - use base.variant_group_id if present
+    //    - else derive from children (base_catalog_item_id)
+    let vg: string | null = baseLite.variant_group_id;
 
     if (!vg) {
-      const childRes = await supabase
+      const childGroupRes = await supabase
         .from("catalog_items")
         .select("variant_group_id")
         .eq("base_catalog_item_id", catalogItemId)
@@ -105,19 +103,22 @@ export default function ItemVariantsTab({
         .limit(1)
         .maybeSingle();
 
-      if (!childRes.error && childRes.data?.variant_group_id) {
-        vg = String(childRes.data.variant_group_id);
+      if (!childGroupRes.error) {
+        vg = (childGroupRes.data as any)?.variant_group_id
+          ? String((childGroupRes.data as any).variant_group_id)
+          : null;
       }
     }
 
     setGroupId(vg);
 
     if (!vg) {
+      // Not linked yet
       setItems([
         {
-          id: base.id,
-          name: base.name,
-          upc: base.upc,
+          id: baseLite.id,
+          name: baseLite.name,
+          upc: baseLite.upc,
           variant_name: null,
           variant_rank: null,
           variant_group_id: null,
@@ -128,108 +129,173 @@ export default function ItemVariantsTab({
       return;
     }
 
+    // 3) Load group items, include base item even if its row lacks group_id
     const itemsRes = await supabase
       .from("catalog_items")
-      .select(
-        "id,name,upc,variant_name,variant_rank,variant_group_id,base_catalog_item_id"
-      )
+      .select("id,name,upc,variant_name,variant_rank,variant_group_id,base_catalog_item_id")
       .or(`variant_group_id.eq.${vg},id.eq.${catalogItemId}`)
       .order("variant_rank", { ascending: true, nullsFirst: true })
       .order("name", { ascending: true });
 
     if (itemsRes.error) {
-      setErr(itemsRes.error.message);
+      setErr(itemsRes.error.message || "Failed to load variants.");
+      setItems([]);
       setLoading(false);
       return;
     }
 
-    const rows: CatalogItemVariantRow[] = itemsRes.data.map((r: any) => ({
+    const rows = (itemsRes.data ?? []) as any[];
+
+    const normalized: CatalogItemVariantRow[] = rows.map((r) => ({
       id: String(r.id),
-      name: r.name ?? "Variant",
+      name: String(r.name ?? "Variant"),
       upc: r.upc ?? null,
       variant_name: r.variant_name ?? null,
-      variant_rank:
-        typeof r.variant_rank === "number" ? r.variant_rank : null,
-      variant_group_id: r.variant_group_id
-        ? String(r.variant_group_id)
-        : null,
-      base_catalog_item_id: r.base_catalog_item_id
-        ? String(r.base_catalog_item_id)
-        : null,
+      variant_rank: typeof r.variant_rank === "number" ? r.variant_rank : null,
+      variant_group_id: r.variant_group_id ? String(r.variant_group_id) : null,
+      base_catalog_item_id: r.base_catalog_item_id ? String(r.base_catalog_item_id) : null,
     }));
 
-    const current = rows.find((r) => r.id === catalogItemId);
-    const others = rows.filter((r) => r.id !== catalogItemId);
+    const current = normalized.find((x) => x.id === catalogItemId);
+    const others = normalized.filter((x) => x.id !== catalogItemId);
 
-    setItems(current ? [current, ...others] : rows);
+    setItems(current ? [current, ...others] : normalized);
     setLoading(false);
   };
 
   useEffect(() => {
-    if (!catalogItemId) return;
-    load();
+    let cancelled = false;
+    (async () => {
+      if (!catalogItemId) return;
+      await load();
+      if (cancelled) return;
+    })();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [catalogItemId]);
 
   const rows = useMemo(() => items, [items]);
 
   /* =========================
-     Variant Group (FIXED)
+     Add-item style variant linking helpers
+     ========================= */
+
+  const fetchItemGroup = async (itemId: string): Promise<string | null> => {
+    const res = await supabase
+      .from("catalog_items")
+      .select("variant_group_id")
+      .eq("id", itemId)
+      .single();
+
+    if (res.error) throw res.error;
+    return res.data?.variant_group_id ? String(res.data.variant_group_id) : null;
+  };
+
+  const createVariantGroup = async (): Promise<string> => {
+    // IMPORTANT:
+    // If variant_groups has required NOT NULL columns, add them here (e.g. { name: "Auto group" }).
+    const create = await supabase.from("variant_groups").insert([{}]).select("id").single();
+    if (create.error) throw create.error;
+
+    const vg = String((create.data as any)?.id ?? "");
+    if (!vg) throw new Error("Failed to create variant group (no id returned).");
+    return vg;
+  };
+
+  const assignItemToGroup = async (args: {
+    itemId: string;
+    groupId: string;
+    baseId: string;
+    makeBase?: boolean;
+    variantName?: string | null;
+    variantRank?: number | null;
+  }) => {
+    const payload: any = {
+      variant_group_id: args.groupId,
+      base_catalog_item_id: args.makeBase ? null : args.baseId,
+    };
+
+    if (args.variantName !== undefined) payload.variant_name = args.variantName;
+    if (args.variantRank !== undefined) payload.variant_rank = args.variantRank;
+
+    const up = await supabase.from("catalog_items").update(payload).eq("id", args.itemId);
+    if (up.error) throw up.error;
+  };
+
+  const mergeGroups = async (fromGroupId: string, intoGroupId: string, baseId: string) => {
+    const res = await supabase.from("catalog_items").select("id").eq("variant_group_id", fromGroupId);
+    if (res.error) throw res.error;
+
+    const ids = (res.data ?? []).map((r: any) => String(r.id)).filter(Boolean);
+
+    // Repoint all items into the destination group; keep base rules consistent.
+    for (const id of ids) {
+      const isBase = id === baseId;
+      const up = await supabase
+        .from("catalog_items")
+        .update({
+          variant_group_id: intoGroupId,
+          base_catalog_item_id: isBase ? null : baseId,
+        })
+        .eq("id", id);
+
+      if (up.error) throw up.error;
+    }
+  };
+
+  /* =========================
+     Admin actions
      ========================= */
 
   const ensureGroup = async (): Promise<string> => {
+    // If we already have a group id, just return it
     if (groupId) return groupId;
+
+    // If base item already has one, use it
     if (baseItem?.variant_group_id) {
       setGroupId(baseItem.variant_group_id);
       return baseItem.variant_group_id;
     }
 
-    // 🔒 Create REAL variant group row
-    const create = await supabase
-      .from("variant_groups")
-      .insert([{}])
-      .select("id")
-      .single();
+    // Otherwise create a real group row, then assign this item as base.
+    const vg = await createVariantGroup();
 
-    if (create.error) throw create.error;
-
-    const vg = String(create.data.id);
-
-    const upBase = await supabase
-      .from("catalog_items")
-      .update({
-        variant_group_id: vg,
-        base_catalog_item_id: null,
-      })
-      .eq("id", catalogItemId);
-
-    if (upBase.error) throw upBase.error;
+    await assignItemToGroup({
+      itemId: catalogItemId,
+      groupId: vg,
+      baseId: catalogItemId,
+      makeBase: true,
+    });
 
     setGroupId(vg);
     return vg;
   };
 
-  /* =========================
-     Admin Actions
-     ========================= */
-
   const onCreateGroup = async () => {
     try {
       setAdminBusy(true);
       setAdminMsg(null);
-      await ensureGroup();
-      setAdminMsg("Variant group created.");
+
+      const vg = await ensureGroup();
+      setAdminMsg(`Variant group created: ${vg}`);
       await load();
     } catch (e: any) {
-      setAdminMsg(e.message);
+      setAdminMsg(e?.message ?? "Failed to create variant group.");
     } finally {
       setAdminBusy(false);
     }
   };
 
   const onLinkExisting = async () => {
-    if (!linkExistingId.trim()) {
-      setAdminMsg("Enter an item id.");
+    const targetId = linkExistingId.trim();
+    if (!targetId) {
+      setAdminMsg("Enter an item id to link.");
+      return;
+    }
+    if (targetId === catalogItemId) {
+      setAdminMsg("You can’t link an item to itself.");
       return;
     }
 
@@ -237,41 +303,58 @@ export default function ItemVariantsTab({
       setAdminBusy(true);
       setAdminMsg(null);
 
-      const vg = await ensureGroup();
+      // Ensure current item has/creates a group (base group)
+      const baseGroupId = await ensureGroup();
 
-      const payload: any = {
-        variant_group_id: vg,
-        base_catalog_item_id: catalogItemId,
-      };
+      // Check the target's existing group (if any)
+      const targetGroupId = await fetchItemGroup(targetId);
 
-      if (linkVariantName.trim()) payload.variant_name = linkVariantName.trim();
-      if (linkVariantRank && !isNaN(Number(linkVariantRank)))
-        payload.variant_rank = Number(linkVariantRank);
+      // Merge if target is in a different group already
+      if (targetGroupId && targetGroupId !== baseGroupId) {
+        await mergeGroups(targetGroupId, baseGroupId, catalogItemId);
+      }
 
-      const up = await supabase
-        .from("catalog_items")
-        .update(payload)
-        .eq("id", linkExistingId.trim());
+      // Link the target item into the group (treat as variant of current/base item)
+      const payloadVariantName = linkVariantName.trim();
+      const rk = linkVariantRank.trim();
+      const rankVal = rk !== "" && Number.isFinite(Number(rk)) ? Number(rk) : null;
 
-      if (up.error) throw up.error;
+      await assignItemToGroup({
+        itemId: targetId,
+        groupId: baseGroupId,
+        baseId: catalogItemId,
+        makeBase: false,
+        variantName: payloadVariantName ? payloadVariantName : undefined, // don't overwrite if blank
+        variantRank: rankVal !== null ? rankVal : undefined,
+      });
 
       setLinkExistingId("");
       setLinkVariantName("");
       setLinkVariantRank("");
-      setAdminMsg("Item linked.");
+
+      setAdminMsg(
+        targetGroupId && targetGroupId !== baseGroupId
+          ? "Linked existing item and merged its group into this group."
+          : "Linked existing item into variants."
+      );
+
       await load();
     } catch (e: any) {
-      setAdminMsg(e.message);
+      setAdminMsg(e?.message ?? "Failed to link existing item.");
     } finally {
       setAdminBusy(false);
     }
   };
 
   const onCreateNewVariant = async () => {
-    if (!baseItem) return;
+    if (!baseItem) {
+      setAdminMsg("Base item not loaded yet.");
+      return;
+    }
 
-    if (!newVariantName.trim()) {
-      setAdminMsg("Variant name required.");
+    const vn = newVariantName.trim();
+    if (!vn) {
+      setAdminMsg("Enter a variant label/name (e.g. 'Steelbook', 'Greatest Hits', 'Holo', etc.).");
       return;
     }
 
@@ -281,7 +364,10 @@ export default function ItemVariantsTab({
 
       const vg = await ensureGroup();
 
-      const insert = await supabase
+      const rk = newVariantRank.trim();
+      const rankVal = rk !== "" && Number.isFinite(Number(rk)) ? Number(rk) : null;
+
+      const insertRes = await supabase
         .from("catalog_items")
         .insert([
           {
@@ -289,77 +375,187 @@ export default function ItemVariantsTab({
             category_id: baseItem.category_id,
             subcategory_id: baseItem.subcategory_id,
             franchise_id: baseItem.franchise_id,
+            upc: null,
             release_year: baseItem.release_year,
             version: baseItem.version,
+
             variant_group_id: vg,
             base_catalog_item_id: catalogItemId,
-            variant_name: newVariantName.trim(),
-            variant_rank:
-              newVariantRank && !isNaN(Number(newVariantRank))
-                ? Number(newVariantRank)
-                : null,
+            variant_name: vn,
+            variant_rank: rankVal,
           },
         ])
         .select("id")
         .single();
 
-      if (insert.error) throw insert.error;
+      if (insertRes.error) throw insertRes.error;
+
+      const newId = String((insertRes.data as any)?.id ?? "");
+      if (!newId) throw new Error("Created variant but did not get an id back.");
 
       setNewVariantName("");
       setNewVariantRank("");
+
       setAdminMsg("Variant created.");
       await load();
 
-      router.push(`/catalog/${insert.data.id}`);
+      router.push(`/catalog/${newId}`);
     } catch (e: any) {
-      setAdminMsg(e.message);
+      setAdminMsg(e?.message ?? "Failed to create variant.");
     } finally {
       setAdminBusy(false);
     }
   };
 
-  /* =========================
-     Render
-     ========================= */
-
   return (
-    <div className="rounded-2xl border bg-white p-4">
-      {loading && <div>Loading…</div>}
-      {err && <div className="text-red-600">{err}</div>}
+    <div className="rounded-2xl border border-[#E5E9F2] bg-white shadow-sm overflow-hidden">
+      <div className="flex items-center justify-between border-b border-[#EEF2F7] px-4 py-3">
+        <div className="text-sm font-semibold text-[#0F172A]">Variants</div>
+        <div className="text-[11px] text-[#64748B]">{rows.length ? `${rows.length}` : ""}</div>
+      </div>
 
-      {isAdmin && (
-        <div className="space-y-3">
-          <button onClick={onCreateGroup} disabled={adminBusy}>
-            Create group
-          </button>
+      <div className="p-4 space-y-4">
+        {loading ? <div className="text-sm text-[#64748B]">Loading…</div> : null}
+        {err ? <div className="text-sm text-red-700">{err}</div> : null}
 
-          <input
-            placeholder="Existing item id"
-            value={linkExistingId}
-            onChange={(e) => setLinkExistingId(e.target.value)}
-          />
-          <button onClick={onLinkExisting} disabled={adminBusy}>
-            Link existing
-          </button>
+        {/* Admin tools */}
+        {isAdmin ? (
+          <div className="rounded-2xl border border-[#E5E9F2] bg-[#F8FAFC] p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-[#0F172A]">Admin tools</div>
+                <div className="text-xs text-[#64748B]">
+                  Create a variant group, link an existing item, or create a new variant.
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={adminBusy}
+                onClick={onCreateGroup}
+                className="rounded-full px-3 py-2 text-xs font-semibold border transition bg-white text-[#0F172A] border-[#E5E9F2] hover:bg-[#F1F5F9] disabled:opacity-60"
+              >
+                {groupId ? "Group exists" : "Create group"}
+              </button>
+            </div>
 
-          <input
-            placeholder="Variant name"
-            value={newVariantName}
-            onChange={(e) => setNewVariantName(e.target.value)}
-          />
-          <button onClick={onCreateNewVariant} disabled={adminBusy}>
-            Create variant
-          </button>
+            {adminMsg ? <div className="mt-3 text-xs text-[#0F172A]">{adminMsg}</div> : null}
+            <div className="mt-3 text-[11px] text-[#64748B]">Group: {groupId ? groupId : "—"}</div>
 
-          {adminMsg && <div>{adminMsg}</div>}
-        </div>
-      )}
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Link existing */}
+              <div className="rounded-xl border border-[#E5E9F2] bg-white p-3">
+                <div className="text-xs font-semibold text-[#0F172A]">Link existing item</div>
+                <div className="mt-2 space-y-2">
+                  <input
+                    value={linkExistingId}
+                    onChange={(e) => setLinkExistingId(e.target.value)}
+                    placeholder="Existing catalog item id"
+                    className="w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+                  />
+                  <input
+                    value={linkVariantName}
+                    onChange={(e) => setLinkVariantName(e.target.value)}
+                    placeholder="Variant label (optional)"
+                    className="w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+                  />
+                  <input
+                    value={linkVariantRank}
+                    onChange={(e) => setLinkVariantRank(e.target.value)}
+                    placeholder="Rank (optional number)"
+                    className="w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+                    inputMode="numeric"
+                  />
+                  <button
+                    type="button"
+                    disabled={adminBusy}
+                    onClick={onLinkExisting}
+                    className="w-full rounded-xl px-3 py-2 text-xs font-semibold border transition bg-[#0F172A] text-white border-[#0F172A] hover:opacity-95 disabled:opacity-60"
+                  >
+                    Link into group
+                  </button>
+                </div>
+              </div>
 
-      {rows.map((r) => (
-        <div key={r.id} onClick={() => router.push(`/catalog/${r.id}`)}>
-          {r.name} {r.variant_name ? `(${r.variant_name})` : ""}
-        </div>
-      ))}
+              {/* Create new */}
+              <div className="rounded-xl border border-[#E5E9F2] bg-white p-3">
+                <div className="text-xs font-semibold text-[#0F172A]">Create new variant item</div>
+                <div className="mt-2 space-y-2">
+                  <input
+                    value={newVariantName}
+                    onChange={(e) => setNewVariantName(e.target.value)}
+                    placeholder="Variant label (required)"
+                    className="w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+                  />
+                  <input
+                    value={newVariantRank}
+                    onChange={(e) => setNewVariantRank(e.target.value)}
+                    placeholder="Rank (optional number)"
+                    className="w-full rounded-xl border border-[#E5E9F2] px-3 py-2 text-sm"
+                    inputMode="numeric"
+                  />
+                  <button
+                    type="button"
+                    disabled={adminBusy}
+                    onClick={onCreateNewVariant}
+                    className="w-full rounded-xl px-3 py-2 text-xs font-semibold border transition bg-[#0F172A] text-white border-[#0F172A] hover:opacity-95 disabled:opacity-60"
+                  >
+                    Create + open
+                  </button>
+                  <div className="text-[11px] text-[#64748B]">
+                    This creates a minimal clone of the base item (classification fields only). You’ll edit the new item
+                    after.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {/* Existing variants list */}
+        {!loading && !err ? (
+          groupId ? (
+            rows.length ? (
+              <div className="space-y-2">
+                {rows.map((r) => {
+                  const isCurrent = r.id === catalogItemId;
+                  return (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => !isCurrent && router.push(`/catalog/${r.id}`)}
+                      className={[
+                        "w-full text-left rounded-xl border transition px-3 py-3",
+                        isCurrent
+                          ? "border-[#CBD5E1] bg-[#F8FAFC] cursor-default"
+                          : "border-[#E5E9F2] bg-white hover:bg-[#F8FAFC]",
+                      ].join(" ")}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-[#0F172A] truncate">
+                            {r.name}
+                            {isCurrent ? " (This item)" : ""}
+                          </div>
+                          <div className="mt-1 text-[11px] text-[#64748B]">
+                            {r.variant_name ? r.variant_name : "variant"}
+                            {typeof r.variant_rank === "number" ? ` • Rank: ${r.variant_rank}` : ""}
+                            {r.upc ? ` • UPC: ${r.upc}` : ""}
+                          </div>
+                        </div>
+                        {!isCurrent ? <div className="text-xs text-[#2563EB] shrink-0">Open →</div> : null}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-sm text-[#64748B]">No variants in this group yet.</div>
+            )
+          ) : (
+            <div className="text-sm text-[#64748B]">No variants linked yet.</div>
+          )
+        ) : null}
+      </div>
     </div>
   );
 }
