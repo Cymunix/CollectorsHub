@@ -10,8 +10,8 @@ const BRICKSET_ENDPOINT = "https://brickset.com/api/v3.asmx";
  */
 const SET_MINIFIGS_TABLE = "catalog_building_block_set_minifigs";
 const SET_MINIFIGS_COL_SET_ID = "catalog_item_id"; // could be catalog_item_id or building_block_set_id etc
-const SET_MINIFIGS_COL_MINIFIG_ID = "minifig_id";  // could be catalog_minifig_id etc
-const SET_MINIFIGS_COL_QTY = "qty";                // could be quantity
+const SET_MINIFIGS_COL_MINIFIG_ID = "minifig_id"; // could be catalog_minifig_id etc
+const SET_MINIFIGS_COL_QTY = "qty"; // could be quantity
 
 const MINIFIGS_TABLE = "catalog_minifigs";
 const MINIFIGS_COL_ID = "id";
@@ -56,7 +56,9 @@ async function bricksetGetSets(apiKey: string, params: Record<string, any>) {
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`Brickset getSets failed (${res.status}): ${text || res.statusText}`);
+    throw new Error(
+      `Brickset getSets failed (${res.status}): ${text || res.statusText}`
+    );
   }
 
   const json = await res.json().catch(() => ({}));
@@ -72,10 +74,74 @@ function isLegoSuggestion(s: any) {
   return !!(s?.bb_set_number && String(s.bb_set_number).trim().length);
 }
 
-export async function POST(
-  req: Request,
-  ctx: { params: Promise<{ id: string }> }
+/**
+ * Derive canonical catalog_items.kind for non-LEGO suggestions.
+ *
+ * This uses categories.slug (preferred) or categories.name (fallback).
+ *
+ * IMPORTANT:
+ * - The RETURN values MUST match your DB check constraint catalog_items_kind_chk exactly.
+ * - Adjust map keys to match your category slugs/names.
+ */
+async function deriveKindFromCategory(
+  supabase: ReturnType<typeof createClient>,
+  category_id: string
 ) {
+  const cat = await supabase
+    .from("categories")
+    .select("id,slug,name")
+    .eq("id", category_id)
+    .single();
+
+  if (cat.error) throw cat.error;
+
+  const raw = String(cat.data?.slug || cat.data?.name || "").trim().toLowerCase();
+  if (!raw) throw new Error(`Category has no slug/name (id=${category_id})`);
+
+  // Normalise common variations
+  const key = raw
+    .replace(/&/g, "and")
+    .replace(/\s+/g, "_")
+    .replace(/-+/g, "_");
+
+  // 🔥 Adjust these mappings to your categories + allowed kinds
+  // Right-hand side MUST match allowed values in catalog_items_kind_chk
+  const map: Record<string, string> = {
+    lego: "lego",
+    legos: "lego",
+    building_blocks: "lego",
+
+    cards: "card",
+    trading_cards: "card",
+    card: "card",
+
+    comics: "comic",
+    comic: "comic",
+
+    games: "game",
+    game: "game",
+    video_games: "game",
+
+    movies: "movie",
+    movie: "movie",
+    films: "movie",
+
+    music: "music",
+  };
+
+  const kind = map[key];
+  if (!kind) {
+    // Fail loudly with useful context so you can fix mapping in one go
+    throw new Error(
+      `Cannot derive catalog_items.kind from category "${raw}" (normalised "${key}", id=${category_id}). ` +
+        `Update deriveKindFromCategory() mapping or your category slugs.`
+    );
+  }
+
+  return kind;
+}
+
+export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
 
   const apiKey = (process.env.BRICKSET_API_KEY || "").trim();
@@ -128,12 +194,33 @@ export async function POST(
     const nowIso = new Date().toISOString();
     const catalogItemId = s.approved_catalog_item_id || crypto.randomUUID();
 
-    // 2) Upsert catalog_items (base publish)
+    // 2) Determine kind (REQUIRED)
+    // - LEGO: hard set to "lego"
+    // - non-LEGO: derive from category slug/name mapping
+    const kind = lego ? "lego" : await deriveKindFromCategory(supabase, String(s.category_id));
+
+    if (!kind) {
+      return NextResponse.json({ error: "kind is required (failed to derive)" }, { status: 400 });
+    }
+
+    // Optional debug to catch future issues instantly
+    console.log("PUBLISH catalog_items", {
+      id: catalogItemId,
+      kind,
+      name: s.name,
+      category_id: s.category_id,
+      subcategory_id: s.subcategory_id,
+      lego,
+    });
+
+    // 3) Upsert catalog_items (base publish)
     const upItem = await supabase
       .from("catalog_items")
       .upsert(
         {
           id: catalogItemId,
+          kind, // ✅ FIX: REQUIRED + must satisfy catalog_items_kind_chk
+
           name: s.name,
           category_id: s.category_id,
           subcategory_id: s.subcategory_id,
@@ -150,7 +237,7 @@ export async function POST(
 
     if (upItem.error) throw upItem.error;
 
-    // 3) LEGO takeover: overwrite image + minifig links
+    // 4) LEGO takeover: overwrite image + minifig links
     if (lego) {
       const setNumber = String(s.bb_set_number).trim();
 
@@ -164,7 +251,7 @@ export async function POST(
       const set = Array.isArray(bs.sets) ? bs.sets[0] : null;
       if (!set) throw new Error(`Brickset set not found for ${setNumber}`);
 
-      // 3a) overwrite item image
+      // 4a) overwrite item image
       const bricksetImageUrl = set?.image?.imageURL || set?.image?.thumbnailURL || null;
       const updImg = await supabase
         .from("catalog_items")
@@ -173,7 +260,7 @@ export async function POST(
 
       if (updImg.error) throw updImg.error;
 
-      // 3b) overwrite minifig connections
+      // 4b) overwrite minifig connections
       const minifigs = Array.isArray(set?.minifigs) ? set.minifigs : [];
 
       // wipe existing connections for this set/item
@@ -187,16 +274,18 @@ export async function POST(
       if (minifigs.length) {
         // Upsert minifigs into master table
         // We assume MINIFIGS_COL_NUMBER is unique or has a unique index.
-        const minifigUpserts = minifigs.map((m: any) => {
-          const number = m?.minifigNumber ?? m?.number ?? null;
-          return {
-            [MINIFIGS_COL_NUMBER]: number,
-            [MINIFIGS_COL_NAME]: m?.name ?? null,
-            source: "brickset",
-            source_key: number,
-            updated_at: nowIso,
-          };
-        }).filter((r: any) => !!r[MINIFIGS_COL_NUMBER]);
+        const minifigUpserts = minifigs
+          .map((m: any) => {
+            const number = m?.minifigNumber ?? m?.number ?? null;
+            return {
+              [MINIFIGS_COL_NUMBER]: number,
+              [MINIFIGS_COL_NAME]: m?.name ?? null,
+              source: "brickset",
+              source_key: number,
+              updated_at: nowIso,
+            };
+          })
+          .filter((r: any) => !!r[MINIFIGS_COL_NUMBER]);
 
         if (minifigUpserts.length) {
           const upM = await supabase
@@ -221,20 +310,22 @@ export async function POST(
         }
 
         // Insert join rows
-        const linkRows = minifigs.map((m: any) => {
-          const number = String(m?.minifigNumber ?? m?.number ?? "").trim();
-          const minifigId = idByNumber.get(number);
-          if (!minifigId) return null;
+        const linkRows = minifigs
+          .map((m: any) => {
+            const number = String(m?.minifigNumber ?? m?.number ?? "").trim();
+            const minifigId = idByNumber.get(number);
+            if (!minifigId) return null;
 
-          return {
-            [SET_MINIFIGS_COL_SET_ID]: catalogItemId,
-            [SET_MINIFIGS_COL_MINIFIG_ID]: minifigId,
-            [SET_MINIFIGS_COL_QTY]: m?.quantity ?? 1,
-            source: "brickset",
-            source_key: `${setNumber}::${number}`,
-            created_at: nowIso,
-          };
-        }).filter(Boolean) as any[];
+            return {
+              [SET_MINIFIGS_COL_SET_ID]: catalogItemId,
+              [SET_MINIFIGS_COL_MINIFIG_ID]: minifigId,
+              [SET_MINIFIGS_COL_QTY]: m?.quantity ?? 1,
+              source: "brickset",
+              source_key: `${setNumber}::${number}`,
+              created_at: nowIso,
+            };
+          })
+          .filter(Boolean) as any[];
 
         if (linkRows.length) {
           const insLinks = await supabase.from(SET_MINIFIGS_TABLE).insert(linkRows);
@@ -242,29 +333,32 @@ export async function POST(
         }
 
         // Optional: minifig photos if Brickset provides an image per minifig
-        // (Not all payloads include it — harmless if null.)
-        const photoRows = minifigs.map((m: any) => {
-          const number = String(m?.minifigNumber ?? m?.number ?? "").trim();
-          const minifigId = idByNumber.get(number);
-          const url = m?.image?.imageURL || m?.imageURL || null;
-          if (!minifigId || !url) return null;
+        const photoRows = minifigs
+          .map((m: any) => {
+            const number = String(m?.minifigNumber ?? m?.number ?? "").trim();
+            const minifigId = idByNumber.get(number);
+            const url = m?.image?.imageURL || m?.imageURL || null;
+            if (!minifigId || !url) return null;
 
-          return {
-            [MINIFIG_PHOTOS_COL_MINIFIG_ID]: minifigId,
-            [MINIFIG_PHOTOS_COL_URL]: url,
-            ...(MINIFIG_PHOTOS_COL_SOURCE ? { [MINIFIG_PHOTOS_COL_SOURCE]: "brickset" } : {}),
-            created_at: nowIso,
-          };
-        }).filter(Boolean) as any[];
+            return {
+              [MINIFIG_PHOTOS_COL_MINIFIG_ID]: minifigId,
+              [MINIFIG_PHOTOS_COL_URL]: url,
+              ...(MINIFIG_PHOTOS_COL_SOURCE
+                ? { [MINIFIG_PHOTOS_COL_SOURCE]: "brickset" }
+                : {}),
+              created_at: nowIso,
+            };
+          })
+          .filter(Boolean) as any[];
 
         if (photoRows.length) {
-          // If you have a unique constraint on (minifig_id, url), you can upsert instead.
-          await supabase.from(MINIFIG_PHOTOS_TABLE).insert(photoRows);
+          const insPhotos = await supabase.from(MINIFIG_PHOTOS_TABLE).insert(photoRows);
+          if (insPhotos.error) throw insPhotos.error;
         }
       }
     }
 
-    // 4) Mark suggestion approved
+    // 5) Mark suggestion approved
     const updSug = await supabase
       .from("catalog_item_suggestions")
       .update({
@@ -279,6 +373,7 @@ export async function POST(
 
     return NextResponse.json({ ok: true, catalog_item_id: catalogItemId }, { status: 200 });
   } catch (e: any) {
+    console.error("Publish failed:", e);
     return NextResponse.json({ error: e?.message || "Publish failed" }, { status: 502 });
   }
 }
