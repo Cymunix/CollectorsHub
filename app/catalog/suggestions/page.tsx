@@ -10,7 +10,8 @@ import { useUserProfile } from "@/lib/useUserProfile";
 type Status = "pending" | "needs_info" | "approved" | "rejected";
 
 type LookupRow = { id: string; name: string };
-type BbSubthemeRow = { id: string; name: string; theme_id: string };
+type BbThemeRow = { id: string; name: string; subcategory_id: string; slug?: string | null; sort_order?: number | null };
+type BbSubthemeRow = { id: string; name: string; theme_id: string; slug?: string | null; sort_order?: number | null };
 type SubcategoryRow = { id: string; name: string; category_id: string };
 
 type SuggestionRow = {
@@ -61,8 +62,7 @@ function ts(ts: string) {
 }
 
 function statusBadge(s: Status) {
-  const base =
-    "inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold border";
+  const base = "inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold border";
   if (s === "approved") return `${base} border-emerald-200 bg-emerald-50 text-emerald-800`;
   if (s === "rejected") return `${base} border-red-200 bg-red-50 text-red-700`;
   if (s === "needs_info") return `${base} border-amber-200 bg-amber-50 text-amber-800`;
@@ -92,6 +92,85 @@ function toNullableNumber(v: string) {
   return Number.isFinite(n) ? n : null;
 }
 
+function slugify(input: string) {
+  const s = String(input || "")
+    .trim()
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/'/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return s || null;
+}
+
+function ModalShell(p: {
+  title: string;
+  children: React.ReactNode;
+  onClose: () => void;
+  onSave: () => void;
+  saving?: boolean;
+  error?: string | null;
+}) {
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 px-4">
+      <div className="w-full max-w-lg rounded-2xl border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#020617] p-4 shadow-xl">
+        <div className="flex items-start justify-between gap-3">
+          <div className="text-sm font-semibold">{p.title}</div>
+          <button
+            type="button"
+            onClick={p.onClose}
+            className="rounded-lg border border-[#E5E9F2] dark:border-[#1F2937] px-2 py-1 text-xs font-semibold hover:bg-[#F8FAFC] dark:hover:bg-[#0B1220]"
+          >
+            Close
+          </button>
+        </div>
+
+        {p.error ? (
+          <div className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{p.error}</div>
+        ) : null}
+
+        <div className="mt-3">{p.children}</div>
+
+        <div className="mt-4 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={p.onClose}
+            className="rounded-xl border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#020617] px-3 py-2 text-xs font-semibold hover:bg-[#F8FAFC] dark:hover:bg-[#0B1220]"
+            disabled={!!p.saving}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={p.onSave}
+            className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 disabled:opacity-60"
+            disabled={!!p.saving}
+          >
+            {p.saving ? "Saving..." : "Create"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type CreateKind = "franchise" | "bb_theme" | "bb_subtheme";
+type CreateModalState =
+  | { open: false }
+  | {
+      open: true;
+      kind: CreateKind;
+      rowId: string;
+      // context for constraints
+      subcategoryId?: string | null;
+      themeId?: string | null;
+      // form fields
+      name: string;
+      description: string;
+      sortOrder: string;
+    };
+
 export default function AdminSuggestionsPage() {
   const router = useRouter();
   const { user, loading: profileLoading } = useUserProfile();
@@ -104,13 +183,18 @@ export default function AdminSuggestionsPage() {
   const [categories, setCategories] = useState<LookupRow[]>([]);
   const [subcategories, setSubcategories] = useState<SubcategoryRow[]>([]);
   const [franchises, setFranchises] = useState<LookupRow[]>([]);
-  const [bbThemes, setBbThemes] = useState<LookupRow[]>([]);
+  const [bbThemes, setBbThemes] = useState<BbThemeRow[]>([]);
   const [bbSubthemes, setBbSubthemes] = useState<BbSubthemeRow[]>([]);
 
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<"all" | Status>("pending");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState<Record<string, string>>({});
+
+  // create modal
+  const [createModal, setCreateModal] = useState<CreateModalState>({ open: false });
+  const [createErr, setCreateErr] = useState<string | null>(null);
+  const [createSaving, setCreateSaving] = useState(false);
 
   // Import by theme panel
   const [importTheme, setImportTheme] = useState("");
@@ -174,8 +258,8 @@ export default function AdminSuggestionsPage() {
       supabase.from("categories").select("id,name").order("name"),
       supabase.from("subcategories").select("id,name,category_id").order("name"),
       supabase.from("franchises").select("id,name").order("name"),
-      supabase.from("bb_themes").select("id,name").order("name"),
-      supabase.from("bb_subthemes").select("id,name,theme_id").order("name"),
+      supabase.from("bb_themes").select("id,name,subcategory_id,slug,sort_order").order("name"),
+      supabase.from("bb_subthemes").select("id,name,theme_id,slug,sort_order").order("name"),
     ]);
 
     if (cat.error) console.warn("Failed to load categories", cat.error);
@@ -233,96 +317,6 @@ export default function AdminSuggestionsPage() {
     await load();
     setBusyId(null);
   };
-
-  // ===== Inline create (Themes/Subthemes/Franchises) =====
-
-  const refreshLookups = async () => {
-    await loadLookups();
-  };
-
-  const createFranchiseInline = async (suggestionId: string) => {
-    if (!isAdmin) return;
-    const name = (prompt("New franchise name") || "").trim();
-    if (!name) return;
-
-    setBusyId("__create__");
-    setErr(null);
-
-    const ins = await supabase.from("franchises").insert({ name }).select("id").single();
-    if (ins.error) {
-      console.error(ins.error);
-      setErr(ins.error.message || "Failed to create franchise.");
-      setBusyId(null);
-      return;
-    }
-
-    await refreshLookups();
-    await patchSuggestion(suggestionId, { franchise_id: ins.data.id });
-
-    setBusyId(null);
-  };
-
-  const createBbThemeInline = async (suggestionId: string) => {
-    if (!isAdmin) return;
-    const name = (prompt("New LEGO theme name") || "").trim();
-    if (!name) return;
-
-    setBusyId("__create__");
-    setErr(null);
-
-    const ins = await supabase.from("bb_themes").insert({ name }).select("id").single();
-    if (ins.error) {
-      console.error(ins.error);
-      setErr(ins.error.message || "Failed to create theme.");
-      setBusyId(null);
-      return;
-    }
-
-    await refreshLookups();
-    // set theme and clear subtheme (must belong to theme)
-    await patchSuggestion(suggestionId, {
-      bb_theme_id: ins.data.id,
-      bb_subtheme_id: null,
-    });
-
-    setBusyId(null);
-  };
-
-  const createBbSubthemeInline = async (suggestionId: string, themeId: string | null) => {
-    if (!isAdmin) return;
-
-    const tId = (themeId || "").trim();
-    if (!tId) {
-      setErr("Select a LEGO theme first (subthemes must belong to a theme).");
-      return;
-    }
-
-    const name = (prompt("New LEGO subtheme name") || "").trim();
-    if (!name) return;
-
-    setBusyId("__create__");
-    setErr(null);
-
-    const ins = await supabase
-      .from("bb_subthemes")
-      .insert({ name, theme_id: tId })
-      .select("id")
-      .single();
-
-    if (ins.error) {
-      console.error(ins.error);
-      setErr(ins.error.message || "Failed to create subtheme.");
-      setBusyId(null);
-      return;
-    }
-
-    await refreshLookups();
-    await patchSuggestion(suggestionId, { bb_subtheme_id: ins.data.id });
-
-    setBusyId(null);
-  };
-
-  // ===== Existing actions =====
 
   const setStatusAndNote = async (id: string, next: Status) => {
     if (!isAdmin || !user?.userId) return;
@@ -413,14 +407,144 @@ export default function AdminSuggestionsPage() {
     }
   };
 
+  const openCreate = (kind: CreateKind, row: SuggestionRow) => {
+    setCreateErr(null);
+
+    if (kind === "bb_theme") {
+      if (!row.subcategory_id) {
+        setErr("Select a Subcategory first (bb_themes requires subcategory_id).");
+        return;
+      }
+    }
+
+    if (kind === "bb_subtheme") {
+      if (!row.bb_theme_id) {
+        setErr("Select a LEGO Theme first (bb_subthemes requires theme_id).");
+        return;
+      }
+    }
+
+    setCreateModal({
+      open: true,
+      kind,
+      rowId: row.id,
+      subcategoryId: row.subcategory_id ?? null,
+      themeId: row.bb_theme_id ?? null,
+      name: "",
+      description: "",
+      sortOrder: "0",
+    });
+  };
+
+  const closeCreate = () => {
+    setCreateModal({ open: false });
+    setCreateErr(null);
+    setCreateSaving(false);
+  };
+
+  const saveCreate = async () => {
+    if (!isAdmin) return;
+    if (!createModal.open) return;
+
+    setCreateSaving(true);
+    setCreateErr(null);
+
+    const name = createModal.name.trim();
+    const slug = slugify(name);
+    const sort_order = toNullableInt(createModal.sortOrder) ?? 0;
+
+    if (!name) {
+      setCreateErr("Name is required.");
+      setCreateSaving(false);
+      return;
+    }
+    if (!slug) {
+      setCreateErr("Could not generate slug.");
+      setCreateSaving(false);
+      return;
+    }
+
+    try {
+      if (createModal.kind === "franchise") {
+        const ins = await supabase
+          .from("franchises")
+          .insert({
+            name,
+            slug,
+            description: createModal.description.trim() || null,
+            updated_at: new Date().toISOString(),
+          })
+          .select("id,name")
+          .single();
+
+        if (ins.error) throw ins.error;
+
+        await loadLookups();
+        await patchSuggestion(createModal.rowId, { franchise_id: ins.data?.id ?? null });
+        closeCreate();
+        return;
+      }
+
+      if (createModal.kind === "bb_theme") {
+        const subcategory_id = createModal.subcategoryId ?? null;
+        if (!subcategory_id) throw new Error("Missing subcategory_id (select Subcategory first).");
+
+        const ins = await supabase
+          .from("bb_themes")
+          .insert({
+            subcategory_id,
+            name,
+            slug,
+            sort_order,
+          })
+          .select("id,name,subcategory_id")
+          .single();
+
+        if (ins.error) throw ins.error;
+
+        await loadLookups();
+        // set theme, clear subtheme on the suggestion
+        await patchSuggestion(createModal.rowId, { bb_theme_id: ins.data?.id ?? null, bb_subtheme_id: null });
+        closeCreate();
+        return;
+      }
+
+      if (createModal.kind === "bb_subtheme") {
+        const theme_id = createModal.themeId ?? null;
+        if (!theme_id) throw new Error("Missing theme_id (select LEGO Theme first).");
+
+        const ins = await supabase
+          .from("bb_subthemes")
+          .insert({
+            theme_id,
+            name,
+            slug,
+            sort_order,
+          })
+          .select("id,name,theme_id")
+          .single();
+
+        if (ins.error) throw ins.error;
+
+        await loadLookups();
+        await patchSuggestion(createModal.rowId, { bb_subtheme_id: ins.data?.id ?? null });
+        closeCreate();
+        return;
+      }
+    } catch (e: any) {
+      console.error(e);
+      setCreateErr(e?.message || "Create failed.");
+      setCreateSaving(false);
+      return;
+    }
+  };
+
   if (profileLoading) {
     return (
       <main className="min-h-screen w-full bg-[#F4F7FD] text-[#0F172A] dark:bg-[#020617] dark:text-[#E5E7EB]">
         <Header />
         <SecondaryNav />
-        <div className="mx-auto max-w-5xl px-6 py-8 text-sm text-[#64748B] dark:text-[#9CA3AF]">
-          Loading…
-        </div>
+        <div className="mx-auto max-w-5xl px-6 py-8 text-sm text-[#64748B] dark:text-[#9CA3AF]">Loading…</div>
       </main>
     );
   }
@@ -431,9 +555,7 @@ export default function AdminSuggestionsPage() {
         <Header />
         <SecondaryNav />
         <div className="mx-auto max-w-5xl px-6 py-8">
-          <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-            Not authorised.
-          </div>
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">Not authorised.</div>
         </div>
       </main>
     );
@@ -443,6 +565,77 @@ export default function AdminSuggestionsPage() {
     <main className="min-h-screen w-full bg-[#F4F7FD] text-[#0F172A] dark:bg-[#020617] dark:text-[#E5E7EB]">
       <Header />
       <SecondaryNav />
+
+      {createModal.open ? (
+        <ModalShell
+          title={
+            createModal.kind === "franchise"
+              ? "Create Franchise"
+              : createModal.kind === "bb_theme"
+                ? "Create LEGO Theme"
+                : "Create LEGO Subtheme"
+          }
+          onClose={closeCreate}
+          onSave={saveCreate}
+          saving={createSaving}
+          error={createErr}
+        >
+          <div className="space-y-3">
+            <div>
+              <div className="text-xs font-semibold">Name</div>
+              <input
+                value={createModal.name}
+                onChange={(e) => setCreateModal((p) => (p.open ? { ...p, name: e.target.value } : p))}
+                className="mt-1 w-full rounded-xl border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#0B1220] px-3 py-2 text-sm"
+                placeholder="e.g. Star Wars"
+              />
+              <div className="mt-1 text-[11px] text-[#64748B] dark:text-[#9CA3AF]">
+                Slug: <span className="font-mono">{slugify(createModal.name) || "—"}</span>
+              </div>
+            </div>
+
+            {createModal.kind === "franchise" ? (
+              <div>
+                <div className="text-xs font-semibold">Description (optional)</div>
+                <textarea
+                  value={createModal.description}
+                  onChange={(e) => setCreateModal((p) => (p.open ? { ...p, description: e.target.value } : p))}
+                  rows={3}
+                  className="mt-1 w-full rounded-xl border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#0B1220] px-3 py-2 text-sm"
+                  placeholder="Optional"
+                />
+              </div>
+            ) : null}
+
+            {createModal.kind !== "franchise" ? (
+              <div>
+                <div className="text-xs font-semibold">Sort order</div>
+                <input
+                  value={createModal.sortOrder}
+                  onChange={(e) => setCreateModal((p) => (p.open ? { ...p, sortOrder: e.target.value } : p))}
+                  className="mt-1 w-40 rounded-xl border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#0B1220] px-3 py-2 text-sm"
+                  placeholder="0"
+                />
+                <div className="mt-1 text-[11px] text-[#64748B] dark:text-[#9CA3AF]">
+                  Stored in <span className="font-mono">sort_order</span>.
+                </div>
+              </div>
+            ) : null}
+
+            {createModal.kind === "bb_theme" ? (
+              <div className="rounded-xl border border-[#E5E9F2] dark:border-[#1F2937] bg-[#F8FAFC] dark:bg-[#0B1220] p-3 text-xs">
+                Using Subcategory ID: <span className="font-mono">{createModal.subcategoryId}</span>
+              </div>
+            ) : null}
+
+            {createModal.kind === "bb_subtheme" ? (
+              <div className="rounded-xl border border-[#E5E9F2] dark:border-[#1F2937] bg-[#F8FAFC] dark:bg-[#0B1220] p-3 text-xs">
+                Using Theme ID: <span className="font-mono">{createModal.themeId}</span>
+              </div>
+            ) : null}
+          </div>
+        </ModalShell>
+      ) : null}
 
       <div className="mx-auto max-w-6xl px-6 py-6">
         <div className="flex items-start justify-between gap-4">
@@ -473,7 +666,7 @@ export default function AdminSuggestionsPage() {
             </div>
             <button
               type="button"
-              disabled={busyId === "__import__" || busyId === "__create__"}
+              disabled={busyId === "__import__"}
               onClick={importLegoByTheme}
               className="rounded-xl border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#0B1220] px-3 py-2 text-xs font-semibold hover:bg-[#F8FAFC] dark:hover:bg-[#0B1220] disabled:opacity-60"
             >
@@ -557,9 +750,7 @@ export default function AdminSuggestionsPage() {
         </div>
 
         {err ? (
-          <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-            {err}
-          </div>
+          <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{err}</div>
         ) : null}
 
         {loading ? (
@@ -587,8 +778,6 @@ export default function AdminSuggestionsPage() {
                 ? bbSubthemes.filter((s) => String(s.theme_id) === String(r.bb_theme_id))
                 : bbSubthemes;
 
-              const creating = busyId === "__create__";
-
               return (
                 <div
                   key={r.id}
@@ -614,7 +803,7 @@ export default function AdminSuggestionsPage() {
                       <div className="text-xs font-semibold">Category</div>
                       <select
                         value={r.category_id ?? ""}
-                        disabled={busyId === r.id || creating}
+                        disabled={busyId === r.id}
                         onChange={(e) =>
                           patchSuggestion(r.id, {
                             category_id: e.target.value || null,
@@ -630,19 +819,15 @@ export default function AdminSuggestionsPage() {
                           </option>
                         ))}
                       </select>
-                      {!r.category_id ? (
-                        <div className="mt-1 text-[11px] text-red-600">Required for publish.</div>
-                      ) : null}
+                      {!r.category_id ? <div className="mt-1 text-[11px] text-red-600">Required for publish.</div> : null}
                     </div>
 
                     <div>
                       <div className="text-xs font-semibold">Subcategory</div>
                       <select
                         value={r.subcategory_id ?? ""}
-                        disabled={busyId === r.id || creating || !r.category_id}
-                        onChange={(e) =>
-                          patchSuggestion(r.id, { subcategory_id: e.target.value || null })
-                        }
+                        disabled={busyId === r.id || !r.category_id}
+                        onChange={(e) => patchSuggestion(r.id, { subcategory_id: e.target.value || null })}
                         className="mt-1 w-full rounded-xl border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#0B1220] px-3 py-2 text-sm"
                       >
                         <option value="">Select subcategory…</option>
@@ -662,17 +847,16 @@ export default function AdminSuggestionsPage() {
                         <div className="text-xs font-semibold">Franchise</div>
                         <button
                           type="button"
-                          onClick={() => createFranchiseInline(r.id)}
-                          disabled={creating || busyId === r.id}
-                          className="text-[11px] font-semibold underline disabled:opacity-60"
+                          onClick={() => openCreate("franchise", r)}
+                          className="text-[11px] font-semibold underline text-[#0F172A] dark:text-[#E5E7EB]"
+                          disabled={busyId === r.id}
                         >
                           Create
                         </button>
                       </div>
-
                       <select
                         value={r.franchise_id ?? ""}
-                        disabled={busyId === r.id || creating}
+                        disabled={busyId === r.id}
                         onChange={(e) => patchSuggestion(r.id, { franchise_id: e.target.value || null })}
                         className="mt-1 w-full rounded-xl border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#0B1220] px-3 py-2 text-sm"
                       >
@@ -683,7 +867,6 @@ export default function AdminSuggestionsPage() {
                           </option>
                         ))}
                       </select>
-
                       {lego && !r.franchise_id ? (
                         <div className="mt-1 text-[11px] text-red-600">Required for LEGO publish.</div>
                       ) : null}
@@ -698,17 +881,17 @@ export default function AdminSuggestionsPage() {
                           <div className="text-xs font-semibold">LEGO Theme</div>
                           <button
                             type="button"
-                            onClick={() => createBbThemeInline(r.id)}
-                            disabled={creating || busyId === r.id}
-                            className="text-[11px] font-semibold underline disabled:opacity-60"
+                            onClick={() => openCreate("bb_theme", r)}
+                            className="text-[11px] font-semibold underline text-[#0F172A] dark:text-[#E5E7EB]"
+                            disabled={busyId === r.id || !r.subcategory_id}
+                            title={!r.subcategory_id ? "Select Subcategory first" : "Create a new LEGO Theme"}
                           >
                             Create
                           </button>
                         </div>
-
                         <select
                           value={r.bb_theme_id ?? ""}
-                          disabled={busyId === r.id || creating}
+                          disabled={busyId === r.id}
                           onChange={(e) =>
                             patchSuggestion(r.id, {
                               bb_theme_id: e.target.value || null,
@@ -731,21 +914,18 @@ export default function AdminSuggestionsPage() {
                           <div className="text-xs font-semibold">LEGO Subtheme</div>
                           <button
                             type="button"
-                            onClick={() => createBbSubthemeInline(r.id, r.bb_theme_id ?? null)}
-                            disabled={creating || busyId === r.id || !r.bb_theme_id}
-                            className="text-[11px] font-semibold underline disabled:opacity-60"
-                            title={!r.bb_theme_id ? "Select a theme first" : "Create a subtheme under the selected theme"}
+                            onClick={() => openCreate("bb_subtheme", r)}
+                            className="text-[11px] font-semibold underline text-[#0F172A] dark:text-[#E5E7EB]"
+                            disabled={busyId === r.id || !r.bb_theme_id}
+                            title={!r.bb_theme_id ? "Select LEGO Theme first" : "Create a new LEGO Subtheme"}
                           >
                             Create
                           </button>
                         </div>
-
                         <select
                           value={r.bb_subtheme_id ?? ""}
-                          disabled={busyId === r.id || creating}
-                          onChange={(e) =>
-                            patchSuggestion(r.id, { bb_subtheme_id: e.target.value || null })
-                          }
+                          disabled={busyId === r.id}
+                          onChange={(e) => patchSuggestion(r.id, { bb_subtheme_id: e.target.value || null })}
                           className="mt-1 w-full rounded-xl border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#0B1220] px-3 py-2 text-sm"
                         >
                           <option value="">Select subtheme…</option>
@@ -762,10 +942,8 @@ export default function AdminSuggestionsPage() {
                           <div className="text-xs font-semibold">Set Number</div>
                           <input
                             value={r.bb_set_number ?? ""}
-                            disabled={busyId === r.id || creating}
-                            onChange={(e) =>
-                              patchSuggestion(r.id, { bb_set_number: toNullableString(e.target.value) })
-                            }
+                            disabled={busyId === r.id}
+                            onChange={(e) => patchSuggestion(r.id, { bb_set_number: toNullableString(e.target.value) })}
                             placeholder="e.g. 75313-1"
                             className="mt-1 w-full rounded-xl border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#0B1220] px-3 py-2 text-sm"
                           />
@@ -775,10 +953,8 @@ export default function AdminSuggestionsPage() {
                           <div className="text-xs font-semibold">Piece Count</div>
                           <input
                             value={r.bb_piece_count ?? ""}
-                            disabled={busyId === r.id || creating}
-                            onChange={(e) =>
-                              patchSuggestion(r.id, { bb_piece_count: toNullableInt(e.target.value) as any })
-                            }
+                            disabled={busyId === r.id}
+                            onChange={(e) => patchSuggestion(r.id, { bb_piece_count: toNullableInt(e.target.value) as any })}
                             placeholder="e.g. 1022"
                             className="mt-1 w-full rounded-xl border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#0B1220] px-3 py-2 text-sm"
                           />
@@ -788,10 +964,8 @@ export default function AdminSuggestionsPage() {
                           <div className="text-xs font-semibold">Retail CAD</div>
                           <input
                             value={r.bb_retail_cad ?? ""}
-                            disabled={busyId === r.id || creating}
-                            onChange={(e) =>
-                              patchSuggestion(r.id, { bb_retail_cad: toNullableNumber(e.target.value) as any })
-                            }
+                            disabled={busyId === r.id}
+                            onChange={(e) => patchSuggestion(r.id, { bb_retail_cad: toNullableNumber(e.target.value) as any })}
                             placeholder="e.g. 199.99"
                             className="mt-1 w-full rounded-xl border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#0B1220] px-3 py-2 text-sm"
                           />
@@ -801,10 +975,8 @@ export default function AdminSuggestionsPage() {
                           <div className="text-xs font-semibold">Retail USD</div>
                           <input
                             value={r.bb_retail_usd ?? ""}
-                            disabled={busyId === r.id || creating}
-                            onChange={(e) =>
-                              patchSuggestion(r.id, { bb_retail_usd: toNullableNumber(e.target.value) as any })
-                            }
+                            disabled={busyId === r.id}
+                            onChange={(e) => patchSuggestion(r.id, { bb_retail_usd: toNullableNumber(e.target.value) as any })}
                             placeholder="e.g. 159.99"
                             className="mt-1 w-full rounded-xl border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#0B1220] px-3 py-2 text-sm"
                           />
@@ -821,13 +993,12 @@ export default function AdminSuggestionsPage() {
                       rows={2}
                       placeholder="Admin notes (shown to user for Needs info / Rejected)."
                       className="w-full rounded-xl border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#0B1220] px-3 py-2 text-sm"
-                      disabled={creating}
                     />
 
                     <div className="flex flex-wrap items-center gap-2 justify-start lg:justify-end">
                       <button
                         type="button"
-                        disabled={busyId === r.id || creating}
+                        disabled={busyId === r.id}
                         onClick={() => setStatusAndNote(r.id, "needs_info")}
                         className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-60"
                       >
@@ -836,7 +1007,7 @@ export default function AdminSuggestionsPage() {
 
                       <button
                         type="button"
-                        disabled={busyId === r.id || creating}
+                        disabled={busyId === r.id}
                         onClick={() => setStatusAndNote(r.id, "rejected")}
                         className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60"
                       >
@@ -845,7 +1016,7 @@ export default function AdminSuggestionsPage() {
 
                       <button
                         type="button"
-                        disabled={busyId === r.id || creating || !canPublish}
+                        disabled={busyId === r.id || !canPublish}
                         onClick={() => publishSuggestion(r.id)}
                         className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 disabled:opacity-60"
                         title={
@@ -860,9 +1031,7 @@ export default function AdminSuggestionsPage() {
                   </div>
 
                   {r.reviewed_at ? (
-                    <div className="mt-2 text-[11px] text-[#64748B] dark:text-[#9CA3AF]">
-                      Reviewed: {ts(r.reviewed_at)}
-                    </div>
+                    <div className="mt-2 text-[11px] text-[#64748B] dark:text-[#9CA3AF]">Reviewed: {ts(r.reviewed_at)}</div>
                   ) : null}
 
                   {r.approved_catalog_item_id ? (
