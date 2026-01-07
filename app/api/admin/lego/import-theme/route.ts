@@ -1,13 +1,33 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
+export const runtime = "nodejs"; // force node runtime (so process.env behaves normally)
+
 const BRICKSET_ENDPOINT = "https://brickset.com/api/v3.asmx";
+
+function pickSupabaseUrl() {
+  return (
+    process.env.SUPABASE_URL ||
+    process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    process.env.SUPABASE_PROJECT_URL ||
+    ""
+  ).trim();
+}
+
+function pickServiceKey() {
+  return (
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE ||
+    process.env.SUPABASE_SERVICE_KEY ||
+    ""
+  ).trim();
+}
 
 async function bricksetGetSets(apiKey: string, params: Record<string, any>) {
   const qs = new URLSearchParams({
     apiKey,
     userHash: "",
-    params: JSON.stringify(params), // Brickset expects params JSON string
+    params: JSON.stringify(params),
   });
 
   const res = await fetch(`${BRICKSET_ENDPOINT}/getSets?${qs.toString()}`, {
@@ -35,38 +55,50 @@ function toInt(v: any, fallback: number) {
   return Number.isFinite(n) ? Math.trunc(n) : fallback;
 }
 
-/**
- * IMPORTANT DB NOTES (do this in Supabase SQL editor):
- *
- * -- Idempotency for suggestions import (required for upsert)
- * create unique index if not exists catalog_item_suggestions_source_source_key_uniq
- * on catalog_item_suggestions (source, source_key);
- *
- * -- Make theme creation safe from duplicates (strongly recommended)
- * create unique index if not exists bb_themes_name_uniq on bb_themes (lower(name));
- * create unique index if not exists bb_subthemes_theme_name_uniq on bb_subthemes (theme_id, lower(name));
- */
-
 export async function POST(req: Request) {
-  const apiKey = process.env.BRICKSET_API_KEY;
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const url = new URL(req.url);
+  const debug = url.searchParams.get("debug") === "1";
 
-  if (!apiKey) return NextResponse.json({ error: "Missing BRICKSET_API_KEY" }, { status: 500 });
-  if (!supabaseUrl || !serviceKey) {
+  const apiKey = (process.env.BRICKSET_API_KEY || "").trim();
+  const supabaseUrl = pickSupabaseUrl();
+  const serviceKey = pickServiceKey();
+
+  if (debug) {
     return NextResponse.json(
-      { error: "Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY" },
+      {
+        ok: true,
+        env_present: {
+          BRICKSET_API_KEY: !!apiKey,
+          SUPABASE_URL: !!process.env.SUPABASE_URL,
+          NEXT_PUBLIC_SUPABASE_URL: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
+          SUPABASE_PROJECT_URL: !!process.env.SUPABASE_PROJECT_URL,
+          SUPABASE_SERVICE_ROLE_KEY: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+          SUPABASE_SERVICE_ROLE: !!process.env.SUPABASE_SERVICE_ROLE,
+          SUPABASE_SERVICE_KEY: !!process.env.SUPABASE_SERVICE_KEY,
+        },
+        picked: {
+          supabaseUrl: !!supabaseUrl,
+          serviceKey: !!serviceKey,
+        },
+      },
+      { status: 200 }
+    );
+  }
+
+  const missing: string[] = [];
+  if (!apiKey) missing.push("BRICKSET_API_KEY");
+  if (!supabaseUrl) missing.push("SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL");
+  if (!serviceKey) missing.push("SUPABASE_SERVICE_ROLE_KEY");
+
+  if (missing.length) {
+    return NextResponse.json(
+      { error: `Missing env vars: ${missing.join(", ")}` },
       { status: 500 }
     );
   }
 
   const body = await req.json().catch(() => ({}));
-
   const created_by_user_id = safeStr(body?.created_by_user_id);
-  if (!created_by_user_id) {
-    return NextResponse.json({ error: "created_by_user_id is required" }, { status: 400 });
-  }
-
   const theme = safeStr(body?.theme);
   const subtheme = safeStr(body?.subtheme) || null;
   const year = Number.isFinite(Number(body?.year)) ? Number(body.year) : null;
@@ -74,105 +106,16 @@ export async function POST(req: Request) {
   const pageSize = Math.min(Math.max(toInt(body?.pageSize, 200), 1), 500);
   const pageNumber = Math.min(Math.max(toInt(body?.pageNumber, 1), 1), 5000);
 
-  if (!theme) return NextResponse.json({ error: "theme is required" }, { status: 400 });
+  if (!created_by_user_id) {
+    return NextResponse.json({ error: "created_by_user_id is required" }, { status: 400 });
+  }
+  if (!theme) {
+    return NextResponse.json({ error: "theme is required" }, { status: 400 });
+  }
 
-  const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
-
-  // Caches to avoid hammering DB
-  const themeIdCache = new Map<string, string>(); // lower(name) -> id
-  const subthemeIdCache = new Map<string, string>(); // `${themeId}::${lower(name)}` -> id
-
-  const getOrCreateTheme = async (name: string): Promise<string | null> => {
-    const n = safeStr(name);
-    if (!n) return null;
-    const key = n.toLowerCase();
-    if (themeIdCache.has(key)) return themeIdCache.get(key)!;
-
-    // Try find
-    const found = await supabase
-      .from("bb_themes")
-      .select("id,name")
-      .ilike("name", n) // good enough; recommended unique index on lower(name)
-      .limit(1)
-      .maybeSingle();
-
-    if (found.error) throw found.error;
-    if (found.data?.id) {
-      themeIdCache.set(key, found.data.id);
-      return found.data.id;
-    }
-
-    // Try insert
-    const ins = await supabase.from("bb_themes").insert({ name: n }).select("id").single();
-    if (!ins.error && ins.data?.id) {
-      themeIdCache.set(key, ins.data.id);
-      return ins.data.id;
-    }
-
-    // If insert failed due to race/duplicate, select again
-    const found2 = await supabase
-      .from("bb_themes")
-      .select("id,name")
-      .ilike("name", n)
-      .limit(1)
-      .maybeSingle();
-
-    if (found2.error) throw found2.error;
-    if (found2.data?.id) {
-      themeIdCache.set(key, found2.data.id);
-      return found2.data.id;
-    }
-
-    return null;
-  };
-
-  const getOrCreateSubtheme = async (theme_id: string, name: string): Promise<string | null> => {
-    const n = safeStr(name);
-    if (!theme_id || !n) return null;
-    const key = `${theme_id}::${n.toLowerCase()}`;
-    if (subthemeIdCache.has(key)) return subthemeIdCache.get(key)!;
-
-    const found = await supabase
-      .from("bb_subthemes")
-      .select("id,name,theme_id")
-      .eq("theme_id", theme_id)
-      .ilike("name", n)
-      .limit(1)
-      .maybeSingle();
-
-    if (found.error) throw found.error;
-    if (found.data?.id) {
-      subthemeIdCache.set(key, found.data.id);
-      return found.data.id;
-    }
-
-    const ins = await supabase
-      .from("bb_subthemes")
-      .insert({ theme_id, name: n })
-      .select("id")
-      .single();
-
-    if (!ins.error && ins.data?.id) {
-      subthemeIdCache.set(key, ins.data.id);
-      return ins.data.id;
-    }
-
-    const found2 = await supabase
-      .from("bb_subthemes")
-      .select("id,name,theme_id")
-      .eq("theme_id", theme_id)
-      .ilike("name", n)
-      .limit(1)
-      .maybeSingle();
-
-    if (found2.error) throw found2.error;
-    if (found2.data?.id) {
-      subthemeIdCache.set(key, found2.data.id);
-      return found2.data.id;
-    }
-
-    return null;
-  };
+  const supabase = createClient(supabaseUrl, serviceKey, {
+    auth: { persistSession: false },
+  });
 
   try {
     const params: Record<string, any> = {
@@ -187,61 +130,41 @@ export async function POST(req: Request) {
     const result = await bricksetGetSets(apiKey, params);
     const sets = Array.isArray(result.sets) ? result.sets : [];
 
-    // Build suggestion rows (UNCLASSIFIED: category/subcategory/franchise are null)
-    const rows: any[] = [];
+    const rows = sets
+      .map((set) => {
+        const number = set?.number;
+        const variant = set?.numberVariant;
+        const setNumber = number != null && variant != null ? `${number}-${variant}` : null;
+        if (!setNumber) return null;
 
-    for (const set of sets) {
-      const number = set?.number;
-      const variant = set?.numberVariant;
+        return {
+          status: "pending",
+          created_by_user_id,
 
-      const setNumber = number != null && variant != null ? `${number}-${variant}` : null;
-      if (!setNumber) continue;
+          category_id: null,
+          subcategory_id: null,
+          franchise_id: null,
 
-      const themeName = safeStr(set?.theme);
-      const subthemeName = safeStr(set?.subtheme);
+          name: set?.name ?? `LEGO ${setNumber}`,
+          release_year: set?.year ?? null,
+          upc: null,
+          version: null,
 
-      const bb_theme_id = themeName ? await getOrCreateTheme(themeName) : null;
-      const bb_subtheme_id =
-        bb_theme_id && subthemeName ? await getOrCreateSubtheme(bb_theme_id, subthemeName) : null;
+          source_url: set?.bricksetURL ?? null,
+          image_url: set?.image?.imageURL ?? null,
 
-      const retailCAD = set?.LEGOCom?.CA?.retailPrice ?? null;
-      const retailUSD = set?.LEGOCom?.US?.retailPrice ?? null;
+          bb_set_number: setNumber,
+          bb_piece_count: set?.pieces ?? null,
+          bb_retail_cad: set?.LEGOCom?.CA?.retailPrice ?? null,
+          bb_retail_usd: set?.LEGOCom?.US?.retailPrice ?? null,
 
-      rows.push({
-        status: "pending",
-        created_by_user_id,
+          source: "brickset",
+          source_key: setNumber,
 
-        // unclassified on purpose (you assign in admin UI)
-        category_id: null,
-        subcategory_id: null,
-        franchise_id: null,
-
-        // basic fields from Brickset
-        name: set?.name ?? `LEGO ${setNumber}`,
-        release_year: set?.year ?? null,
-        upc: null,
-        version: null,
-
-        source_url: set?.bricksetURL ?? null,
-        image_url: set?.image?.imageURL ?? null,
-
-        // LEGO fields
-        bb_set_number: setNumber,
-        bb_piece_count: set?.pieces ?? null,
-        bb_retail_cad: retailCAD,
-        bb_retail_usd: retailUSD,
-
-        bb_theme_id,
-        bb_subtheme_id,
-
-        // idempotency
-        source: "brickset",
-        source_key: setNumber,
-
-        // audit/debug
-        details_json: { brickset: set },
-      });
-    }
+          details_json: { brickset: set },
+        };
+      })
+      .filter(Boolean) as any[];
 
     if (rows.length === 0) {
       return NextResponse.json(
@@ -257,13 +180,7 @@ export async function POST(req: Request) {
     if (up.error) throw up.error;
 
     return NextResponse.json(
-      {
-        ok: true,
-        imported: rows.length,
-        matches: result.matches,
-        pageNumber,
-        pageSize,
-      },
+      { ok: true, imported: rows.length, matches: result.matches, pageNumber, pageSize },
       { status: 200 }
     );
   } catch (e: any) {
