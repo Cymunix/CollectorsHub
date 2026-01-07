@@ -2,49 +2,75 @@
 "use client";
 
 import React from "react";
-import FieldLabel from "../../blocks/FieldLabel";
-import Select from "../../blocks/Select";
-import InlineCreateButton from "../../blocks/InlineCreateButton";
-import type { MusicArtist } from "@/lib/catalog/types";
 
-export default function MusicSection({
-  musicArtists,
-  musicArtistId,
-  setMusicArtistId,
-  onCreateMusicArtist,
+function SectionShell({
+  title,
+  subtitle,
+  children,
 }: {
-  musicArtists: MusicArtist[];
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="mt-4 rounded-2xl border border-[#E5E9F2] bg-white p-4 shadow-sm">
+      <div className="text-sm font-semibold text-[#0F172A]">{title}</div>
+      {subtitle ? <div className="mt-1 text-xs text-[#64748B]">{subtitle}</div> : null}
+      <div className="mt-3">{children}</div>
+    </div>
+  );
+}
+
+function CreateLinkButton({
+  onClick,
+  disabled,
+  label = "Create",
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  label?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={!!disabled}
+      className="text-xs font-semibold text-[#0F172A] underline disabled:opacity-50"
+    >
+      {label}
+    </button>
+  );
+}
+
+export default function MusicSection(p: {
+  saving: boolean;
+  musicArtists: any[];
   musicArtistId: string;
   setMusicArtistId: (v: string) => void;
   onCreateMusicArtist: () => void;
 }) {
   return (
-    <div className="rounded-2xl border p-4 mb-4">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-xs font-semibold">Music</h3>
-        <span className="text-[11px] text-gray-500">Required: Artist, Release Year, Version</span>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-        <div className="space-y-1 md:col-span-2">
-          <div className="flex items-center justify-between">
-            <FieldLabel req>Artist</FieldLabel>
-            <InlineCreateButton onClick={onCreateMusicArtist}>+ New</InlineCreateButton>
-          </div>
-          <Select value={musicArtistId} onChange={(e) => setMusicArtistId(e.target.value)}>
-            <option value="">Select…</option>
-            {musicArtists.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </Select>
+    <SectionShell title="Music" subtitle="Artist selection + create artist.">
+      <div>
+        <div className="flex items-center justify-between">
+          <div className="text-xs font-semibold text-[#0F172A]">Artist</div>
+          <CreateLinkButton onClick={p.onCreateMusicArtist} disabled={p.saving} />
         </div>
 
-        <p className="text-[11px] text-gray-500 md:col-span-2">
-          Tip: Use “Version” above for format/version (e.g., Vinyl, CD, Deluxe).
-        </p>
+        <select
+          value={p.musicArtistId ?? ""}
+          onChange={(e) => p.setMusicArtistId(e.target.value)}
+          disabled={p.saving}
+          className="mt-1 w-full rounded-xl border border-[#E5E9F2] bg-white px-3 py-2 text-sm"
+        >
+          <option value="">Select artist…</option>
+          {(p.musicArtists ?? []).map((x: any) => (
+            <option key={x.id} value={x.id}>
+              {x.name}
+            </option>
+          ))}
+        </select>
       </div>
-    </div>
+    </SectionShell>
   );
 }

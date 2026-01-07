@@ -21,6 +21,8 @@ import type {
   ItemKind,
 } from "@/lib/catalog/types";
 
+type IdName = { id: string; name: string };
+
 type Props = {
   metaLoading: boolean;
   metaError: string | null;
@@ -47,12 +49,18 @@ type Props = {
   // Building blocks
   showMinifigs: boolean;
   setShowMinifigs: (v: boolean) => void;
+
   bbThemeId: string;
   setBbThemeId: (v: string) => void;
   bbSubthemeId: string;
   setBbSubthemeId: (v: string) => void;
   bbThemeOptions: BbTheme[];
   bbSubthemeOptions: BbSubtheme[];
+
+  // ✅ NEW: Building Blocks Set filter (optional so build doesn't break until wired)
+  bbSetId?: string;
+  setBbSetId?: (v: string) => void;
+  bbSetOptions?: IdName[];
 
   // Toys
   toyManufacturers: ToyManufacturer[];
@@ -72,7 +80,7 @@ type Props = {
   gamePlatformId: string;
   setGamePlatformId: (v: string) => void;
 
-  // ✅ ADD: optional mirror state used elsewhere (platform_id)
+  // optional mirror state used elsewhere (platform_id)
   platformId?: string;
   setPlatformId?: (v: string) => void;
 
@@ -105,11 +113,19 @@ export default function CatalogFilters(p: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  const hasBbSetSupport =
+    typeof p.bbSetId === "string" &&
+    typeof p.setBbSetId === "function" &&
+    Array.isArray(p.bbSetOptions);
+
   /* -----------------------------
      Reset helpers
      ----------------------------- */
   const clearBuildingBlocks = () => {
     p.setShowMinifigs(false);
+
+    if (hasBbSetSupport) p.setBbSetId!("");
+
     p.setBbThemeId("");
     p.setBbSubthemeId("");
   };
@@ -149,11 +165,10 @@ export default function CatalogFilters(p: Props) {
   };
 
   /* -----------------------------
-     ✅ Header search reset hook
+     Header search reset hook
      If URL has ?search=...&reset=1
      then nuke all left-side filters.
-     Then remove reset=1 so it only
-     happens once.
+     Then remove reset=1 so it only happens once.
      ----------------------------- */
   const lastResetSigRef = useRef<string>("");
 
@@ -162,17 +177,13 @@ export default function CatalogFilters(p: Props) {
     const reset = searchParams.get("reset") === "1";
     if (!reset || !q) return;
 
-    // Prevent double-firing if Next re-renders with same params
     const sig = `${q}::${searchParams.toString()}`;
     if (lastResetSigRef.current === sig) return;
     lastResetSigRef.current = sig;
 
-    // Clear *everything* on the left
     p.clearFilters();
-    // Belt + braces: ensure kind-specific fields are cleared even if clearFilters misses them
     clearKindSpecific();
 
-    // Remove reset=1 so it doesn't keep wiping state on back/forward/refresh
     const next = new URLSearchParams(searchParams.toString());
     next.delete("reset");
     router.replace(`/catalog?${next.toString()}`);
@@ -180,10 +191,7 @@ export default function CatalogFilters(p: Props) {
   }, [searchParams, router]);
 
   /* -----------------------------
-     When kind changes, clear
-     kind-specific filters so we
-     don't keep "invisible" filters
-     applied.
+     When kind changes, clear kind-specific filters
      ----------------------------- */
   const prevKindRef = useRef<Props["selectedKind"]>(p.selectedKind);
   useEffect(() => {
@@ -195,8 +203,7 @@ export default function CatalogFilters(p: Props) {
   }, [p.selectedKind]);
 
   /* -----------------------------
-     Change handlers with proper
-     cascading resets
+     Change handlers with proper cascading resets
      ----------------------------- */
   const onCategoryChange = (nextCategoryId: string) => {
     p.setCategoryId(nextCategoryId);
@@ -211,13 +218,21 @@ export default function CatalogFilters(p: Props) {
 
   const onSubcategoryChange = (nextSubcategoryId: string) => {
     p.setSubcategoryId(nextSubcategoryId);
-
-    // subcategory can invalidate kind-specific option trees
     clearKindSpecific();
   };
 
   const onFranchiseChange = (nextFranchiseId: string) => {
     p.setFranchiseId(nextFranchiseId);
+  };
+
+  const onMinYearChange = (v: string) => {
+    const cleaned = v.replace(/\D/g, "").slice(0, 4);
+    p.setMinYear(cleaned);
+  };
+
+  const onMaxYearChange = (v: string) => {
+    const cleaned = v.replace(/\D/g, "").slice(0, 4);
+    p.setMaxYear(cleaned);
   };
 
   return (
@@ -298,7 +313,7 @@ export default function CatalogFilters(p: Props) {
             <label className="font-medium">Min Year</label>
             <input
               value={p.minYear}
-              onChange={(e) => p.setMinYear(e.target.value)}
+              onChange={(e) => onMinYearChange(e.target.value)}
               inputMode="numeric"
               className="w-full rounded-xl border px-3 py-2"
               placeholder="e.g. 1990"
@@ -308,7 +323,7 @@ export default function CatalogFilters(p: Props) {
             <label className="font-medium">Max Year</label>
             <input
               value={p.maxYear}
-              onChange={(e) => p.setMaxYear(e.target.value)}
+              onChange={(e) => onMaxYearChange(e.target.value)}
               inputMode="numeric"
               className="w-full rounded-xl border px-3 py-2"
               placeholder="e.g. 2025"
@@ -325,11 +340,12 @@ export default function CatalogFilters(p: Props) {
               Building Blocks filters
             </p>
 
+            {/* ✅ Toggle: Show/Hide minifigs */}
             <div className="flex items-center justify-between rounded-xl border bg-white px-3 py-2">
               <div>
                 <p className="font-medium text-xs">Show Minifigs</p>
                 <p className="text-[10px] text-gray-500">
-                  Display minifigs as catalog cards
+                  Include minifigs in results
                 </p>
               </div>
               <input
@@ -338,6 +354,32 @@ export default function CatalogFilters(p: Props) {
                 onChange={(e) => p.setShowMinifigs(e.target.checked)}
               />
             </div>
+
+            {/* ✅ Set filter (only renders when wired from CatalogScreen) */}
+            {hasBbSetSupport && (
+              <div className="space-y-1">
+                <label className="font-medium">Set</label>
+                <select
+                  value={p.bbSetId}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    p.setBbSetId!(v);
+
+                    // changing set should reset theme hierarchy unless you're sure they're independent
+                    p.setBbThemeId("");
+                    p.setBbSubthemeId("");
+                  }}
+                  className="w-full rounded-xl border bg-white px-3 py-2"
+                >
+                  <option value="">All</option>
+                  {p.bbSetOptions!.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <div className="space-y-1">
               <label className="font-medium">Theme</label>
@@ -348,11 +390,8 @@ export default function CatalogFilters(p: Props) {
                   p.setBbSubthemeId("");
                 }}
                 className="w-full rounded-xl border bg-white px-3 py-2"
-                disabled={!p.subcategoryId}
               >
-                <option value="">
-                  {p.subcategoryId ? "All" : "Select subcategory first"}
-                </option>
+                <option value="">All</option>
                 {p.bbThemeOptions.map((t) => (
                   <option key={t.id} value={t.id}>
                     {t.name}

@@ -1,10 +1,30 @@
 "use client";
 
-import React from "react";
+import React, { useMemo } from "react";
 import FieldLabel from "../blocks/FieldLabel";
 import Select from "../blocks/Select";
 import InlineCreateButton from "../blocks/InlineCreateButton";
 import type { Category, Subcategory, Franchise } from "@/lib/catalog/types";
+
+type Props = {
+  metaLoading: boolean;
+  metaError: string | null;
+
+  categories: Category[];
+  subcategories: Subcategory[];
+  franchises: Franchise[];
+
+  categoryId: string;
+  setCategoryId: (v: string) => void;
+
+  subcategoryId: string;
+  setSubcategoryId: (v: string) => void;
+
+  franchiseId: string;
+  setFranchiseId: (v: string) => void;
+
+  onCreateFranchise: () => void;
+};
 
 export default function ClassificationSection({
   metaLoading,
@@ -12,71 +32,40 @@ export default function ClassificationSection({
   categories,
   subcategories,
   franchises,
-  genres,           // From meta hook
-  ageRatings,       // From meta hook
-
   categoryId,
   setCategoryId,
   subcategoryId,
   setSubcategoryId,
   franchiseId,
   setFranchiseId,
-  genreIds,         // State from Modal
-  setGenreIds,      // State from Modal
-  ageRatingId,      // State from Modal
-  setAgeRatingId,   // State from Modal
-
   onCreateFranchise,
-}: {
-  metaLoading: boolean;
-  metaError: string | null;
-  categories: Category[];
-  subcategories: Subcategory[];
-  franchises: Franchise[];
-  genres: any[];
-  ageRatings: any[];
+}: Props) {
+  const hasCategory = !!String(categoryId || "").trim();
+  const hasSubcategory = !!String(subcategoryId || "").trim();
 
-  categoryId: string;
-  setCategoryId: (v: string) => void;
-  subcategoryId: string;
-  setSubcategoryId: (v: string) => void;
-  franchiseId: string;
-  setFranchiseId: (v: string) => void;
-  genreIds: string[];
-  setGenreIds: (v: string[]) => void;
-  ageRatingId: string;
-  setAgeRatingId: (v: string) => void;
-
-  onCreateFranchise: () => void;
-}) {
-  // Filters subcategories based on the selected category
-  const modalSubcategories = subcategories.filter(
-    (sc) => !categoryId || sc.category_id === categoryId
-  );
-
-  // Helper to add/remove genres from the array
-  const toggleGenre = (id: string) => {
-    if (genreIds.includes(id)) {
-      setGenreIds(genreIds.filter((g) => g !== id));
-    } else {
-      setGenreIds([...genreIds, id]);
-    }
-  };
+  const filteredSubcategories = useMemo(() => {
+    const c = String(categoryId || "");
+    if (!c) return subcategories ?? [];
+    return (subcategories ?? []).filter((sc) => String(sc.category_id) === c);
+  }, [subcategories, categoryId]);
 
   return (
     <div className="rounded-2xl border p-4 mb-4 bg-white shadow-sm">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-          Classification
-        </h3>
-        {metaLoading && (
-          <span className="text-[10px] animate-pulse text-blue-500 font-bold">
-            Updating Data...
-          </span>
-        )}
+        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">Classification</h3>
+        {metaLoading ? (
+          <span className="text-[10px] animate-pulse text-blue-500 font-bold">Updating Data...</span>
+        ) : null}
       </div>
 
-      {metaError && <p className="text-[11px] text-red-600 mb-2">{metaError}</p>}
+      {metaError ? <p className="text-[11px] text-red-600 mb-2">{metaError}</p> : null}
+
+      {/* Helpful UI hint (does NOT replace submit validation) */}
+      {hasCategory && !hasSubcategory ? (
+        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900">
+          Subcategory is required. Pick a subcategory before creating the item.
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
         {/* Category */}
@@ -85,13 +74,16 @@ export default function ClassificationSection({
           <Select
             value={categoryId}
             onChange={(e) => {
-              setCategoryId(e.target.value);
+              const next = e.target.value;
+              setCategoryId(next);
+
+              // category change invalidates these
               setSubcategoryId("");
               setFranchiseId("");
             }}
           >
             <option value="">Select Category…</option>
-            {categories.map((c) => (
+            {(categories ?? []).map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
               </option>
@@ -105,12 +97,10 @@ export default function ClassificationSection({
           <Select
             value={subcategoryId}
             onChange={(e) => setSubcategoryId(e.target.value)}
-            disabled={!categoryId}
+            disabled={!hasCategory}
           >
-            <option value="">
-              {categoryId ? "Select Subcategory…" : "Select category first"}
-            </option>
-            {modalSubcategories.map((sc) => (
+            <option value="">{hasCategory ? "Select Subcategory…" : "Select category first"}</option>
+            {filteredSubcategories.map((sc) => (
               <option key={sc.id} value={sc.id}>
                 {sc.name}
               </option>
@@ -118,70 +108,25 @@ export default function ClassificationSection({
           </Select>
         </div>
 
-        {/* Age Rating */}
-        <div className="space-y-1">
-          <FieldLabel>Age Rating</FieldLabel>
-          <Select
-            value={ageRatingId}
-            onChange={(e) => setAgeRatingId(e.target.value)}
-          >
-            <option value="">Select Rating…</option>
-            {ageRatings.map((ar) => (
-              <option key={ar.id} value={ar.id}>
-                {ar.code} {ar.label ? `- ${ar.label}` : ""}
-              </option>
-            ))}
-          </Select>
-        </div>
-
         {/* Franchise */}
-        <div className="space-y-1">
+        <div className="space-y-1 md:col-span-2">
           <div className="flex items-center justify-between">
             <FieldLabel>Franchise</FieldLabel>
-            <InlineCreateButton onClick={onCreateFranchise}>
-              + New
-            </InlineCreateButton>
+            <InlineCreateButton onClick={onCreateFranchise}>+ New</InlineCreateButton>
           </div>
+
           <Select
             value={franchiseId}
             onChange={(e) => setFranchiseId(e.target.value)}
+            disabled={!hasSubcategory}
           >
-            <option value="">(none)</option>
-            {franchises.map((f) => (
+            <option value="">{hasSubcategory ? "(none)" : "Select subcategory first"}</option>
+            {(franchises ?? []).map((f) => (
               <option key={f.id} value={f.id}>
                 {f.name}
               </option>
             ))}
           </Select>
-        </div>
-      </div>
-
-      {/* Genres Section */}
-      <div className="mt-4 pt-4 border-t border-slate-100">
-        <div className="mb-2">
-          <FieldLabel>Genres (Select Multiple)</FieldLabel>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {genres.length === 0 && (
-            <span className="text-slate-400 italic">Loading genres...</span>
-          )}
-          {genres.map((g) => {
-            const isSelected = genreIds.includes(g.id);
-            return (
-              <button
-                key={g.id}
-                type="button"
-                onClick={() => toggleGenre(g.id)}
-                className={`px-3 py-1 rounded-full text-[10px] font-bold transition-all border ${
-                  isSelected
-                    ? "bg-blue-600 border-blue-600 text-white shadow-sm"
-                    : "bg-white border-slate-200 text-slate-500 hover:border-blue-300"
-                }`}
-              >
-                {g.name}
-              </button>
-            );
-          })}
         </div>
       </div>
     </div>
