@@ -61,7 +61,8 @@ function ts(ts: string) {
 }
 
 function statusBadge(s: Status) {
-  const base = "inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold border";
+  const base =
+    "inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold border";
   if (s === "approved") return `${base} border-emerald-200 bg-emerald-50 text-emerald-800`;
   if (s === "rejected") return `${base} border-red-200 bg-red-50 text-red-700`;
   if (s === "needs_info") return `${base} border-amber-200 bg-amber-50 text-amber-800`;
@@ -69,7 +70,6 @@ function statusBadge(s: Status) {
 }
 
 function isLegoSuggestion(r: SuggestionRow) {
-  // Keep current heuristic: if set number exists, it's LEGO.
   return !!(r.bb_set_number && String(r.bb_set_number).trim().length);
 }
 
@@ -170,7 +170,6 @@ export default function AdminSuggestionsPage() {
   };
 
   const loadLookups = async () => {
-    // If your table names differ, change them here.
     const [cat, sub, f, t, s] = await Promise.all([
       supabase.from("categories").select("id,name").order("name"),
       supabase.from("subcategories").select("id,name,category_id").order("name"),
@@ -234,6 +233,96 @@ export default function AdminSuggestionsPage() {
     await load();
     setBusyId(null);
   };
+
+  // ===== Inline create (Themes/Subthemes/Franchises) =====
+
+  const refreshLookups = async () => {
+    await loadLookups();
+  };
+
+  const createFranchiseInline = async (suggestionId: string) => {
+    if (!isAdmin) return;
+    const name = (prompt("New franchise name") || "").trim();
+    if (!name) return;
+
+    setBusyId("__create__");
+    setErr(null);
+
+    const ins = await supabase.from("franchises").insert({ name }).select("id").single();
+    if (ins.error) {
+      console.error(ins.error);
+      setErr(ins.error.message || "Failed to create franchise.");
+      setBusyId(null);
+      return;
+    }
+
+    await refreshLookups();
+    await patchSuggestion(suggestionId, { franchise_id: ins.data.id });
+
+    setBusyId(null);
+  };
+
+  const createBbThemeInline = async (suggestionId: string) => {
+    if (!isAdmin) return;
+    const name = (prompt("New LEGO theme name") || "").trim();
+    if (!name) return;
+
+    setBusyId("__create__");
+    setErr(null);
+
+    const ins = await supabase.from("bb_themes").insert({ name }).select("id").single();
+    if (ins.error) {
+      console.error(ins.error);
+      setErr(ins.error.message || "Failed to create theme.");
+      setBusyId(null);
+      return;
+    }
+
+    await refreshLookups();
+    // set theme and clear subtheme (must belong to theme)
+    await patchSuggestion(suggestionId, {
+      bb_theme_id: ins.data.id,
+      bb_subtheme_id: null,
+    });
+
+    setBusyId(null);
+  };
+
+  const createBbSubthemeInline = async (suggestionId: string, themeId: string | null) => {
+    if (!isAdmin) return;
+
+    const tId = (themeId || "").trim();
+    if (!tId) {
+      setErr("Select a LEGO theme first (subthemes must belong to a theme).");
+      return;
+    }
+
+    const name = (prompt("New LEGO subtheme name") || "").trim();
+    if (!name) return;
+
+    setBusyId("__create__");
+    setErr(null);
+
+    const ins = await supabase
+      .from("bb_subthemes")
+      .insert({ name, theme_id: tId })
+      .select("id")
+      .single();
+
+    if (ins.error) {
+      console.error(ins.error);
+      setErr(ins.error.message || "Failed to create subtheme.");
+      setBusyId(null);
+      return;
+    }
+
+    await refreshLookups();
+    await patchSuggestion(suggestionId, { bb_subtheme_id: ins.data.id });
+
+    setBusyId(null);
+  };
+
+  // ===== Existing actions =====
 
   const setStatusAndNote = async (id: string, next: Status) => {
     if (!isAdmin || !user?.userId) return;
@@ -384,7 +473,7 @@ export default function AdminSuggestionsPage() {
             </div>
             <button
               type="button"
-              disabled={busyId === "__import__"}
+              disabled={busyId === "__import__" || busyId === "__create__"}
               onClick={importLegoByTheme}
               className="rounded-xl border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#0B1220] px-3 py-2 text-xs font-semibold hover:bg-[#F8FAFC] dark:hover:bg-[#0B1220] disabled:opacity-60"
             >
@@ -468,7 +557,9 @@ export default function AdminSuggestionsPage() {
         </div>
 
         {err ? (
-          <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{err}</div>
+          <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+            {err}
+          </div>
         ) : null}
 
         {loading ? (
@@ -482,7 +573,6 @@ export default function AdminSuggestionsPage() {
             {filtered.map((r) => {
               const lego = isLegoSuggestion(r);
 
-              // Publish gating: must be classified. LEGO also needs franchise + set number.
               const canPublish =
                 !!r.name &&
                 !!r.category_id &&
@@ -496,6 +586,8 @@ export default function AdminSuggestionsPage() {
               const filteredSubthemes = r.bb_theme_id
                 ? bbSubthemes.filter((s) => String(s.theme_id) === String(r.bb_theme_id))
                 : bbSubthemes;
+
+              const creating = busyId === "__create__";
 
               return (
                 <div
@@ -522,7 +614,7 @@ export default function AdminSuggestionsPage() {
                       <div className="text-xs font-semibold">Category</div>
                       <select
                         value={r.category_id ?? ""}
-                        disabled={busyId === r.id}
+                        disabled={busyId === r.id || creating}
                         onChange={(e) =>
                           patchSuggestion(r.id, {
                             category_id: e.target.value || null,
@@ -547,8 +639,10 @@ export default function AdminSuggestionsPage() {
                       <div className="text-xs font-semibold">Subcategory</div>
                       <select
                         value={r.subcategory_id ?? ""}
-                        disabled={busyId === r.id || !r.category_id}
-                        onChange={(e) => patchSuggestion(r.id, { subcategory_id: e.target.value || null })}
+                        disabled={busyId === r.id || creating || !r.category_id}
+                        onChange={(e) =>
+                          patchSuggestion(r.id, { subcategory_id: e.target.value || null })
+                        }
                         className="mt-1 w-full rounded-xl border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#0B1220] px-3 py-2 text-sm"
                       >
                         <option value="">Select subcategory…</option>
@@ -564,10 +658,21 @@ export default function AdminSuggestionsPage() {
                     </div>
 
                     <div>
-                      <div className="text-xs font-semibold">Franchise</div>
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs font-semibold">Franchise</div>
+                        <button
+                          type="button"
+                          onClick={() => createFranchiseInline(r.id)}
+                          disabled={creating || busyId === r.id}
+                          className="text-[11px] font-semibold underline disabled:opacity-60"
+                        >
+                          Create
+                        </button>
+                      </div>
+
                       <select
                         value={r.franchise_id ?? ""}
-                        disabled={busyId === r.id}
+                        disabled={busyId === r.id || creating}
                         onChange={(e) => patchSuggestion(r.id, { franchise_id: e.target.value || null })}
                         className="mt-1 w-full rounded-xl border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#0B1220] px-3 py-2 text-sm"
                       >
@@ -578,6 +683,7 @@ export default function AdminSuggestionsPage() {
                           </option>
                         ))}
                       </select>
+
                       {lego && !r.franchise_id ? (
                         <div className="mt-1 text-[11px] text-red-600">Required for LEGO publish.</div>
                       ) : null}
@@ -588,10 +694,21 @@ export default function AdminSuggestionsPage() {
                   {lego ? (
                     <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
                       <div>
-                        <div className="text-xs font-semibold">LEGO Theme</div>
+                        <div className="flex items-center justify-between">
+                          <div className="text-xs font-semibold">LEGO Theme</div>
+                          <button
+                            type="button"
+                            onClick={() => createBbThemeInline(r.id)}
+                            disabled={creating || busyId === r.id}
+                            className="text-[11px] font-semibold underline disabled:opacity-60"
+                          >
+                            Create
+                          </button>
+                        </div>
+
                         <select
                           value={r.bb_theme_id ?? ""}
-                          disabled={busyId === r.id}
+                          disabled={busyId === r.id || creating}
                           onChange={(e) =>
                             patchSuggestion(r.id, {
                               bb_theme_id: e.target.value || null,
@@ -610,11 +727,25 @@ export default function AdminSuggestionsPage() {
                       </div>
 
                       <div>
-                        <div className="text-xs font-semibold">LEGO Subtheme</div>
+                        <div className="flex items-center justify-between">
+                          <div className="text-xs font-semibold">LEGO Subtheme</div>
+                          <button
+                            type="button"
+                            onClick={() => createBbSubthemeInline(r.id, r.bb_theme_id ?? null)}
+                            disabled={creating || busyId === r.id || !r.bb_theme_id}
+                            className="text-[11px] font-semibold underline disabled:opacity-60"
+                            title={!r.bb_theme_id ? "Select a theme first" : "Create a subtheme under the selected theme"}
+                          >
+                            Create
+                          </button>
+                        </div>
+
                         <select
                           value={r.bb_subtheme_id ?? ""}
-                          disabled={busyId === r.id}
-                          onChange={(e) => patchSuggestion(r.id, { bb_subtheme_id: e.target.value || null })}
+                          disabled={busyId === r.id || creating}
+                          onChange={(e) =>
+                            patchSuggestion(r.id, { bb_subtheme_id: e.target.value || null })
+                          }
                           className="mt-1 w-full rounded-xl border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#0B1220] px-3 py-2 text-sm"
                         >
                           <option value="">Select subtheme…</option>
@@ -631,8 +762,10 @@ export default function AdminSuggestionsPage() {
                           <div className="text-xs font-semibold">Set Number</div>
                           <input
                             value={r.bb_set_number ?? ""}
-                            disabled={busyId === r.id}
-                            onChange={(e) => patchSuggestion(r.id, { bb_set_number: toNullableString(e.target.value) })}
+                            disabled={busyId === r.id || creating}
+                            onChange={(e) =>
+                              patchSuggestion(r.id, { bb_set_number: toNullableString(e.target.value) })
+                            }
                             placeholder="e.g. 75313-1"
                             className="mt-1 w-full rounded-xl border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#0B1220] px-3 py-2 text-sm"
                           />
@@ -642,7 +775,7 @@ export default function AdminSuggestionsPage() {
                           <div className="text-xs font-semibold">Piece Count</div>
                           <input
                             value={r.bb_piece_count ?? ""}
-                            disabled={busyId === r.id}
+                            disabled={busyId === r.id || creating}
                             onChange={(e) =>
                               patchSuggestion(r.id, { bb_piece_count: toNullableInt(e.target.value) as any })
                             }
@@ -655,7 +788,7 @@ export default function AdminSuggestionsPage() {
                           <div className="text-xs font-semibold">Retail CAD</div>
                           <input
                             value={r.bb_retail_cad ?? ""}
-                            disabled={busyId === r.id}
+                            disabled={busyId === r.id || creating}
                             onChange={(e) =>
                               patchSuggestion(r.id, { bb_retail_cad: toNullableNumber(e.target.value) as any })
                             }
@@ -668,7 +801,7 @@ export default function AdminSuggestionsPage() {
                           <div className="text-xs font-semibold">Retail USD</div>
                           <input
                             value={r.bb_retail_usd ?? ""}
-                            disabled={busyId === r.id}
+                            disabled={busyId === r.id || creating}
                             onChange={(e) =>
                               patchSuggestion(r.id, { bb_retail_usd: toNullableNumber(e.target.value) as any })
                             }
@@ -688,12 +821,13 @@ export default function AdminSuggestionsPage() {
                       rows={2}
                       placeholder="Admin notes (shown to user for Needs info / Rejected)."
                       className="w-full rounded-xl border border-[#E5E9F2] dark:border-[#1F2937] bg-white dark:bg-[#0B1220] px-3 py-2 text-sm"
+                      disabled={creating}
                     />
 
                     <div className="flex flex-wrap items-center gap-2 justify-start lg:justify-end">
                       <button
                         type="button"
-                        disabled={busyId === r.id}
+                        disabled={busyId === r.id || creating}
                         onClick={() => setStatusAndNote(r.id, "needs_info")}
                         className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-60"
                       >
@@ -702,7 +836,7 @@ export default function AdminSuggestionsPage() {
 
                       <button
                         type="button"
-                        disabled={busyId === r.id}
+                        disabled={busyId === r.id || creating}
                         onClick={() => setStatusAndNote(r.id, "rejected")}
                         className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60"
                       >
@@ -711,10 +845,14 @@ export default function AdminSuggestionsPage() {
 
                       <button
                         type="button"
-                        disabled={busyId === r.id || !canPublish}
+                        disabled={busyId === r.id || creating || !canPublish}
                         onClick={() => publishSuggestion(r.id)}
                         className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 disabled:opacity-60"
-                        title={!canPublish ? "Assign category/subcategory (and franchise for LEGO) before publishing." : "Publish to catalog_items"}
+                        title={
+                          !canPublish
+                            ? "Assign category/subcategory (and franchise for LEGO) before publishing."
+                            : "Publish to catalog_items"
+                        }
                       >
                         Publish / Approve
                       </button>
