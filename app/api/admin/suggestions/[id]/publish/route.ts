@@ -23,6 +23,17 @@ const MINIFIG_PHOTOS_COL_MINIFIG_ID = "minifig_id";
 const MINIFIG_PHOTOS_COL_URL = "url"; // could be image_url
 const MINIFIG_PHOTOS_COL_SOURCE = "source"; // optional, if you have it
 
+// DB constraint allowed kinds:
+type CatalogKind =
+  | "building_blocks"
+  | "trading_card"
+  | "sports_card"
+  | "music"
+  | "toy"
+  | "movie"
+  | "gaming"
+  | "comic";
+
 function pickSupabaseUrl() {
   return (
     process.env.SUPABASE_URL ||
@@ -75,15 +86,15 @@ function isLegoSuggestion(s: any) {
 }
 
 /**
- * Derive canonical catalog_items.kind from categories.name (ONLY).
+ * Derive catalog_items.kind from categories.name (ONLY).
  *
- * This avoids TS build failures when your generated DB types do not include categories.slug.
- *
- * IMPORTANT:
- * - Return values MUST match your DB check constraint catalog_items_kind_chk exactly.
- * - Update map keys to match your category names.
+ * MUST return one of:
+ * building_blocks, trading_card, sports_card, music, toy, movie, gaming, comic
  */
-async function deriveKindFromCategoryName(supabase: any, category_id: string) {
+async function deriveKindFromCategoryName(
+  supabase: any,
+  category_id: string
+): Promise<CatalogKind> {
   const cat = await supabase
     .from("categories")
     .select("id,name")
@@ -104,36 +115,50 @@ async function deriveKindFromCategoryName(supabase: any, category_id: string) {
     .replace(/\s+/g, "_")
     .replace(/-+/g, "_");
 
-  // 🔥 Adjust this mapping to your category names
-  // Right-hand side MUST match allowed values in catalog_items_kind_chk
-  const map: Record<string, string> = {
-    lego: "lego",
-    building_blocks: "lego",
-    building_block_sets: "lego",
+  // Keys = what your category names look like after normalisation
+  // Values = MUST match DB constraint EXACTLY
+  const map: Record<string, CatalogKind> = {
+    // LEGO / Brick stuff
+    lego: "building_blocks",
+    building_blocks: "building_blocks",
+    building_block: "building_blocks",
+    bricks: "building_blocks",
 
-    cards: "card",
-    trading_cards: "card",
-    card: "card",
+    // Cards
+    trading_cards: "trading_card",
+    trading_card: "trading_card",
+    cards: "trading_card",
+    card: "trading_card",
 
+    sports_cards: "sports_card",
+    sports_card: "sports_card",
+
+    // Media
     comics: "comic",
     comic: "comic",
-
-    games: "game",
-    game: "game",
-    video_games: "game",
 
     movies: "movie",
     movie: "movie",
     films: "movie",
 
     music: "music",
+
+    // Games
+    games: "gaming",
+    game: "gaming",
+    gaming: "gaming",
+    video_games: "gaming",
+
+    // Toys / misc
+    toys: "toy",
+    toy: "toy",
   };
 
   const kind = map[key];
   if (!kind) {
     throw new Error(
       `Cannot derive catalog_items.kind from category name "${rawName}" (normalised "${key}", id=${category_id}). ` +
-        `Update deriveKindFromCategoryName() mapping to include this category.`
+        `Update deriveKindFromCategoryName() mapping. Allowed kinds: building_blocks, trading_card, sports_card, music, toy, movie, gaming, comic.`
     );
   }
 
@@ -194,13 +219,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const catalogItemId = s.approved_catalog_item_id || crypto.randomUUID();
 
     // 2) Determine kind (REQUIRED)
-    const kind = lego
-      ? "lego"
+    // LEGO => building_blocks (per DB constraint)
+    const kind: CatalogKind = lego
+      ? "building_blocks"
       : await deriveKindFromCategoryName(supabase, String(s.category_id));
-
-    if (!kind) {
-      return NextResponse.json({ error: "kind is required (failed to derive)" }, { status: 400 });
-    }
 
     console.log("PUBLISH catalog_items", {
       id: catalogItemId,
@@ -217,7 +239,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       .upsert(
         {
           id: catalogItemId,
-          kind, // ✅ FIX: REQUIRED
+          kind, // ✅ MUST match constraint
 
           name: s.name,
           category_id: s.category_id,
@@ -270,7 +292,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       if (delLinks.error) throw delLinks.error;
 
       if (minifigs.length) {
-        // Upsert minifigs into master table
         const minifigUpserts = minifigs
           .map((m: any) => {
             const number = m?.minifigNumber ?? m?.number ?? null;
@@ -292,7 +313,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
           if (upM.error) throw upM.error;
         }
 
-        // Fetch IDs for the minifigs we just upserted
         const nums = minifigUpserts.map((r: any) => r[MINIFIGS_COL_NUMBER]);
         const gotM = await supabase
           .from(MINIFIGS_TABLE)
@@ -306,7 +326,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
           idByNumber.set(String(row[MINIFIGS_COL_NUMBER]), String(row[MINIFIGS_COL_ID]));
         }
 
-        // Insert join rows
         const linkRows = minifigs
           .map((m: any) => {
             const number = String(m?.minifigNumber ?? m?.number ?? "").trim();
@@ -329,7 +348,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
           if (insLinks.error) throw insLinks.error;
         }
 
-        // Optional: minifig photos
         const photoRows = minifigs
           .map((m: any) => {
             const number = String(m?.minifigNumber ?? m?.number ?? "").trim();
