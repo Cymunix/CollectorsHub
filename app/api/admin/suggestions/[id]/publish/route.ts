@@ -75,41 +75,41 @@ function isLegoSuggestion(s: any) {
 }
 
 /**
- * Derive canonical catalog_items.kind for non-LEGO suggestions.
+ * Derive canonical catalog_items.kind from categories.name (ONLY).
  *
- * This uses categories.slug (preferred) or categories.name (fallback).
+ * This avoids TS build failures when your generated DB types do not include categories.slug.
  *
  * IMPORTANT:
- * - The RETURN values MUST match your DB check constraint catalog_items_kind_chk exactly.
- * - Adjust map keys to match your category slugs/names.
+ * - Return values MUST match your DB check constraint catalog_items_kind_chk exactly.
+ * - Update map keys to match your category names.
  */
-async function deriveKindFromCategory(
-  supabase: ReturnType<typeof createClient>,
-  category_id: string
-) {
+async function deriveKindFromCategoryName(supabase: any, category_id: string) {
   const cat = await supabase
     .from("categories")
-    .select("id,slug,name")
+    .select("id,name")
     .eq("id", category_id)
     .single();
 
   if (cat.error) throw cat.error;
 
-  const raw = String(cat.data?.slug || cat.data?.name || "").trim().toLowerCase();
-  if (!raw) throw new Error(`Category has no slug/name (id=${category_id})`);
+  const rawName = String(cat.data?.name || "").trim();
+  if (!rawName) throw new Error(`Category has no name (id=${category_id})`);
 
-  // Normalise common variations
-  const key = raw
+  // Normalise category name -> mapping key
+  const key = rawName
+    .trim()
+    .toLowerCase()
     .replace(/&/g, "and")
+    .replace(/'/g, "")
     .replace(/\s+/g, "_")
     .replace(/-+/g, "_");
 
-  // 🔥 Adjust these mappings to your categories + allowed kinds
+  // 🔥 Adjust this mapping to your category names
   // Right-hand side MUST match allowed values in catalog_items_kind_chk
   const map: Record<string, string> = {
     lego: "lego",
-    legos: "lego",
     building_blocks: "lego",
+    building_block_sets: "lego",
 
     cards: "card",
     trading_cards: "card",
@@ -131,10 +131,9 @@ async function deriveKindFromCategory(
 
   const kind = map[key];
   if (!kind) {
-    // Fail loudly with useful context so you can fix mapping in one go
     throw new Error(
-      `Cannot derive catalog_items.kind from category "${raw}" (normalised "${key}", id=${category_id}). ` +
-        `Update deriveKindFromCategory() mapping or your category slugs.`
+      `Cannot derive catalog_items.kind from category name "${rawName}" (normalised "${key}", id=${category_id}). ` +
+        `Update deriveKindFromCategoryName() mapping to include this category.`
     );
   }
 
@@ -195,15 +194,14 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const catalogItemId = s.approved_catalog_item_id || crypto.randomUUID();
 
     // 2) Determine kind (REQUIRED)
-    // - LEGO: hard set to "lego"
-    // - non-LEGO: derive from category slug/name mapping
-    const kind = lego ? "lego" : await deriveKindFromCategory(supabase, String(s.category_id));
+    const kind = lego
+      ? "lego"
+      : await deriveKindFromCategoryName(supabase, String(s.category_id));
 
     if (!kind) {
       return NextResponse.json({ error: "kind is required (failed to derive)" }, { status: 400 });
     }
 
-    // Optional debug to catch future issues instantly
     console.log("PUBLISH catalog_items", {
       id: catalogItemId,
       kind,
@@ -219,7 +217,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       .upsert(
         {
           id: catalogItemId,
-          kind, // ✅ FIX: REQUIRED + must satisfy catalog_items_kind_chk
+          kind, // ✅ FIX: REQUIRED
 
           name: s.name,
           category_id: s.category_id,
@@ -273,7 +271,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
       if (minifigs.length) {
         // Upsert minifigs into master table
-        // We assume MINIFIGS_COL_NUMBER is unique or has a unique index.
         const minifigUpserts = minifigs
           .map((m: any) => {
             const number = m?.minifigNumber ?? m?.number ?? null;
@@ -295,7 +292,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
           if (upM.error) throw upM.error;
         }
 
-        // Fetch IDs for the minifigs we just upserted (so we can write join rows)
+        // Fetch IDs for the minifigs we just upserted
         const nums = minifigUpserts.map((r: any) => r[MINIFIGS_COL_NUMBER]);
         const gotM = await supabase
           .from(MINIFIGS_TABLE)
@@ -332,7 +329,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
           if (insLinks.error) throw insLinks.error;
         }
 
-        // Optional: minifig photos if Brickset provides an image per minifig
+        // Optional: minifig photos
         const photoRows = minifigs
           .map((m: any) => {
             const number = String(m?.minifigNumber ?? m?.number ?? "").trim();
