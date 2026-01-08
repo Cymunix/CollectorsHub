@@ -13,16 +13,12 @@ function Badge({ children }: { children: React.ReactNode }) {
   );
 }
 
-function getConditionLabel(item: CollectionCardModel): string {
+function safeConditionLabel(condition: any): string {
   try {
-    const c: any = (item as any)?.condition;
-    if (!c || typeof c !== "object") return "Condition not set";
-
-    // If unknown, don’t hide it – show something explicit.
-    if (c.mode === "unknown") return "Condition not set";
-
-    const label = formatConditionForCard(c);
-    return typeof label === "string" && label.trim().length ? label : "Condition not set";
+    if (!condition || typeof condition !== "object") return "Condition not set";
+    if (condition.mode === "unknown") return "Condition not set";
+    const s = formatConditionForCard(condition);
+    return typeof s === "string" && s.trim().length ? s : "Condition not set";
   } catch {
     return "Condition not set";
   }
@@ -33,9 +29,10 @@ export default function CollectionCard({ item }: { item: CollectionCardModel }) 
   const photoUrl = (item as any)?.photoUrl ?? null;
 
   const copies = Number((item as any)?.copiesCount ?? 0) || 0;
-
   const isMinifig = (item as any)?.kind === "minifig" || (item as any)?.entity === "minifig";
-  const conditionLabel = getConditionLabel(item);
+
+  const conditionObj = (item as any)?.condition;
+  const conditionLabel = safeConditionLabel(conditionObj);
 
   return (
     <Link
@@ -59,20 +56,21 @@ export default function CollectionCard({ item }: { item: CollectionCardModel }) 
         <div className="absolute top-2 left-2 flex gap-2">
           {copies > 0 ? <Badge>{copies} {copies === 1 ? "copy" : "copies"}</Badge> : null}
           {isMinifig ? <Badge>Minifig</Badge> : null}
-          {(item as any)?.condition?.mode === "graded" ? <Badge>Graded</Badge> : null}
+          {conditionObj?.mode === "graded" ? <Badge>Graded</Badge> : null}
         </div>
       </div>
 
       <div className="p-3">
         <div className="text-sm font-semibold text-gray-900 line-clamp-2">{name}</div>
 
-        {/* ✅ Always show a condition line (no silent blank UI) */}
+        {/* ✅ Always show a condition label */}
         <div className="mt-1 text-xs font-semibold text-gray-800">{conditionLabel}</div>
 
-        {/* Optional: keep the “Included minifig” hint without hiding condition */}
-        {isMinifig ? (
-          <div className="mt-1 text-[11px] text-gray-600">Included minifig</div>
-        ) : null}
+        {/* ✅ DEBUG: shows what condition object actually is */}
+        <div className="mt-1 text-[10px] text-gray-500 break-words">
+          <span className="font-semibold">debug condition:</span>{" "}
+          {conditionObj ? JSON.stringify(conditionObj) : "null/undefined"}
+        </div>
 
         <div className="mt-2 flex items-center justify-between">
           <div className="text-[11px] text-gray-500">View details</div>
