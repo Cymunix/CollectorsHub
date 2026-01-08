@@ -54,8 +54,6 @@ export default function CollectionItemPage() {
       setIsMinifig(false);
 
       try {
-        // ✅ Source of truth should be catalog_items.kind.
-        // catalog_minifigs is just a helper table; don’t treat user join tables as type checks.
         const metaRes = await supabase
           .from("catalog_items")
           .select("id,name,kind")
@@ -71,32 +69,10 @@ export default function CollectionItemPage() {
         }
 
         const row = metaRes.data as { id: string; name: string | null; kind: string | null };
-        const nextMeta: CatalogMeta = { id: row.id, name: row.name ?? null, kind: row.kind ?? null };
-        setMeta(nextMeta);
 
-        // If kind explicitly says minifig, we’re done.
-        if ((row.kind ?? "").toLowerCase() === "minifig") {
-          setIsMinifig(true);
-          setLoading(false);
-          return;
-        }
+        setMeta({ id: row.id, name: row.name ?? null, kind: row.kind ?? null });
+        setIsMinifig((row.kind ?? "").toLowerCase() === "minifig");
 
-        // Fallback (only if your DB hasn’t fully migrated to using kind consistently):
-        const mfRes = await supabase
-          .from("catalog_minifigs")
-          .select("id")
-          .eq("catalog_item_id", catalogItemId)
-          .limit(1);
-
-        if (cancelled) return;
-
-        if (mfRes.error) {
-          setErr(mfRes.error.message);
-          setLoading(false);
-          return;
-        }
-
-        setIsMinifig((mfRes.data ?? []).length > 0);
         setLoading(false);
       } catch (e: any) {
         if (cancelled) return;
