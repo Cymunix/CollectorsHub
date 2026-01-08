@@ -29,6 +29,25 @@ function makeRowsFromMap(map: Map<string, { name: string; count: number }>): Cou
     .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }
 
+function getConditionBucket(c: any): { key: string; name: string; mode: "graded" | "raw" | "unknown" } {
+  const cond = c?.condition;
+  const mode = (cond?.mode as string | undefined) ?? "unknown";
+
+  if (mode === "graded") return { key: "graded", name: "Graded", mode: "graded" };
+
+  if (mode === "raw") {
+    // your normalised mapping uses tier10 in raw.score (1–10)
+    const score = Number(cond?.raw?.score);
+    if (!Number.isFinite(score)) return { key: "raw_unknown", name: "Raw (unknown)", mode: "raw" };
+
+    if (score <= 4) return { key: "raw_1_4", name: "Raw (1–4)", mode: "raw" };
+    if (score <= 7) return { key: "raw_5_7", name: "Raw (5–7)", mode: "raw" };
+    return { key: "raw_8_10", name: "Raw (8–10)", mode: "raw" };
+  }
+
+  return { key: "unknown", name: "Unknown", mode: "unknown" };
+}
+
 export default function RightCollectionPanel(p: Props) {
   const focusLabel = useMemo(() => {
     const parts: string[] = [];
@@ -64,13 +83,10 @@ export default function RightCollectionPanel(p: Props) {
   const countsByCondition = useMemo<CountRow[]>(() => {
     const m = new Map<string, { name: string; count: number }>();
     for (const c of p.cards) {
-      const mode = (c as any)?.condition?.mode as string | undefined;
-      const key = mode ? mode : "unknown";
-      const name = key === "graded" ? "Graded" : key === "raw" ? "Raw" : "Unknown";
-
-      const prev = m.get(key) ?? { name, count: 0 };
+      const b = getConditionBucket(c as any);
+      const prev = m.get(b.key) ?? { name: b.name, count: 0 };
       prev.count += 1;
-      m.set(key, prev);
+      m.set(b.key, prev);
     }
     return makeRowsFromMap(m);
   }, [p.cards]);
@@ -88,6 +104,13 @@ export default function RightCollectionPanel(p: Props) {
     }
     return makeRowsFromMap(m);
   }, [p.cards]);
+
+  const isConditionActive = (id: string) => {
+    // Your filter only supports graded/raw/all. So:
+    if (p.filters.graded === "graded") return id === "graded";
+    if (p.filters.graded === "raw") return id.startsWith("raw_");
+    return false;
+  };
 
   return (
     <div className="rounded-2xl border bg-white p-4 shadow-sm lg:sticky lg:top-24">
@@ -164,10 +187,13 @@ export default function RightCollectionPanel(p: Props) {
               <li key={r.id}>
                 <button
                   type="button"
-                  className="w-full rounded-lg px-2 py-1 text-left text-xs hover:bg-gray-50"
+                  className={`w-full rounded-lg px-2 py-1 text-left text-xs hover:bg-gray-50 ${
+                    isConditionActive(r.id) ? "bg-gray-50 font-semibold" : ""
+                  }`}
                   onClick={() => {
+                    // Your Filters only support graded/raw/all:
                     if (r.id === "graded") p.setFilters({ ...p.filters, graded: "graded" });
-                    else if (r.id === "raw") p.setFilters({ ...p.filters, graded: "raw" });
+                    else if (r.id.startsWith("raw_")) p.setFilters({ ...p.filters, graded: "raw" });
                     else p.setFilters({ ...p.filters, graded: "all" }); // unknown -> all
                   }}
                 >
@@ -194,7 +220,12 @@ export default function RightCollectionPanel(p: Props) {
               <li key={r.id}>
                 <button
                   type="button"
-                  className="w-full rounded-lg px-2 py-1 text-left text-xs hover:bg-gray-50"
+                  className={`w-full rounded-lg px-2 py-1 text-left text-xs hover:bg-gray-50 ${
+                    (p.filters.forSale === "for_sale" && r.id === "for_sale") ||
+                    (p.filters.forSale === "not_for_sale" && r.id === "not_for_sale")
+                      ? "bg-gray-50 font-semibold"
+                      : ""
+                  }`}
                   onClick={() => {
                     if (r.id === "for_sale") p.setFilters({ ...p.filters, forSale: "for_sale" });
                     else if (r.id === "not_for_sale") p.setFilters({ ...p.filters, forSale: "not_for_sale" });
