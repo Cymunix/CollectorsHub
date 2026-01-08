@@ -15,6 +15,10 @@ import type { CollectionCardModel } from "../_lib/types";
 type SortKey = "name" | "copies";
 type TabKey = "items" | "minifigs" | "insights";
 
+type Props = {
+  onRequireAuth?: () => void;
+};
+
 const MinifigsScreen = dynamic(() => import("./minifigs/MinifigsScreen"), {
   ssr: false,
   loading: () => (
@@ -57,7 +61,113 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([p, timeout]).finally(() => clearTimeout(t));
 }
 
-export default function CollectionScreen() {
+function isLikelyAuthError(e: any) {
+  const msg = String(e?.message ?? e ?? "").toLowerCase();
+  return (
+    msg.includes("jwt") ||
+    msg.includes("not authenticated") ||
+    msg.includes("not authorized") ||
+    msg.includes("permission denied") ||
+    msg.includes("auth") ||
+    msg.includes("login") ||
+    msg.includes("sign in")
+  );
+}
+
+function RightCollectionPanel({
+  loading,
+  err,
+  summary,
+}: {
+  loading: boolean;
+  err: string | null;
+  summary: {
+    uniqueItems: number;
+    totalCopies: number;
+    gradedItems: number;
+    duplicates: number;
+    unknownCondition: number;
+  };
+}) {
+  return (
+    <div className="lg:sticky lg:top-24 space-y-4">
+      <div className="rounded-2xl border bg-white p-4 shadow-sm">
+        <div className="text-sm font-semibold text-[#0F172A]">Quick actions</div>
+
+        <div className="mt-3 grid gap-2">
+          <Link
+            href="/catalog"
+            className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+          >
+            Add items
+          </Link>
+
+          <button
+            type="button"
+            disabled
+            className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 opacity-60"
+            title="Coming next: export"
+          >
+            Export CSV
+          </button>
+
+          <button
+            type="button"
+            disabled
+            className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 opacity-60"
+            title="Coming next: bulk edit"
+          >
+            Bulk edit
+          </button>
+        </div>
+
+        {err ? <div className="mt-3 text-xs text-red-600">{err}</div> : null}
+      </div>
+
+      <div className="rounded-2xl border bg-white p-4 shadow-sm">
+        <div className="text-sm font-semibold text-[#0F172A]">Summary</div>
+
+        {loading ? (
+          <div className="mt-2 text-xs text-gray-500">Loading…</div>
+        ) : (
+          <dl className="mt-3 space-y-2 text-sm">
+            <div className="flex items-center justify-between">
+              <dt className="text-gray-600">Unique items</dt>
+              <dd className="font-semibold">{summary.uniqueItems}</dd>
+            </div>
+            <div className="flex items-center justify-between">
+              <dt className="text-gray-600">Total copies</dt>
+              <dd className="font-semibold">{summary.totalCopies}</dd>
+            </div>
+            <div className="flex items-center justify-between">
+              <dt className="text-gray-600">Graded items</dt>
+              <dd className="font-semibold">{summary.gradedItems}</dd>
+            </div>
+            <div className="flex items-center justify-between">
+              <dt className="text-gray-600">Duplicates</dt>
+              <dd className="font-semibold">{summary.duplicates}</dd>
+            </div>
+            <div className="flex items-center justify-between">
+              <dt className="text-gray-600">Unknown condition</dt>
+              <dd className="font-semibold">{summary.unknownCondition}</dd>
+            </div>
+          </dl>
+        )}
+      </div>
+
+      <div className="rounded-2xl border bg-white p-4 shadow-sm">
+        <div className="text-sm font-semibold text-[#0F172A]">Next</div>
+        <div className="mt-2 text-sm text-gray-600">
+          If you want “Total paid / Missing paid price” here, you need the collection rows to expose paid price fields in
+          <code className="mx-1 rounded bg-gray-50 px-1 py-0.5 text-xs">CollectionCardModel</code>
+          (or load them separately).
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function CollectionScreen({ onRequireAuth }: Props) {
   const [cards, setCards] = useState<CollectionCardModel[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -86,7 +196,16 @@ export default function CollectionScreen() {
         if (!cancelled) setCards(data);
       } catch (e: any) {
         console.error("CollectionScreen load error:", e);
-        if (!cancelled) setErr(e?.message ?? "Failed to load collection.");
+
+        if (!cancelled) {
+          const msg = e?.message ?? "Failed to load collection.";
+          setErr(msg);
+
+          // If auth is the problem, open the AuthModal via page.tsx
+          if (isLikelyAuthError(e)) {
+            onRequireAuth?.();
+          }
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -96,7 +215,7 @@ export default function CollectionScreen() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [onRequireAuth]);
 
   const filtersActive = useMemo(() => {
     return (
@@ -157,6 +276,25 @@ export default function CollectionScreen() {
     return undefined;
   }, [loading, cards.length, filtered.length]);
 
+  const rightSummary = useMemo(() => {
+    const uniqueItems = filtered.length;
+
+    const totalCopies = filtered.reduce((acc, c) => acc + (Number(c?.copiesCount) || 0), 0);
+    const duplicates = Math.max(0, totalCopies - uniqueItems);
+
+    const gradedItems = filtered.reduce((acc, c) => acc + (c?.condition?.mode === "graded" ? 1 : 0), 0);
+
+    const unknownCondition = filtered.reduce((acc, c) => {
+      // If condition missing entirely, treat as unknown
+      if (!c?.condition) return acc + 1;
+      // If it’s graded but missing details, still not "unknown" from a UX POV
+      // If you have a better "unknown" signal in your model, use it here.
+      return acc;
+    }, 0);
+
+    return { uniqueItems, totalCopies, gradedItems, duplicates, unknownCondition };
+  }, [filtered]);
+
   return (
     <section className="space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -211,7 +349,8 @@ export default function CollectionScreen() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[260px_1fr]">
+      {/* 3-column desktop layout: Filters | Main | Right Panel */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[260px_1fr_320px]">
         <aside className="rounded-2xl border bg-white p-4 h-fit sticky top-24">
           <div className="flex items-center justify-between mb-3">
             <div className="text-lg font-semibold text-gray-900">Filters</div>
@@ -235,6 +374,10 @@ export default function CollectionScreen() {
             <CollectionInsightsTab cards={cards} loading={loading} />
           )}
         </div>
+
+        <aside>
+          <RightCollectionPanel loading={loading} err={err} summary={rightSummary} />
+        </aside>
       </div>
     </section>
   );
