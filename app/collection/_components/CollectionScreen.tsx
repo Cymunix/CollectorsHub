@@ -45,7 +45,7 @@ function TabButton({
       type="button"
       onClick={onClick}
       className={[
-        "px-4 py-2 rounded-full text-sm font-semibold border transition",
+        "px-3 py-1.5 rounded-full text-sm font-semibold border transition",
         active
           ? "bg-black text-white border-black"
           : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50",
@@ -153,7 +153,6 @@ export default function CollectionScreen({ onRequireAuth }: Props) {
       });
     }
 
-    // ✅ IMPORTANT: your Filters type is graded: "all" | "graded" | "raw"
     if (filters.graded !== "all") {
       const wantGraded = filters.graded === "graded";
       list = list.filter((c) => {
@@ -186,7 +185,8 @@ export default function CollectionScreen({ onRequireAuth }: Props) {
   }, [loading, cards.length, filtered.length]);
 
   return (
-    <section className="space-y-5">
+    <section className="space-y-4">
+      {/* Header row */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">My Collection</h1>
@@ -219,9 +219,11 @@ export default function CollectionScreen({ onRequireAuth }: Props) {
         </div>
       </div>
 
+      {/* Summary row */}
       <CollectionSummary allCards={cards} filteredCards={filtered} loading={loading} />
 
-      <div className="flex items-center gap-2">
+      {/* Tabs */}
+      <div className="flex flex-wrap items-center gap-2">
         <TabButton active={tab === "items"} onClick={() => setTab("items")}>
           Items
         </TabButton>
@@ -239,11 +241,12 @@ export default function CollectionScreen({ onRequireAuth }: Props) {
         </div>
       )}
 
-      {/* 3-column desktop layout: Filters | Main | Right Panel */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[260px_1fr_320px]">
-        <aside className="rounded-2xl border bg-white p-4 h-fit sticky top-24">
-          <div className="flex items-center justify-between mb-3">
-            <div className="text-lg font-semibold text-gray-900">Filters</div>
+      {/* Layout */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[240px_1fr_340px] xl:grid-cols-[260px_1fr_360px]">
+        {/* Filters */}
+        <aside className="h-fit rounded-2xl border bg-white p-4 lg:sticky lg:top-24">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="text-base font-semibold text-gray-900">Filters</div>
             {filtersActive ? (
               <span className="text-[11px] font-semibold text-gray-500">Active</span>
             ) : null}
@@ -252,7 +255,8 @@ export default function CollectionScreen({ onRequireAuth }: Props) {
           <CollectionFilters value={filters} onChange={setFilters} />
         </aside>
 
-        <div className="space-y-4">
+        {/* Main */}
+        <div className="space-y-3 min-w-0">
           {tab === "items" ? (
             <>
               <CollectionToolbar
@@ -270,7 +274,8 @@ export default function CollectionScreen({ onRequireAuth }: Props) {
           )}
         </div>
 
-        <aside>
+        {/* Right panel */}
+        <aside className="h-fit lg:sticky lg:top-24">
           <RightCollectionPanel
             q={q}
             sort={sort}
