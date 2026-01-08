@@ -17,7 +17,7 @@ export default function CollectionPage() {
       <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
 
       <main className="mx-auto max-w-6xl px-4 pb-16 pt-6">
-        <CollectionScreen />
+        <CollectionScreen onRequireAuth={() => setAuthOpen(true)} />
       </main>
     </>
   );
