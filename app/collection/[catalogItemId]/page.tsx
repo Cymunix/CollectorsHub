@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -13,10 +13,17 @@ import MinifigDetail from "./_components/MinifigDetail";
 
 type CatalogMeta = { id: string; name: string | null };
 
+function asSingleParam(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (Array.isArray(v) && typeof v[0] === "string") return v[0];
+  return "";
+}
+
 export default function CollectionItemPage() {
   const params = useParams();
   const router = useRouter();
-  const catalogItemId = String((params as any)?.catalogItemId ?? "");
+
+  const catalogItemId = useMemo(() => asSingleParam((params as any)?.catalogItemId), [params]);
 
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -30,34 +37,44 @@ export default function CollectionItemPage() {
     let cancelled = false;
 
     async function load() {
-      try {
-        if (!catalogItemId) {
-          setLoading(false);
-          return;
-        }
-
-        setLoading(true);
+      if (!catalogItemId) {
+        setMeta(null);
+        setIsMinifig(false);
         setErr(null);
+        setLoading(false);
+        return;
+      }
 
-        const metaRes = await supabase.from("catalog_items").select("id,name").eq("id", catalogItemId).single();
+      setLoading(true);
+      setErr(null);
+      setMeta(null);
+      setIsMinifig(false);
+
+      try {
+        // Run both queries in parallel
+        const [metaRes, mfRes] = await Promise.all([
+          supabase.from("catalog_items").select("id,name").eq("id", catalogItemId).single(),
+          supabase.from("catalog_minifigs").select("id").eq("catalog_item_id", catalogItemId).limit(1),
+        ]);
 
         if (cancelled) return;
 
         if (metaRes.error) {
           setErr(metaRes.error.message);
-          setMeta(null);
-          setIsMinifig(false);
           setLoading(false);
           return;
         }
 
         setMeta({ id: metaRes.data.id, name: metaRes.data.name ?? null });
 
-        const mfRes = await supabase.from("catalog_minifigs").select("id").eq("catalog_item_id", catalogItemId).limit(1);
+        // If minifig query errors, surface it instead of silently hiding it
+        if (mfRes.error) {
+          setErr(mfRes.error.message);
+          setLoading(false);
+          return;
+        }
 
-        if (cancelled) return;
-
-        setIsMinifig(!mfRes.error && (mfRes.data ?? []).length > 0);
+        setIsMinifig((mfRes.data ?? []).length > 0);
         setLoading(false);
       } catch (e: any) {
         if (cancelled) return;
