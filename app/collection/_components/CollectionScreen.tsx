@@ -4,11 +4,14 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
+
 import CollectionToolbar from "./CollectionToolbar";
 import CollectionGrid from "./CollectionGrid";
 import CollectionInsightsTab from "./CollectionInsightsTab";
 import CollectionFilters, { type Filters } from "./CollectionFilters";
 import CollectionSummary from "./CollectionSummary";
+import RightCollectionPanel from "./RightCollectionPanel";
+
 import { loadCollectionCards } from "../_lib/collectionRepo";
 import type { CollectionCardModel } from "../_lib/types";
 
@@ -74,99 +77,6 @@ function isLikelyAuthError(e: any) {
   );
 }
 
-function RightCollectionPanel({
-  loading,
-  err,
-  summary,
-}: {
-  loading: boolean;
-  err: string | null;
-  summary: {
-    uniqueItems: number;
-    totalCopies: number;
-    gradedItems: number;
-    duplicates: number;
-    unknownCondition: number;
-  };
-}) {
-  return (
-    <div className="lg:sticky lg:top-24 space-y-4">
-      <div className="rounded-2xl border bg-white p-4 shadow-sm">
-        <div className="text-sm font-semibold text-[#0F172A]">Quick actions</div>
-
-        <div className="mt-3 grid gap-2">
-          <Link
-            href="/catalog"
-            className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-          >
-            Add items
-          </Link>
-
-          <button
-            type="button"
-            disabled
-            className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 opacity-60"
-            title="Coming next: export"
-          >
-            Export CSV
-          </button>
-
-          <button
-            type="button"
-            disabled
-            className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 opacity-60"
-            title="Coming next: bulk edit"
-          >
-            Bulk edit
-          </button>
-        </div>
-
-        {err ? <div className="mt-3 text-xs text-red-600">{err}</div> : null}
-      </div>
-
-      <div className="rounded-2xl border bg-white p-4 shadow-sm">
-        <div className="text-sm font-semibold text-[#0F172A]">Summary</div>
-
-        {loading ? (
-          <div className="mt-2 text-xs text-gray-500">Loading…</div>
-        ) : (
-          <dl className="mt-3 space-y-2 text-sm">
-            <div className="flex items-center justify-between">
-              <dt className="text-gray-600">Unique items</dt>
-              <dd className="font-semibold">{summary.uniqueItems}</dd>
-            </div>
-            <div className="flex items-center justify-between">
-              <dt className="text-gray-600">Total copies</dt>
-              <dd className="font-semibold">{summary.totalCopies}</dd>
-            </div>
-            <div className="flex items-center justify-between">
-              <dt className="text-gray-600">Graded items</dt>
-              <dd className="font-semibold">{summary.gradedItems}</dd>
-            </div>
-            <div className="flex items-center justify-between">
-              <dt className="text-gray-600">Duplicates</dt>
-              <dd className="font-semibold">{summary.duplicates}</dd>
-            </div>
-            <div className="flex items-center justify-between">
-              <dt className="text-gray-600">Unknown condition</dt>
-              <dd className="font-semibold">{summary.unknownCondition}</dd>
-            </div>
-          </dl>
-        )}
-      </div>
-
-      <div className="rounded-2xl border bg-white p-4 shadow-sm">
-        <div className="text-sm font-semibold text-[#0F172A]">Next</div>
-        <div className="mt-2 text-sm text-gray-600">
-          If you want “Total paid / Missing paid price” here, you need the collection rows to expose paid price fields in
-          <code className="mx-1 rounded bg-gray-50 px-1 py-0.5 text-xs">CollectionCardModel</code>
-          (or load them separately).
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export default function CollectionScreen({ onRequireAuth }: Props) {
   const [cards, setCards] = useState<CollectionCardModel[]>([]);
   const [loading, setLoading] = useState(true);
@@ -190,9 +100,7 @@ export default function CollectionScreen({ onRequireAuth }: Props) {
         setLoading(true);
         setErr(null);
 
-        // If this never resolves, we want an on-screen error, not a forever spinner.
         const data = await withTimeout(loadCollectionCards(), 12000, "loadCollectionCards()");
-
         if (!cancelled) setCards(data);
       } catch (e: any) {
         console.error("CollectionScreen load error:", e);
@@ -201,7 +109,6 @@ export default function CollectionScreen({ onRequireAuth }: Props) {
           const msg = e?.message ?? "Failed to load collection.";
           setErr(msg);
 
-          // If auth is the problem, open the AuthModal via page.tsx
           if (isLikelyAuthError(e)) {
             onRequireAuth?.();
           }
@@ -246,11 +153,13 @@ export default function CollectionScreen({ onRequireAuth }: Props) {
       });
     }
 
+    // ✅ IMPORTANT: your Filters type is graded: "all" | "graded" | "raw"
     if (filters.graded !== "all") {
-      const want = filters.graded === "graded";
+      const wantGraded = filters.graded === "graded";
       list = list.filter((c) => {
-        const isGraded = c?.condition?.mode === "graded";
-        return want ? isGraded : !isGraded;
+        const mode = c?.condition?.mode; // "graded" | "raw" | undefined
+        const isGraded = mode === "graded";
+        return wantGraded ? isGraded : !isGraded;
       });
     }
 
@@ -275,25 +184,6 @@ export default function CollectionScreen({ onRequireAuth }: Props) {
     if (filtered.length === 0) return "no_results";
     return undefined;
   }, [loading, cards.length, filtered.length]);
-
-  const rightSummary = useMemo(() => {
-    const uniqueItems = filtered.length;
-
-    const totalCopies = filtered.reduce((acc, c) => acc + (Number(c?.copiesCount) || 0), 0);
-    const duplicates = Math.max(0, totalCopies - uniqueItems);
-
-    const gradedItems = filtered.reduce((acc, c) => acc + (c?.condition?.mode === "graded" ? 1 : 0), 0);
-
-    const unknownCondition = filtered.reduce((acc, c) => {
-      // If condition missing entirely, treat as unknown
-      if (!c?.condition) return acc + 1;
-      // If it’s graded but missing details, still not "unknown" from a UX POV
-      // If you have a better "unknown" signal in your model, use it here.
-      return acc;
-    }, 0);
-
-    return { uniqueItems, totalCopies, gradedItems, duplicates, unknownCondition };
-  }, [filtered]);
 
   return (
     <section className="space-y-5">
@@ -365,7 +255,12 @@ export default function CollectionScreen({ onRequireAuth }: Props) {
         <div className="space-y-4">
           {tab === "items" ? (
             <>
-              <CollectionToolbar query={q} onQueryChange={setQ} sort={sort} onSortChange={setSort} />
+              <CollectionToolbar
+                query={q}
+                onQueryChange={setQ}
+                sort={sort}
+                onSortChange={setSort}
+              />
               <CollectionGrid items={filtered} loading={loading} emptyHint={emptyHint} />
             </>
           ) : tab === "minifigs" ? (
@@ -376,7 +271,20 @@ export default function CollectionScreen({ onRequireAuth }: Props) {
         </div>
 
         <aside>
-          <RightCollectionPanel loading={loading} err={err} summary={rightSummary} />
+          <RightCollectionPanel
+            q={q}
+            sort={sort}
+            tab={tab}
+            filters={filters}
+            setFilters={setFilters}
+            clearAll={() => {
+              setQ("");
+              setFilters({ kind: "all", graded: "all", forSale: "all" });
+            }}
+            loading={loading}
+            err={err}
+            cards={filtered}
+          />
         </aside>
       </div>
     </section>
