@@ -141,9 +141,6 @@ function legacyBuildingBlocksToTier10(condition_json: any): number | null {
 /**
  * ✅ Normalize whatever we have (legacy columns, legacy meta blobs, new meta blobs)
  * into NEW pricingEngine ConditionMeta: { status, flags }
- *
- * Important: we preserve legacy grade by stuffing it into a flag like "grade:good"
- * so metaToTier10 can still do a decent display mapping.
  */
 function normalizeMetaFromRow(row: any): ConditionMeta | null {
   // Prefer explicit columns if you added them
@@ -206,14 +203,9 @@ function normalizeMetaFromRow(row: any): ConditionMeta | null {
   return null;
 }
 
-/**
- * Main mapping for Collection cards (DISPLAY ONLY):
- * - Now that meta is {status, flags}, map it to a tier10 for display
- */
 function metaToTier10(meta: ConditionMeta): number {
   const status = String(meta?.status ?? "").toLowerCase().trim();
 
-  // If we preserved a legacy grade flag, use it
   const gradeFlag = (meta?.flags ?? []).find((f) => String(f).toLowerCase().startsWith("grade:"));
   const grade = gradeFlag ? String(gradeFlag.split(":")[1] ?? "").toLowerCase().trim() : "";
 
@@ -227,7 +219,6 @@ function metaToTier10(meta: ConditionMeta): number {
 
   let t = baseByGrade[grade] ?? 8;
 
-  // Status nudges (simple + consistent)
   if (status === "sealed") t = Math.min(10, Math.max(t, 9));
   if (status === "complete") t = Math.max(1, t);
   if (status === "incomplete") t = Math.max(1, Math.min(t, 6));
@@ -238,27 +229,22 @@ function metaToTier10(meta: ConditionMeta): number {
 }
 
 function mapConditionFromRow(row: any): ConditionInfo {
-  // 1) graded (new schema or legacy columns)
   const gradedInfo = parseGradedFromRow(row);
   if (gradedInfo) return gradedInfo;
 
-  // 2) Path 2: meta if present (columns or json)
   const meta = normalizeMetaFromRow(row);
   if (meta) {
     return { mode: "raw", raw: { score: metaToTier10(meta) } };
   }
 
-  // 3) preferred: condition_score (0–100) column
   const score100 = row?.condition_score ?? row?.conditionScore ?? null;
   if (score100 !== null && score100 !== undefined && score100 !== "") {
     return { mode: "raw", raw: { score: score100ToTier10(score100, 8) } };
   }
 
-  // 4) legacy building_blocks JSON fallback
   const bbTier = legacyBuildingBlocksToTier10(row?.condition_json);
   if (bbTier != null) return { mode: "raw", raw: { score: bbTier } };
 
-  // 5) direct JSON fallback (old shapes)
   const obj = tryParseJSON(row?.condition_json);
   const direct =
     obj?.score ??
@@ -274,11 +260,10 @@ function mapConditionFromRow(row: any): ConditionInfo {
 }
 
 function pickRepresentativeCondition(copies: any[]): ConditionInfo {
-  const sorted = [...copies].sort((a, b) =>
+  const sorted = [...(copies ?? [])].sort((a, b) =>
     String(a.created_at ?? "") > String(b.created_at ?? "") ? -1 : 1
   );
 
-  // Prefer graded copy if any
   const gradedRow = sorted.find((r) => {
     const obj = tryParseJSON((r as any)?.condition_json);
     const data = obj?.data ?? null;
@@ -314,17 +299,17 @@ function computeForSale(rows: any[]): boolean | null {
 /* -------------------- safe selects -------------------- */
 
 async function safeSelectCopies() {
-  // Newer schema: condition_meta columns + condition_score may or may not exist.
   const res1 = await supabase
     .from(TABLE_COPIES)
     .select(
       "id,catalog_item_id,created_at,quantity,condition_json,condition_score,condition_state,condition_grade,condition_flags,for_sale,graded,grade"
     )
+    // If you want to *force* per-user filtering (instead of relying purely on RLS),
+    // add `.eq("user_id", userId)` and thread userId through.
     .order("created_at", { ascending: false });
 
   if (!res1.error) return res1;
 
-  // Schema without meta columns
   const res2 = await supabase
     .from(TABLE_COPIES)
     .select("id,catalog_item_id,created_at,quantity,condition_json,condition_score,for_sale,graded,grade")
@@ -332,7 +317,6 @@ async function safeSelectCopies() {
 
   if (!res2.error) return res2;
 
-  // Old schema without condition_score
   const res3 = await supabase
     .from(TABLE_COPIES)
     .select("id,catalog_item_id,created_at,quantity,condition_json,for_sale,graded,grade")
@@ -340,7 +324,6 @@ async function safeSelectCopies() {
 
   if (!res3.error) return res3;
 
-  // Oldest schema (no for_sale/graded/grade)
   const res4 = await supabase
     .from(TABLE_COPIES)
     .select("id,catalog_item_id,created_at,quantity,condition_json")
@@ -394,14 +377,16 @@ export async function loadCollectionCards(): Promise<CollectionCardModel[]> {
     const rows = byCatalogItem.get(id) ?? [];
     const kind = (item as any)?.kind ?? null;
 
+    const condition = pickRepresentativeCondition(rows) ?? ({ mode: "unknown" } as any);
+
     return {
       entity: "catalog_item",
       catalogItemId: id,
       href: `/collection/${id}`,
       name: item?.name ?? "Unknown Item",
-      photoUrl: item?.image_url ?? null,
+      photoUrl: (item as any)?.image_url ?? null,
       copiesCount: sumQuantity(rows),
-      condition: pickRepresentativeCondition(rows),
+      condition,
       kind,
       forSale: computeForSale(rows),
     };
@@ -430,7 +415,6 @@ export async function loadCollectionCards(): Promise<CollectionCardModel[]> {
   }
 
   const minifigIds = Array.from(minifigQty.keys());
-
   let minifigCards: CollectionCardModel[] = [];
 
   if (minifigIds.length > 0) {
@@ -447,8 +431,8 @@ export async function loadCollectionCards(): Promise<CollectionCardModel[]> {
 
     minifigCards = minifigIds.map((mid) => {
       const mf = mfMap.get(mid);
-      const num = String(mf?.minifig_number ?? "").trim();
-      const nm = String(mf?.name ?? "").trim();
+      const num = String((mf as any)?.minifig_number ?? "").trim();
+      const nm = String((mf as any)?.name ?? "").trim();
 
       const displayName = nm || num ? `${nm || "Minifig"}${num ? ` (${num})` : ""}` : "Minifig";
 
@@ -457,7 +441,7 @@ export async function loadCollectionCards(): Promise<CollectionCardModel[]> {
         catalogItemId: mid,
         href: `/minifigs/${mid}`,
         name: displayName,
-        photoUrl: mf?.image_url ?? null,
+        photoUrl: (mf as any)?.image_url ?? null,
         copiesCount: minifigQty.get(mid) ?? 0,
         condition: { mode: "unknown" },
         kind: "minifig",
