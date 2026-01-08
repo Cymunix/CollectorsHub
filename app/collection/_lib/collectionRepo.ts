@@ -29,14 +29,6 @@ function tryParseJSON(v: any): any | null {
   }
 }
 
-/** 0–100 -> 1–10 (display only) */
-function score100ToTier10(score100: any, fallbackTier10 = 8) {
-  const n = Number(score100);
-  if (!Number.isFinite(n)) return clamp1to10(fallbackTier10);
-  const t = Math.round(Math.max(0, Math.min(100, n)) / 10);
-  return clamp1to10(t);
-}
-
 function uniq(flags: string[]) {
   return Array.from(new Set((flags || []).map(String).filter(Boolean)));
 }
@@ -44,15 +36,11 @@ function uniq(flags: string[]) {
 function toStatusFromLegacyState(stateRaw: any, flags: string[]): ConditionStatus {
   const s = String(stateRaw ?? "").toLowerCase().trim();
 
-  // flags win
   if (flags.includes("for_parts") || s.includes("for_parts")) return "for_parts";
   if (flags.some((f) => f.toLowerCase().startsWith("graded:")) || s === "graded") return "graded";
   if (s === "sealed" || s.includes("sealed")) return "sealed";
-
-  // old states
   if (s.includes("incomplete")) return "incomplete";
 
-  // open_complete, loose, empty -> treat as complete for meta
   return "complete";
 }
 
@@ -117,8 +105,7 @@ function parseGradedFromRow(row: any): ConditionInfo | null {
 }
 
 /**
- * Legacy LEGO fallback: if you still have old JSON with building_blocks.box.score etc.
- * This is ONLY for old rows while migrating.
+ * Legacy LEGO fallback for numeric score ONLY (used only if present).
  */
 function legacyBuildingBlocksToTier10(condition_json: any): number | null {
   const obj = tryParseJSON(condition_json);
@@ -131,7 +118,6 @@ function legacyBuildingBlocksToTier10(condition_json: any): number | null {
 
   if (Number.isFinite(Number(boxScore))) scores.push(Number(boxScore));
   if (Number.isFinite(Number(instScore))) scores.push(Number(instScore));
-
   if (scores.length === 0) return null;
 
   const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
@@ -139,12 +125,13 @@ function legacyBuildingBlocksToTier10(condition_json: any): number | null {
 }
 
 /**
- * ✅ Normalize whatever we have (condition_meta jsonb, legacy columns, meta blobs)
- * into pricingEngine ConditionMeta: { status, flags }
+ * ✅ Read meta from:
+ * - condition_meta jsonb column (primary)
+ * - legacy columns
+ * - condition_json blobs
  */
 function normalizeMetaFromRow(row: any): ConditionMeta | null {
-  // ✅ FIRST: condition_meta jsonb column (your screenshot)
-  // Expected: { "flags": [], "status": "complete" }
+  // PRIMARY: condition_meta jsonb column (your screenshot)
   const cm = row?.condition_meta ?? null;
   if (cm && typeof cm === "object") {
     const status = String((cm as any).status ?? "complete").toLowerCase().trim() as any;
@@ -158,7 +145,7 @@ function normalizeMetaFromRow(row: any): ConditionMeta | null {
     return { status, flags };
   }
 
-  // Legacy explicit columns (if you have them)
+  // Legacy explicit columns
   const legacyState = row?.condition_state ?? null;
   const legacyGrade = row?.condition_grade ?? null;
   const legacyFlagsRaw = row?.condition_flags ?? null;
@@ -168,109 +155,68 @@ function normalizeMetaFromRow(row: any): ConditionMeta | null {
     const flags = uniq(Array.isArray(legacyFlagsRaw) ? legacyFlagsRaw.map(String) : []);
     const gradeStr = String(legacyGrade ?? "").trim().toLowerCase();
     if (gradeStr) flags.push(`grade:${gradeStr}`);
-
     const status = toStatusFromLegacyState(legacyState, flags);
     return { status, flags: uniq(flags) };
   }
 
-  // Otherwise try condition_json.data.condition_meta or conditionMeta
+  // condition_json meta
   const obj = tryParseJSON(row?.condition_json);
   const data = obj?.data ?? obj ?? null;
 
   const m = data?.condition_meta ?? data?.conditionMeta ?? null;
   if (m && typeof m === "object") {
     const flags = uniq(Array.isArray((m as any).flags) ? (m as any).flags.map(String) : []);
-
-    // New shape inside meta already
-    const statusRaw = (m as any).status ?? null;
+    const statusRaw = (m as any).status ?? (m as any).state ?? null;
     if (statusRaw) {
-      const s = String(statusRaw).toLowerCase().trim();
-      return { status: (s as any), flags };
+      const status = String(statusRaw).toLowerCase().trim() as any;
+      return { status, flags };
     }
-
-    // Legacy shape inside meta
-    const st = (m as any).state ?? null;
-    const gr = (m as any).grade ?? null;
-    const gradeStr = String(gr ?? "").trim().toLowerCase();
-    if (gradeStr) flags.push(`grade:${gradeStr}`);
-
-    const status = toStatusFromLegacyState(st, flags);
-    return { status, flags: uniq(flags) };
   }
 
-  // If you store meta at top-level data (Path 2 simplified)
   if (data?.status || data?.flags) {
     const flags = uniq(Array.isArray(data?.flags) ? data.flags.map(String) : []);
     const status = String(data?.status ?? "complete").toLowerCase().trim() as any;
     return { status, flags };
   }
 
-  // Legacy top-level data (state/grade/flags)
-  if (data?.state || data?.grade || data?.flags) {
-    const flags = uniq(Array.isArray(data?.flags) ? data.flags.map(String) : []);
-    const gradeStr = String(data?.grade ?? "").trim().toLowerCase();
-    if (gradeStr) flags.push(`grade:${gradeStr}`);
-
-    const status = toStatusFromLegacyState(data?.state, flags);
-    return { status, flags: uniq(flags) };
-  }
-
   return null;
 }
 
 /**
- * Main mapping for Collection cards (DISPLAY ONLY):
- * - meta is {status, flags}, map it to a tier10 for display
+ * Main mapping:
+ * - meta.status stays status (NO numeric mapping)
+ * - numeric score ONLY used when you actually have it
  */
-function metaToTier10(meta: ConditionMeta): number {
-  const status = String(meta?.status ?? "").toLowerCase().trim();
-
-  // If we preserved a legacy grade flag, use it
-  const gradeFlag = (meta?.flags ?? []).find((f) => String(f).toLowerCase().startsWith("grade:"));
-  const grade = gradeFlag ? String(gradeFlag.split(":")[1] ?? "").toLowerCase().trim() : "";
-
-  const baseByGrade: Record<string, number> = {
-    mint: 10,
-    excellent: 9,
-    good: 8,
-    fair: 6,
-    poor: 4,
-  };
-
-  let t = baseByGrade[grade] ?? 8;
-
-  // Status nudges (simple + consistent)
-  if (status === "sealed") t = Math.min(10, Math.max(t, 9));
-  if (status === "complete") t = Math.max(1, t);
-  if (status === "incomplete") t = Math.max(1, Math.min(t, 6));
-  if (status === "for_parts") t = Math.max(1, Math.min(t, 3));
-  if (status === "graded") t = Math.min(10, Math.max(t, 9));
-
-  return clamp1to10(t);
-}
-
 function mapConditionFromRow(row: any): ConditionInfo {
-  // 1) graded (new schema or legacy columns)
+  // 1) graded
   const gradedInfo = parseGradedFromRow(row);
   if (gradedInfo) return gradedInfo;
 
-  // 2) ✅ meta from condition_meta jsonb OR json blobs
+  // 2) meta -> raw.status (no score)
   const meta = normalizeMetaFromRow(row);
   if (meta) {
-    return { mode: "raw", raw: { score: metaToTier10(meta) } };
+    return {
+      mode: "raw",
+      raw: {
+        status: meta.status,
+        flags: meta.flags,
+      },
+    } as any;
   }
 
-  // 3) preferred: condition_score (0–100) column
+  // 3) numeric score from condition_score ONLY if present
   const score100 = row?.condition_score ?? row?.conditionScore ?? null;
   if (score100 !== null && score100 !== undefined && score100 !== "") {
-    return { mode: "raw", raw: { score: score100ToTier10(score100, 8) } };
+    // convert to tier10 because UI expects 1–10 if score is present
+    const n = Number(score100);
+    const tier10 = Number.isFinite(n) ? clamp1to10(Math.round(Math.max(0, Math.min(100, n)) / 10)) : 8;
+    return { mode: "raw", raw: { score: tier10 } };
   }
 
-  // 4) legacy building_blocks JSON fallback
+  // 4) legacy numeric sources ONLY if present
   const bbTier = legacyBuildingBlocksToTier10(row?.condition_json);
   if (bbTier != null) return { mode: "raw", raw: { score: bbTier } };
 
-  // 5) direct JSON fallback (old shapes)
   const obj = tryParseJSON(row?.condition_json);
   const direct =
     obj?.score ??
@@ -290,7 +236,6 @@ function pickRepresentativeCondition(copies: any[]): ConditionInfo {
     String(a.created_at ?? "") > String(b.created_at ?? "") ? -1 : 1
   );
 
-  // Prefer graded copy if any
   const gradedRow = sorted.find((r) => {
     const obj = tryParseJSON((r as any)?.condition_json);
     const data = obj?.data ?? null;
@@ -299,7 +244,6 @@ function pickRepresentativeCondition(copies: any[]): ConditionInfo {
   });
 
   if (gradedRow) return mapConditionFromRow(gradedRow);
-
   return sorted[0] ? mapConditionFromRow(sorted[0]) : { mode: "unknown" };
 }
 
@@ -326,7 +270,7 @@ function computeForSale(rows: any[]): boolean | null {
 /* -------------------- safe selects -------------------- */
 
 async function safeSelectCopies() {
-  // ✅ include condition_meta first (your real column)
+  // ✅ include condition_meta (jsonb)
   const res0 = await supabase
     .from(TABLE_COPIES)
     .select(
@@ -336,7 +280,6 @@ async function safeSelectCopies() {
 
   if (!res0.error) return res0;
 
-  // Schema with condition_meta but without legacy meta cols
   const res1 = await supabase
     .from(TABLE_COPIES)
     .select("id,catalog_item_id,created_at,quantity,condition_json,condition_score,condition_meta,for_sale,graded,grade")
@@ -344,7 +287,6 @@ async function safeSelectCopies() {
 
   if (!res1.error) return res1;
 
-  // Schema without condition_meta but with legacy meta cols
   const res2 = await supabase
     .from(TABLE_COPIES)
     .select(
@@ -354,7 +296,6 @@ async function safeSelectCopies() {
 
   if (!res2.error) return res2;
 
-  // Schema without meta cols
   const res3 = await supabase
     .from(TABLE_COPIES)
     .select("id,catalog_item_id,created_at,quantity,condition_json,condition_score,for_sale,graded,grade")
@@ -362,7 +303,6 @@ async function safeSelectCopies() {
 
   if (!res3.error) return res3;
 
-  // Old schema without condition_score
   const res4 = await supabase
     .from(TABLE_COPIES)
     .select("id,catalog_item_id,created_at,quantity,condition_json,for_sale,graded,grade")
@@ -370,7 +310,6 @@ async function safeSelectCopies() {
 
   if (!res4.error) return res4;
 
-  // Oldest schema (no for_sale/graded/grade)
   const res5 = await supabase
     .from(TABLE_COPIES)
     .select("id,catalog_item_id,created_at,quantity,condition_json")
@@ -390,14 +329,12 @@ async function safeSelectCatalog(catalogItemIds: string[]) {
 /* -------------------- main loader -------------------- */
 
 export async function loadCollectionCards(): Promise<CollectionCardModel[]> {
-  // 1) copies (user_collection_items)
   const copiesRes = await safeSelectCopies();
   if (copiesRes.error) throw new Error(copiesRes.error.message);
 
   const copies = (copiesRes.data ?? []) as CollectionCopyRow[];
   if (copies.length === 0) return [];
 
-  // group copies by catalog_item_id
   const byCatalogItem = new Map<string, any[]>();
   for (const c of copies as any[]) {
     const k = (c as any).catalog_item_id;
@@ -410,7 +347,6 @@ export async function loadCollectionCards(): Promise<CollectionCardModel[]> {
   const catalogItemIds = Array.from(byCatalogItem.keys());
   const copyIds = copies.map((c: any) => c.id);
 
-  // 2) catalog_items for names/photos (+kind if exists)
   const catalogRes = await safeSelectCatalog(catalogItemIds);
   if (catalogRes.error) throw new Error(catalogRes.error.message);
 
@@ -418,7 +354,6 @@ export async function loadCollectionCards(): Promise<CollectionCardModel[]> {
   const catalogMap = new Map<string, CatalogItemRow>();
   for (const r of catalogRows) catalogMap.set(r.id, r);
 
-  // 3) build main item cards
   const itemCards: CollectionCardModel[] = catalogItemIds.map((id) => {
     const item = catalogMap.get(id);
     const rows = byCatalogItem.get(id) ?? [];
@@ -437,7 +372,6 @@ export async function loadCollectionCards(): Promise<CollectionCardModel[]> {
     };
   });
 
-  // 4) pull minifigs from user_collection_item_minifigs
   const ucimRes = await supabase
     .from(TABLE_UCIM)
     .select("id,user_collection_item_id,minifig_id,included,included_qty,created_at")
@@ -447,7 +381,6 @@ export async function loadCollectionCards(): Promise<CollectionCardModel[]> {
 
   const ucimRows = (ucimRes.data ?? []) as CollectionItemMinifigRow[];
 
-  // aggregate qty by minifig_id
   const minifigQty = new Map<string, number>();
   for (const r of ucimRows as any[]) {
     if (!r?.minifig_id) continue;
@@ -460,7 +393,6 @@ export async function loadCollectionCards(): Promise<CollectionCardModel[]> {
   }
 
   const minifigIds = Array.from(minifigQty.keys());
-
   let minifigCards: CollectionCardModel[] = [];
 
   if (minifigIds.length > 0) {
@@ -496,7 +428,5 @@ export async function loadCollectionCards(): Promise<CollectionCardModel[]> {
     });
   }
 
-  // 5) combine + sort
-  const combined = [...itemCards, ...minifigCards].sort((a, b) => a.name.localeCompare(b.name));
-  return combined;
+  return [...itemCards, ...minifigCards].sort((a, b) => a.name.localeCompare(b.name));
 }
