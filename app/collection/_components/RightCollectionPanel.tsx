@@ -23,7 +23,7 @@ type Props = {
   cards: CollectionCardModel[];
 };
 
-function makeRowsFromMap(map: Map<string, { name: string; count: number }>) {
+function makeRowsFromMap(map: Map<string, { name: string; count: number }>): CountRow[] {
   return Array.from(map.entries())
     .map(([id, v]) => ({ id, name: v.name, count: v.count }))
     .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
@@ -38,7 +38,7 @@ export default function RightCollectionPanel(p: Props) {
 
     // Filters
     if (p.filters.kind !== "all") parts.push(`Kind: ${p.filters.kind}`);
-    if (p.filters.graded !== "all") parts.push(p.filters.graded === "graded" ? "Graded only" : "Ungraded only");
+    if (p.filters.graded !== "all") parts.push(p.filters.graded === "graded" ? "Graded only" : "Raw only");
     if (p.filters.forSale !== "all") parts.push(p.filters.forSale === "for_sale" ? "For sale" : "Not for sale");
 
     // Search
@@ -167,8 +167,8 @@ export default function RightCollectionPanel(p: Props) {
                   className="w-full rounded-lg px-2 py-1 text-left text-xs hover:bg-gray-50"
                   onClick={() => {
                     if (r.id === "graded") p.setFilters({ ...p.filters, graded: "graded" });
-                    else if (r.id === "raw") p.setFilters({ ...p.filters, graded: "ungraded" });
-                    else p.setFilters({ ...p.filters, graded: "all" });
+                    else if (r.id === "raw") p.setFilters({ ...p.filters, graded: "raw" });
+                    else p.setFilters({ ...p.filters, graded: "all" }); // unknown -> all
                   }}
                 >
                   <span className="text-gray-800">{r.name}</span>
