@@ -1,3 +1,4 @@
+// app/collection/_components/RightCollectionPanel.tsx
 "use client";
 
 import React, { useMemo } from "react";
@@ -18,7 +19,7 @@ type Props = {
   loading: boolean;
   err: string | null;
 
-  // Use *filtered* cards so the right panel reflects what user is looking at
+  // pass the *filtered* list so the panel reflects the current view
   cards: CollectionCardModel[];
 };
 
@@ -28,24 +29,28 @@ function makeRowsFromMap(map: Map<string, { name: string; count: number }>) {
     .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }
 
-export default function RightCollectionContextPanel(p: Props) {
+export default function RightCollectionPanel(p: Props) {
   const focusLabel = useMemo(() => {
     const parts: string[] = [];
-    if (p.tab === "items") parts.push("Items");
-    if (p.tab === "minifigs") parts.push("Minifigs");
-    if (p.tab === "insights") parts.push("Insights");
 
+    // Tab
+    parts.push(p.tab === "items" ? "Items" : p.tab === "minifigs" ? "Minifigs" : "Insights");
+
+    // Filters
     if (p.filters.kind !== "all") parts.push(`Kind: ${p.filters.kind}`);
     if (p.filters.graded !== "all") parts.push(p.filters.graded === "graded" ? "Graded only" : "Ungraded only");
     if (p.filters.forSale !== "all") parts.push(p.filters.forSale === "for_sale" ? "For sale" : "Not for sale");
 
+    // Search
     if (p.q.trim()) parts.push(`Search: "${p.q.trim()}"`);
+
+    // Sort
     parts.push(`Sort: ${p.sort === "name" ? "Name" : "Copies"}`);
 
     return parts.join(" · ");
   }, [p.tab, p.filters, p.q, p.sort]);
 
-  const countsByKind = useMemo(() => {
+  const countsByKind = useMemo<CountRow[]>(() => {
     const m = new Map<string, { name: string; count: number }>();
     for (const c of p.cards) {
       const kind = String((c as any)?.kind ?? "unknown");
@@ -56,13 +61,12 @@ export default function RightCollectionContextPanel(p: Props) {
     return makeRowsFromMap(m);
   }, [p.cards]);
 
-  const countsByCondition = useMemo(() => {
+  const countsByCondition = useMemo<CountRow[]>(() => {
     const m = new Map<string, { name: string; count: number }>();
     for (const c of p.cards) {
       const mode = (c as any)?.condition?.mode as string | undefined;
       const key = mode ? mode : "unknown";
-      const name =
-        key === "graded" ? "Graded" : key === "raw" ? "Raw" : key === "unknown" ? "Unknown" : key;
+      const name = key === "graded" ? "Graded" : key === "raw" ? "Raw" : "Unknown";
 
       const prev = m.get(key) ?? { name, count: 0 };
       prev.count += 1;
@@ -71,12 +75,13 @@ export default function RightCollectionContextPanel(p: Props) {
     return makeRowsFromMap(m);
   }, [p.cards]);
 
-  const countsBySale = useMemo(() => {
+  const countsBySale = useMemo<CountRow[]>(() => {
     const m = new Map<string, { name: string; count: number }>();
     for (const c of p.cards) {
       const forSale = (c as any)?.forSale as boolean | null | undefined;
       const key = forSale === true ? "for_sale" : forSale === false ? "not_for_sale" : "unknown";
       const name = key === "for_sale" ? "For sale" : key === "not_for_sale" ? "Not for sale" : "Unknown";
+
       const prev = m.get(key) ?? { name, count: 0 };
       prev.count += 1;
       m.set(key, prev);
@@ -84,19 +89,8 @@ export default function RightCollectionContextPanel(p: Props) {
     return makeRowsFromMap(m);
   }, [p.cards]);
 
-  const hasFocus = true;
-
-  if (!hasFocus) {
-    return (
-      <div className="rounded-2xl border bg-white p-4 shadow-sm">
-        <h3 className="text-sm font-semibold text-[#0F172A]">Context</h3>
-        <p className="mt-1 text-xs text-gray-500">No focus.</p>
-      </div>
-    );
-  }
-
   return (
-    <div className="rounded-2xl border bg-white p-4 shadow-sm">
+    <div className="rounded-2xl border bg-white p-4 shadow-sm lg:sticky lg:top-24">
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-xs font-semibold text-gray-500">Focus</div>
@@ -105,7 +99,7 @@ export default function RightCollectionContextPanel(p: Props) {
         </div>
       </div>
 
-      {/* Quick actions / current view */}
+      {/* Current view / actions */}
       <div className="mt-4 rounded-xl border bg-white p-3">
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -128,7 +122,7 @@ export default function RightCollectionContextPanel(p: Props) {
         {p.err ? <div className="mt-2 text-xs text-red-600">{p.err}</div> : null}
       </div>
 
-      {/* Counts by kind */}
+      {/* Items by kind */}
       <div className="mt-4 rounded-xl border bg-white p-3">
         <div className="text-[11px] font-semibold text-gray-600">Items by kind</div>
 
@@ -156,7 +150,7 @@ export default function RightCollectionContextPanel(p: Props) {
         )}
       </div>
 
-      {/* Counts by grading/condition */}
+      {/* Items by condition */}
       <div className="mt-3 rounded-xl border bg-white p-3">
         <div className="text-[11px] font-semibold text-gray-600">Items by condition</div>
 
@@ -170,15 +164,11 @@ export default function RightCollectionContextPanel(p: Props) {
               <li key={r.id}>
                 <button
                   type="button"
-                  className={`w-full rounded-lg px-2 py-1 text-left text-xs hover:bg-gray-50 ${
-                    (r.id === "graded" && p.filters.graded === "graded") ||
-                    (r.id !== "graded" && p.filters.graded === "ungraded")
-                      ? "bg-gray-50 font-semibold"
-                      : ""
-                  }`}
+                  className="w-full rounded-lg px-2 py-1 text-left text-xs hover:bg-gray-50"
                   onClick={() => {
                     if (r.id === "graded") p.setFilters({ ...p.filters, graded: "graded" });
-                    else p.setFilters({ ...p.filters, graded: "ungraded" });
+                    else if (r.id === "raw") p.setFilters({ ...p.filters, graded: "ungraded" });
+                    else p.setFilters({ ...p.filters, graded: "all" });
                   }}
                 >
                   <span className="text-gray-800">{r.name}</span>
@@ -190,7 +180,7 @@ export default function RightCollectionContextPanel(p: Props) {
         )}
       </div>
 
-      {/* Counts by sale status */}
+      {/* Items by sale status */}
       <div className="mt-3 rounded-xl border bg-white p-3">
         <div className="text-[11px] font-semibold text-gray-600">Items by sale status</div>
 
@@ -204,12 +194,7 @@ export default function RightCollectionContextPanel(p: Props) {
               <li key={r.id}>
                 <button
                   type="button"
-                  className={`w-full rounded-lg px-2 py-1 text-left text-xs hover:bg-gray-50 ${
-                    (r.id === "for_sale" && p.filters.forSale === "for_sale") ||
-                    (r.id === "not_for_sale" && p.filters.forSale === "not_for_sale")
-                      ? "bg-gray-50 font-semibold"
-                      : ""
-                  }`}
+                  className="w-full rounded-lg px-2 py-1 text-left text-xs hover:bg-gray-50"
                   onClick={() => {
                     if (r.id === "for_sale") p.setFilters({ ...p.filters, forSale: "for_sale" });
                     else if (r.id === "not_for_sale") p.setFilters({ ...p.filters, forSale: "not_for_sale" });
