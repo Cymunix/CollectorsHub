@@ -13,18 +13,31 @@ function Badge({ children }: { children: React.ReactNode }) {
   );
 }
 
+function safeFormatCondition(input: any): string {
+  try {
+    if (!input) return "Condition not set";
+    const out = formatConditionForCard(input);
+    if (!out || typeof out !== "string") return "Condition not set";
+    return out;
+  } catch {
+    return "Condition not set";
+  }
+}
+
 export default function CollectionCard({ item }: { item: CollectionCardModel }) {
   const name = item?.name ?? "Untitled";
   const photoUrl = item?.photoUrl ?? null;
 
-  const copies = Number(item?.copiesCount ?? 0) || 0;
-  const conditionLabel = formatConditionForCard(item.condition);
+  const copies = Number((item as any)?.copiesCount ?? 0) || 0;
 
-  const isMinifig = item.kind === "minifig" || item.entity === "minifig";
+  // ✅ Always compute condition label; don’t hide it for minifigs unless you explicitly want to.
+  const conditionLabel = safeFormatCondition((item as any)?.condition);
+
+  const isMinifig = (item as any)?.kind === "minifig" || (item as any)?.entity === "minifig";
 
   return (
     <Link
-      href={item.href}
+      href={(item as any)?.href ?? "#"}
       className="group block text-left rounded-2xl border bg-white overflow-hidden transition hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-black/20"
     >
       <div className="relative aspect-[4/3] bg-gray-50">
@@ -44,18 +57,20 @@ export default function CollectionCard({ item }: { item: CollectionCardModel }) 
         <div className="absolute top-2 left-2 flex gap-2">
           {copies > 0 ? <Badge>{copies} {copies === 1 ? "copy" : "copies"}</Badge> : null}
           {isMinifig ? <Badge>Minifig</Badge> : null}
-          {item.condition?.mode === "graded" ? <Badge>Graded</Badge> : null}
+          {(item as any)?.condition?.mode === "graded" ? <Badge>Graded</Badge> : null}
         </div>
       </div>
 
       <div className="p-3">
         <div className="text-sm font-semibold text-gray-900 line-clamp-2">{name}</div>
 
-        {!isMinifig ? (
-          <div className="mt-1 text-xs font-semibold text-gray-800">{conditionLabel}</div>
-        ) : (
-          <div className="mt-1 text-xs font-semibold text-gray-700">Included minifig</div>
-        )}
+        {/* ✅ SHOW condition for everything (including minifigs) */}
+        <div className="mt-1 text-xs font-semibold text-gray-800">{conditionLabel}</div>
+
+        {/* Optional: keep the “Included minifig” hint without hiding condition */}
+        {isMinifig ? (
+          <div className="mt-1 text-[11px] text-gray-600">Included minifig</div>
+        ) : null}
 
         <div className="mt-2 flex items-center justify-between">
           <div className="text-[11px] text-gray-500">View details</div>
