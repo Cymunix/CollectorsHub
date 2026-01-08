@@ -13,12 +13,16 @@ function Badge({ children }: { children: React.ReactNode }) {
   );
 }
 
-function safeFormatCondition(input: any): string {
+function getConditionLabel(item: CollectionCardModel): string {
   try {
-    if (!input) return "Condition not set";
-    const out = formatConditionForCard(input);
-    if (!out || typeof out !== "string") return "Condition not set";
-    return out;
+    const c: any = (item as any)?.condition;
+    if (!c || typeof c !== "object") return "Condition not set";
+
+    // If unknown, don’t hide it – show something explicit.
+    if (c.mode === "unknown") return "Condition not set";
+
+    const label = formatConditionForCard(c);
+    return typeof label === "string" && label.trim().length ? label : "Condition not set";
   } catch {
     return "Condition not set";
   }
@@ -26,14 +30,12 @@ function safeFormatCondition(input: any): string {
 
 export default function CollectionCard({ item }: { item: CollectionCardModel }) {
   const name = item?.name ?? "Untitled";
-  const photoUrl = item?.photoUrl ?? null;
+  const photoUrl = (item as any)?.photoUrl ?? null;
 
   const copies = Number((item as any)?.copiesCount ?? 0) || 0;
 
-  // ✅ Always compute condition label; don’t hide it for minifigs unless you explicitly want to.
-  const conditionLabel = safeFormatCondition((item as any)?.condition);
-
   const isMinifig = (item as any)?.kind === "minifig" || (item as any)?.entity === "minifig";
+  const conditionLabel = getConditionLabel(item);
 
   return (
     <Link
@@ -64,7 +66,7 @@ export default function CollectionCard({ item }: { item: CollectionCardModel }) 
       <div className="p-3">
         <div className="text-sm font-semibold text-gray-900 line-clamp-2">{name}</div>
 
-        {/* ✅ SHOW condition for everything (including minifigs) */}
+        {/* ✅ Always show a condition line (no silent blank UI) */}
         <div className="mt-1 text-xs font-semibold text-gray-800">{conditionLabel}</div>
 
         {/* Optional: keep the “Included minifig” hint without hiding condition */}
