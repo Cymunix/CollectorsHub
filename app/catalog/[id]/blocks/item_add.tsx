@@ -88,7 +88,9 @@ function toNonNegInt(v: any) {
   return Math.max(0, n);
 }
 
-function pickSeedMinifigIds(seedMinifigs: { minifig_id: string; instance_key?: string }[] | undefined): string[] {
+function pickSeedMinifigIds(
+  seedMinifigs: { minifig_id: string; instance_key?: string }[] | undefined
+): string[] {
   const rows = Array.isArray(seedMinifigs) ? seedMinifigs : [];
   const out: string[] = [];
 
@@ -116,6 +118,95 @@ function isAllTen(sub: { centering?: number | null; corners?: number | null; edg
     Number(sub.corners) === 10 &&
     Number(sub.edges) === 10 &&
     Number(sub.surface) === 10
+  );
+}
+
+function parseMoneyToCents(input: string): number {
+  const s = String(input ?? "").trim();
+  if (!s) return 0;
+
+  // Allow "12", "12.3", "12.34", "$12.34", "12,34" (EU comma)
+  const cleaned = s.replace(/[^0-9.,-]/g, "").replace(",", ".");
+  const n = Number(cleaned);
+  if (!Number.isFinite(n) || Number.isNaN(n)) return 0;
+
+  return Math.max(0, Math.round(n * 100));
+}
+
+/* =========================
+   Price Prompt Modal
+   ========================= */
+
+function PricePromptModal({
+  open,
+  title,
+  subtitle,
+  label,
+  value,
+  onChange,
+  onClose,
+  onContinue,
+  busy,
+}: {
+  open: boolean;
+  title: string;
+  subtitle?: string;
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  onClose: () => void;
+  onContinue: () => void;
+  busy?: boolean;
+}) {
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4">
+      <div className="w-full max-w-lg rounded-2xl bg-white shadow-xl border border-[#E5E9F2] overflow-hidden">
+        <div className="px-5 py-4 border-b border-[#EEF2F7]">
+          <div className="text-base font-semibold text-[#0F172A]">{title}</div>
+          {subtitle ? <div className="mt-1 text-xs text-[#64748B]">{subtitle}</div> : null}
+        </div>
+
+        <div className="px-5 py-4 space-y-3">
+          <div className="rounded-xl border border-[#E5E9F2] bg-white px-3 py-2">
+            <div className="text-sm font-medium text-[#0F172A]">{label}</div>
+            <div className="mt-2 flex items-center gap-2">
+              <div className="text-sm text-[#64748B]">$</div>
+              <input
+                type="text"
+                inputMode="decimal"
+                placeholder="0.00"
+                className="w-full rounded-lg border border-[#E5E9F2] px-3 py-2 text-sm"
+                value={value}
+                onChange={(e) => onChange(e.target.value)}
+                disabled={!!busy}
+              />
+            </div>
+            <div className="mt-2 text-xs text-[#64748B]">Leave blank to save as $0.</div>
+          </div>
+        </div>
+
+        <div className="px-5 py-4 border-t border-[#EEF2F7] flex flex-col sm:flex-row gap-2">
+          <button
+            type="button"
+            className="sm:flex-1 rounded-2xl px-4 py-3 text-sm font-semibold border border-[#E5E9F2] bg-white text-[#0F172A] hover:bg-[#F8FAFC] disabled:opacity-60"
+            onClick={onClose}
+            disabled={!!busy}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="sm:flex-1 rounded-2xl px-4 py-3 text-sm font-semibold bg-[#0F172A] text-white hover:bg-[#111C33] disabled:opacity-60"
+            onClick={onContinue}
+            disabled={!!busy}
+          >
+            Continue
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -302,10 +393,10 @@ export default function ItemAddActions({
   // Existing detailed condition blob (LEGO, minifigs, etc.)
   conditionValues: Record<string, any>;
 
-  // ✅ NEW: allow parent page to be updated (so inserts use the same blob the UI shows)
+  // allow parent page to be updated (so inserts use the same blob the UI shows)
   onConditionValuesChange?: (next: Record<string, any>) => void;
 
-  // NEW: real-world condition meta
+  // real-world condition meta
   conditionMeta?: ConditionMeta;
 
   seedMinifigs?: { minifig_id: string; instance_key?: string }[];
@@ -316,12 +407,19 @@ export default function ItemAddActions({
   const [wishlisted, setWishlisted] = useState(false);
   const [wishlistBusy, setWishlistBusy] = useState(false);
 
+  // Price prompt state
+  const [priceOpen, setPriceOpen] = useState(false);
+  const [priceMode, setPriceMode] = useState<"collection" | "wishlist">("collection");
+  const [priceInput, setPriceInput] = useState("");
+  const [pendingPriceCents, setPendingPriceCents] = useState<number>(0);
+
   // Subgrades prompt state
   const [subgradeOpen, setSubgradeOpen] = useState(false);
   const [pendingAdd, setPendingAdd] = useState<{
     values: Record<string, any>;
     meta: ConditionMeta;
     isSet: boolean;
+    paidPriceCents: number; // NEW
   } | null>(null);
 
   useEffect(() => {
@@ -348,7 +446,7 @@ export default function ItemAddActions({
     };
   }, [userId, catalogItemId]);
 
-  // ✅ Detect LEGO Set mode from the *new* condition JSON shape (back-compat friendly)
+  // Detect LEGO Set mode from the condition JSON shape (back-compat friendly)
   const isBuildingBlocksSet = useMemo(() => {
     const v = conditionValues ?? {};
     const data = (v as any)?.data ?? {};
@@ -362,7 +460,7 @@ export default function ItemAddActions({
     return t.includes("set");
   }, [conditionValues]);
 
-  // ✅ Default meta if nothing provided yet (keeps DB rows valid)
+  // Default meta if nothing provided yet (keeps DB rows valid)
   const resolvedMeta: ConditionMeta = useMemo(() => {
     const flags = Array.isArray(conditionMeta?.flags) ? conditionMeta?.flags : [];
     return {
@@ -394,24 +492,25 @@ export default function ItemAddActions({
     return { isGraded, company, gradeValue: gv, subgrades: subObj, hasAnySub };
   }, [conditionValues]);
 
-  const buildPatchedConditionValues = (
-    base: Record<string, any>,
-    patchData: Record<string, any>
-  ): Record<string, any> => {
+  const buildPatchedConditionValues = (base: Record<string, any>, patchData: Record<string, any>): Record<string, any> => {
     const v = base ?? {};
     const data = (v as any)?.data ?? {};
     const nextData = { ...data, ...patchData };
 
-    // keep your standard shape
     return {
       ...(v as any),
       v: (v as any)?.v ?? 3,
-      meta: (v as any)?.meta ?? (v as any)?.meta ?? null,
+      meta: (v as any)?.meta ?? null,
       data: nextData,
     };
   };
 
-  const finalizeAdd = async (valuesToUse: Record<string, any>, metaToUse: ConditionMeta, isSet: boolean) => {
+  const finalizeAdd = async (
+    valuesToUse: Record<string, any>,
+    metaToUse: ConditionMeta,
+    isSet: boolean,
+    paidPriceCents: number
+  ) => {
     setBanner(null);
 
     if (!catalogItemId) return setBanner({ type: "err", msg: "Missing item id." });
@@ -424,7 +523,7 @@ export default function ItemAddActions({
     setAdding(true);
     try {
       if (isSet) {
-        // 1) Create collection copy
+        // 1) Create collection copy (include paid price)
         const ins = await supabase
           .from("user_collection_items")
           .insert([
@@ -433,6 +532,7 @@ export default function ItemAddActions({
               catalog_item_id: catalogItemId,
               condition_meta: metaToUse,
               condition_json: valuesToUse,
+              paid_price_cents: paidPriceCents,
             },
           ])
           .select("id")
@@ -443,7 +543,7 @@ export default function ItemAddActions({
         const userCollectionItemId = ins.data?.id as string | undefined;
         if (!userCollectionItemId) throw new Error("Failed to create collection copy.");
 
-        // 2) Aggregate UI selections (new JSON shape)
+        // 2) Aggregate UI selections
         const rawRows = (valuesToUse as any)?.data?.minifigs ?? (valuesToUse as any)?.building_blocks?.minifigs ?? [];
 
         const pickedById = new Map<string, { included_qty: number; notes: string | null }>();
@@ -481,10 +581,10 @@ export default function ItemAddActions({
           }
         }
 
-        // 3) Normalize seed list from page.tsx (bbMinifigs)
+        // 3) Normalise seed list from page.tsx (bbMinifigs)
         const seededIds = pickSeedMinifigIds(seedMinifigs);
 
-        // 4) Build ONE row per (user_collection_item_id, minifig_id)
+        // 4) Build one row per (user_collection_item_id, minifig_id)
         const rows = seededIds.map((minifigId) => {
           const picked = pickedById.get(minifigId);
           return {
@@ -507,7 +607,7 @@ export default function ItemAddActions({
         return;
       }
 
-      // Non-set
+      // Non-set (include paid price)
       const ins = await supabase
         .from("user_collection_items")
         .insert([
@@ -516,6 +616,7 @@ export default function ItemAddActions({
             catalog_item_id: catalogItemId,
             condition_meta: metaToUse,
             condition_json: valuesToUse,
+            paid_price_cents: paidPriceCents,
           },
         ])
         .select("id")
@@ -532,6 +633,44 @@ export default function ItemAddActions({
     }
   };
 
+  const addWishlistWithPrice = async (desiredPriceCents: number) => {
+    setBanner(null);
+
+    if (!catalogItemId) return setBanner({ type: "err", msg: "Missing item id." });
+
+    if (!userId) {
+      onRequireAuth();
+      return;
+    }
+
+    setWishlistBusy(true);
+    try {
+      const ins = await supabase
+        .from("user_wishlist_items")
+        .insert([
+          {
+            user_id: userId,
+            catalog_item_id: catalogItemId,
+            condition_meta: resolvedMeta,
+            condition_json: conditionValues ?? {},
+            desired_price_cents: desiredPriceCents,
+          },
+        ])
+        .select("id")
+        .maybeSingle();
+
+      if (ins.error) throw ins.error;
+
+      setWishlisted(true);
+      setBanner({ type: "ok", msg: "Added to your wishlist!" });
+    } catch (e: any) {
+      console.error(e);
+      setBanner({ type: "err", msg: e?.message || "Wishlist update failed." });
+    } finally {
+      setWishlistBusy(false);
+    }
+  };
+
   const handleAddToCollection = async () => {
     setBanner(null);
 
@@ -542,25 +681,11 @@ export default function ItemAddActions({
       return;
     }
 
-    // ✅ Subgrade prompt rule:
-    // - graded
-    // - company BGS
-    // - grade value is 10
-    // - and no subgrades recorded yet
-    const shouldPromptBgsSubgrades =
-      grading.isGraded && grading.company === "BGS" && grading.gradeValue === 10 && !grading.hasAnySub;
-
-    if (shouldPromptBgsSubgrades) {
-      setPendingAdd({
-        values: conditionValues ?? {},
-        meta: resolvedMeta,
-        isSet: isBuildingBlocksSet,
-      });
-      setSubgradeOpen(true);
-      return;
-    }
-
-    await finalizeAdd(conditionValues ?? {}, resolvedMeta, isBuildingBlocksSet);
+    // Always prompt for price first
+    setPriceMode("collection");
+    setPriceInput("");
+    setPendingPriceCents(0);
+    setPriceOpen(true);
   };
 
   const handleToggleWishlist = async () => {
@@ -573,38 +698,34 @@ export default function ItemAddActions({
       return;
     }
 
-    setWishlistBusy(true);
-    try {
-      if (!wishlisted) {
-        const ins = await supabase
+    // If already wishlisted: remove immediately (no prompt)
+    if (wishlisted) {
+      setWishlistBusy(true);
+      try {
+        const del = await supabase
           .from("user_wishlist_items")
-          .insert([{ user_id: userId, catalog_item_id: catalogItemId }])
-          .select("id")
-          .maybeSingle();
+          .delete()
+          .eq("user_id", userId)
+          .eq("catalog_item_id", catalogItemId);
 
-        if (ins.error) throw ins.error;
+        if (del.error) throw del.error;
 
-        setWishlisted(true);
-        setBanner({ type: "ok", msg: "Added to your wishlist!" });
-        return;
+        setWishlisted(false);
+        setBanner({ type: "ok", msg: "Removed from your wishlist." });
+      } catch (e: any) {
+        console.error(e);
+        setBanner({ type: "err", msg: e?.message || "Wishlist update failed." });
+      } finally {
+        setWishlistBusy(false);
       }
-
-      const del = await supabase
-        .from("user_wishlist_items")
-        .delete()
-        .eq("user_id", userId)
-        .eq("catalog_item_id", catalogItemId);
-
-      if (del.error) throw del.error;
-
-      setWishlisted(false);
-      setBanner({ type: "ok", msg: "Removed from your wishlist." });
-    } catch (e: any) {
-      console.error(e);
-      setBanner({ type: "err", msg: e?.message || "Wishlist update failed." });
-    } finally {
-      setWishlistBusy(false);
+      return;
     }
+
+    // Otherwise: prompt for desired price
+    setPriceMode("wishlist");
+    setPriceInput("");
+    setPendingPriceCents(0);
+    setPriceOpen(true);
   };
 
   const modalInitial = useMemo(() => {
@@ -616,6 +737,39 @@ export default function ItemAddActions({
       surface: s?.surface ?? null,
     };
   }, [grading.subgrades]);
+
+  const handlePriceContinue = async () => {
+    const cents = parseMoneyToCents(priceInput);
+    setPendingPriceCents(cents);
+    setPriceOpen(false);
+
+    if (priceMode === "wishlist") {
+      await addWishlistWithPrice(cents);
+      return;
+    }
+
+    // priceMode === "collection"
+    // Subgrade prompt rule:
+    // - graded
+    // - company BGS
+    // - grade value is 10
+    // - and no subgrades recorded yet
+    const shouldPromptBgsSubgrades =
+      grading.isGraded && grading.company === "BGS" && grading.gradeValue === 10 && !grading.hasAnySub;
+
+    if (shouldPromptBgsSubgrades) {
+      setPendingAdd({
+        values: conditionValues ?? {},
+        meta: resolvedMeta,
+        isSet: isBuildingBlocksSet,
+        paidPriceCents: cents,
+      });
+      setSubgradeOpen(true);
+      return;
+    }
+
+    await finalizeAdd(conditionValues ?? {}, resolvedMeta, isBuildingBlocksSet, cents);
+  };
 
   return (
     <div className="space-y-3">
@@ -641,6 +795,22 @@ export default function ItemAddActions({
         </SecondaryButton>
       </div>
 
+      <PricePromptModal
+        open={priceOpen}
+        title={priceMode === "collection" ? "What did you pay?" : "What are you willing to pay?"}
+        subtitle={priceMode === "collection" ? "Optional — leave blank to save as $0." : "Optional — leave blank to save as $0."}
+        label={priceMode === "collection" ? "Paid price" : "Desired price"}
+        value={priceInput}
+        onChange={setPriceInput}
+        busy={adding || wishlistBusy}
+        onClose={() => {
+          setPriceOpen(false);
+          setPriceInput("");
+          setPendingPriceCents(0);
+        }}
+        onContinue={handlePriceContinue}
+      />
+
       <SubgradeModal
         open={subgradeOpen}
         title="Track Beckett subgrades?"
@@ -656,7 +826,7 @@ export default function ItemAddActions({
           setSubgradeOpen(false);
           setPendingAdd(null);
           if (!p) return;
-          await finalizeAdd(p.values, p.meta, p.isSet);
+          await finalizeAdd(p.values, p.meta, p.isSet, p.paidPriceCents);
         }}
         onSave={async (sub) => {
           const p = pendingAdd;
@@ -665,9 +835,6 @@ export default function ItemAddActions({
             return;
           }
 
-          // Determine label for BGS 10:
-          // - all subgrades 10 => Black Label 10
-          // - otherwise => Gold label 10 (Pristine 10)
           const black = isAllTen(sub);
 
           const patched = buildPatchedConditionValues(p.values, {
@@ -687,7 +854,7 @@ export default function ItemAddActions({
           setSubgradeOpen(false);
           setPendingAdd(null);
 
-          await finalizeAdd(patched, p.meta, p.isSet);
+          await finalizeAdd(patched, p.meta, p.isSet, p.paidPriceCents);
         }}
       />
     </div>
