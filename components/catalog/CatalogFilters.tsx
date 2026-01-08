@@ -1,7 +1,7 @@
 // components/catalog/CatalogFilters.tsx
 "use client";
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type {
   BbSubtheme,
@@ -108,6 +108,108 @@ type Props = {
 
   clearFilters: () => void;
 };
+
+/* ------------------------------------------------------------------
+   Franchise ComboBox: lightweight, no shadcn dependency
+   ------------------------------------------------------------------ */
+function FranchiseComboBox({
+  options,
+  value,
+  onChange,
+  disabled,
+}: {
+  options: { id: string; name: string }[];
+  value: string;
+  onChange: (id: string) => void;
+  disabled?: boolean;
+}) {
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  const selectedName = useMemo(() => {
+    if (!value) return "";
+    return options.find((o) => o.id === value)?.name ?? "";
+  }, [options, value]);
+
+  const shown = useMemo(() => {
+    const query = q.trim().toLowerCase();
+    if (!query) return options;
+    return options.filter((o) => o.name.toLowerCase().includes(query));
+  }, [options, q]);
+
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (!wrapRef.current) return;
+      if (!wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  return (
+    <div className="space-y-1" ref={wrapRef}>
+      <label className="font-medium">Franchise</label>
+
+      <div className="relative">
+        <input
+          value={open ? q : selectedName}
+          onChange={(e) => {
+            setQ(e.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => {
+            setOpen(true);
+            setQ("");
+          }}
+          placeholder="All"
+          disabled={disabled}
+          className="w-full rounded-xl border bg-white px-3 py-2"
+        />
+
+        {open && !disabled && (
+          <div className="absolute z-50 mt-1 w-full rounded-xl border bg-white shadow-lg max-h-64 overflow-auto">
+            <button
+              type="button"
+              onClick={() => {
+                onChange("");
+                setOpen(false);
+                setQ("");
+              }}
+              className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50"
+            >
+              All
+            </button>
+
+            {shown.length === 0 ? (
+              <div className="px-3 py-2 text-[11px] text-gray-500">
+                No matches
+              </div>
+            ) : (
+              shown.map((o) => (
+                <button
+                  key={o.id}
+                  type="button"
+                  onClick={() => {
+                    onChange(o.id);
+                    setOpen(false);
+                    setQ("");
+                  }}
+                  className={[
+                    "w-full text-left px-3 py-2 text-xs hover:bg-gray-50",
+                    o.id === value ? "bg-gray-50" : "",
+                  ].join(" ")}
+                >
+                  {o.name}
+                </button>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default function CatalogFilters(p: Props) {
   const router = useRouter();
@@ -218,6 +320,7 @@ export default function CatalogFilters(p: Props) {
 
   const onSubcategoryChange = (nextSubcategoryId: string) => {
     p.setSubcategoryId(nextSubcategoryId);
+    p.setFranchiseId(""); // keep global filters coherent
     clearKindSpecific();
   };
 
@@ -292,21 +395,13 @@ export default function CatalogFilters(p: Props) {
           </select>
         </div>
 
-        <div className="space-y-1">
-          <label className="font-medium">Franchise</label>
-          <select
-            value={p.franchiseId}
-            onChange={(e) => onFranchiseChange(e.target.value)}
-            className="w-full rounded-xl border bg-white px-3 py-2"
-          >
-            <option value="">All</option>
-            {p.franchises.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.name}
-              </option>
-            ))}
-          </select>
-        </div>
+        {/* ✅ REPLACED: Franchise now type-to-filter dropdown */}
+        <FranchiseComboBox
+          options={p.franchises.map((f) => ({ id: f.id, name: f.name }))}
+          value={p.franchiseId}
+          onChange={onFranchiseChange}
+          disabled={p.metaLoading || !!p.metaError}
+        />
 
         <div className="grid grid-cols-2 gap-2">
           <div className="space-y-1">
