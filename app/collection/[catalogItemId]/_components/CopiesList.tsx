@@ -1,4 +1,3 @@
-// app/collection/[catalogItemId]/_components/CopiesList.tsx
 "use client";
 
 import React, { useMemo, useState } from "react";
@@ -39,12 +38,16 @@ export default function CopiesList({
   catalogItemId,
   itemName,
   worthCad,
+  itemKind,
 }: {
   copies: CollectionCopy[];
   catalogItemId: string;
   itemName: string;
   worthCad: number | null;
+  itemKind: string | null;
 }) {
+  const isBuildingBlocks = String(itemKind ?? "").toLowerCase() === "building_blocks";
+
   const suggestedPrice = useMemo(() => {
     if (worthCad == null) return 20;
     return Math.max(1, Math.round(worthCad * 0.95 * 100) / 100);
@@ -75,6 +78,8 @@ export default function CopiesList({
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
                       <div className="text-sm font-semibold text-gray-900">Copy #{copies.length - idx}</div>
+
+                      {/* Condition pill is safe for all item types */}
                       <ConditionPill userCollectionItemId={c.id} readOnly />
                     </div>
 
@@ -99,19 +104,20 @@ export default function CopiesList({
                   </button>
                 </div>
 
-                {/* If it’s graded, don't pretend we have the same breakdown.
-                    But still show minifigs because those are per-copy reality. */}
-                <div className="mt-4 space-y-4">
-                  {c.grade ? (
-                    <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-slate-700">
-                      Graded copy — condition breakdown is stored on the slab/grade, not your set-condition checklist.
-                    </div>
-                  ) : (
-                    <BuildingBlocksConditionCard conditionJson={c.condition_json ?? null} />
-                  )}
+                {/* ✅ Only show LEGO-specific panels for building_blocks */}
+                {isBuildingBlocks ? (
+                  <div className="mt-4 space-y-4">
+                    {c.grade ? (
+                      <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-slate-700">
+                        Graded copy — set condition checklist not shown.
+                      </div>
+                    ) : (
+                      <BuildingBlocksConditionCard conditionJson={c.condition_json ?? null} />
+                    )}
 
-                  <MinifigPanel userCollectionItemId={c.id} />
-                </div>
+                    <MinifigPanel userCollectionItemId={c.id} />
+                  </div>
+                ) : null}
 
                 {c.notes ? (
                   <div className="mt-4 text-sm text-gray-700 whitespace-pre-wrap">{c.notes}</div>
