@@ -44,7 +44,7 @@ export default function CopiesList({
   itemName: string;
   worthCad: number | null;
 }) {
-  /** FAIL CLOSED: LEGO panels OFF unless DB confirms building_blocks */
+  // Fail closed: LEGO panels OFF unless DB confirms building_blocks
   const [isBuildingBlocks, setIsBuildingBlocks] = useState(false);
   const [kindLoaded, setKindLoaded] = useState(false);
 
@@ -55,11 +55,7 @@ export default function CopiesList({
       setIsBuildingBlocks(false);
       setKindLoaded(false);
 
-      const res = await supabase
-        .from("catalog_items")
-        .select("kind")
-        .eq("id", catalogItemId)
-        .single();
+      const res = await supabase.from("catalog_items").select("kind").eq("id", catalogItemId).single();
 
       if (cancelled) return;
 
@@ -84,10 +80,7 @@ export default function CopiesList({
 
   const [open, setOpen] = useState(false);
   const [activeCopyId, setActiveCopyId] = useState<string | null>(null);
-  const activeCopy = useMemo(
-    () => copies.find((c) => c.id === activeCopyId) ?? null,
-    [copies, activeCopyId]
-  );
+  const activeCopy = useMemo(() => copies.find((c) => c.id === activeCopyId) ?? null, [copies, activeCopyId]);
 
   return (
     <div className="rounded-3xl border bg-white shadow-sm p-5">
@@ -95,64 +88,86 @@ export default function CopiesList({
       <div className="text-xs text-gray-500">Each card below is one copy you own.</div>
 
       <div className="mt-5 space-y-5">
-        {copies.map((c, idx) => (
-          <div key={c.id} className="rounded-3xl border bg-white shadow-sm p-5">
-            <div className="flex justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-2">
-                  <div className="font-semibold">Copy #{copies.length - idx}</div>
-                  <ConditionPill userCollectionItemId={c.id} readOnly />
+        {copies.length === 0 ? (
+          <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-slate-600">No copies found for this item.</div>
+        ) : (
+          copies.map((c, idx) => {
+            const copyNumber = copies.length - idx;
+
+            return (
+              <div key={c.id} className="rounded-3xl border bg-white shadow-sm p-5">
+                {/* Header row */}
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="text-sm font-semibold text-gray-900">Copy #{copyNumber}</div>
+                      <ConditionPill userCollectionItemId={c.id} readOnly />
+                      {isBuildingBlocks ? (
+                        <span className="rounded-full border bg-white px-2 py-1 text-xs text-gray-600">
+                          LEGO set copy
+                        </span>
+                      ) : null}
+                    </div>
+
+                    <div className="mt-1 text-xs text-gray-500">{fmtDate(c.created_at)}</div>
+
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {c.price_paid_cad != null ? pill("Paid", `$${Number(c.price_paid_cad).toFixed(2)} CAD`) : null}
+                      {worthCad != null ? pill("Worth", `$${Number(worthCad).toFixed(2)} CAD`) : null}
+                      {pill("Suggested list", `$${suggestedPrice.toFixed(2)} CAD`)}
+                    </div>
+                  </div>
+
+                  {/* ✅ Button must stay a button, not a stretched block */}
+                  <div className="shrink-0">
+                    <button
+                      type="button"
+                      className="inline-flex items-center justify-center rounded-xl bg-black px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+                      onClick={() => {
+                        setActiveCopyId(c.id);
+                        setOpen(true);
+                      }}
+                    >
+                      List for sale
+                    </button>
+                  </div>
                 </div>
 
-                <div className="mt-1 text-xs text-gray-500">{fmtDate(c.created_at)}</div>
+                {/* Body */}
+                <div className="mt-4 space-y-4">
+                  {/* Graded note applies to all */}
+                  {c.grade ? (
+                    <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-slate-700">
+                      Graded item — detailed condition not applicable.
+                    </div>
+                  ) : null}
 
-                <div className="mt-3 flex gap-2 flex-wrap">
-                  {c.price_paid_cad != null && pill("Paid", `$${c.price_paid_cad.toFixed(2)} CAD`)}
-                  {worthCad != null && pill("Worth", `$${worthCad.toFixed(2)} CAD`)}
-                  {pill("Suggested list", `$${suggestedPrice.toFixed(2)} CAD`)}
+                  {/* LEGO ONLY */}
+                  {!c.grade && isBuildingBlocks ? (
+                    <>
+                      <BuildingBlocksConditionCard conditionJson={c.condition_json ?? null} />
+                      <MinifigPanel userCollectionItemId={c.id} />
+                    </>
+                  ) : null}
+
+                  {/* Non-LEGO explanation */}
+                  {!c.grade && kindLoaded && !isBuildingBlocks ? (
+                    <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-gray-600">
+                      This item type does not use set conditions or minifigs.
+                    </div>
+                  ) : null}
+
+                  {/* Notes */}
+                  {c.notes ? (
+                    <div className="text-sm text-gray-700 whitespace-pre-wrap">{c.notes}</div>
+                  ) : (
+                    <div className="text-xs text-gray-500">No notes.</div>
+                  )}
                 </div>
               </div>
-
-              <button
-                className="rounded-xl bg-black text-white px-4 py-2 text-sm"
-                onClick={() => {
-                  setActiveCopyId(c.id);
-                  setOpen(true);
-                }}
-              >
-                List for sale
-              </button>
-            </div>
-
-            {/* Graded note (all types) */}
-            {c.grade && (
-              <div className="mt-4 rounded-xl border bg-slate-50 p-4 text-sm">
-                Graded item — detailed condition not applicable.
-              </div>
-            )}
-
-            {/* LEGO ONLY */}
-            {!c.grade && isBuildingBlocks && (
-              <div className="mt-4 space-y-4">
-                <BuildingBlocksConditionCard conditionJson={c.condition_json ?? null} />
-                <MinifigPanel userCollectionItemId={c.id} />
-              </div>
-            )}
-
-            {/* Non-LEGO explanation */}
-            {!c.grade && kindLoaded && !isBuildingBlocks && (
-              <div className="mt-4 rounded-xl border bg-slate-50 p-4 text-sm text-gray-600">
-                This item type does not use set conditions or minifigs.
-              </div>
-            )}
-
-            {c.notes ? (
-              <div className="mt-4 text-sm">{c.notes}</div>
-            ) : (
-              <div className="mt-4 text-xs text-gray-400">No notes.</div>
-            )}
-          </div>
-        ))}
+            );
+          })
+        )}
       </div>
 
       <ListForSaleModal
