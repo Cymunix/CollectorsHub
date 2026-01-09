@@ -234,7 +234,6 @@ export default function CollectionItemScreen({ catalogItemId }: { catalogItemId:
               itemName={title}
               copies={copies as any}
               worthCad={worthCad}
-              itemKind={(item as any)?.kind ?? null}
             />
           )}
 
