@@ -141,10 +141,7 @@ export default function CollectionItemScreen({ catalogItemId }: { catalogItemId:
               <Chip label="Copies" value={String(stats.total)} />
               <Chip label="Raw" value={String(stats.raw)} />
               <Chip label="Graded" value={String(stats.graded)} />
-              <Chip
-                label="Value"
-                value={worthLoading ? "Loading…" : worthCad == null ? "—" : moneyCad(worthCad)}
-              />
+              <Chip label="Value" value={worthLoading ? "Loading…" : worthCad == null ? "—" : moneyCad(worthCad)} />
             </div>
 
             <div className="mt-5 flex flex-wrap gap-2">
@@ -224,7 +221,7 @@ export default function CollectionItemScreen({ catalogItemId }: { catalogItemId:
                 <div className="rounded-2xl border bg-white p-4">
                   <div className="text-sm font-semibold">Next actions</div>
                   <div className="mt-2 text-sm text-gray-600">
-                    Use <span className="font-semibold">Copies</span> to manage each copy’s condition and included minifigs.
+                    Use <span className="font-semibold">Copies</span> to manage each copy’s condition and included items.
                   </div>
                 </div>
               </div>
@@ -237,6 +234,7 @@ export default function CollectionItemScreen({ catalogItemId }: { catalogItemId:
               itemName={title}
               copies={copies as any}
               worthCad={worthCad}
+              itemKind={(item as any)?.kind ?? null}
             />
           )}
 
