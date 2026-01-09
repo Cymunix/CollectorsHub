@@ -1,6 +1,8 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabaseClient";
+
 import BuildingBlocksConditionCard from "./BuildingBlocksConditionCard";
 import MinifigPanel from "./MinifigPanel";
 import ConditionPill from "./ConditionPill";
@@ -38,16 +40,45 @@ export default function CopiesList({
   catalogItemId,
   itemName,
   worthCad,
-  itemKind,
 }: {
   copies: CollectionCopy[];
   catalogItemId: string;
   itemName: string;
   worthCad: number | null;
-  itemKind: string | null;
 }) {
-  const kind = String(itemKind ?? "").toLowerCase();
-  const isBuildingBlocks = kind === "building_blocks";
+  // ✅ Fail closed: default false, only turn true when we *confirm* building_blocks from catalog_items
+  const [isBuildingBlocks, setIsBuildingBlocks] = useState(false);
+  const [kindErr, setKindErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadKind() {
+      if (!catalogItemId) return;
+
+      setKindErr(null);
+      setIsBuildingBlocks(false);
+
+      const res = await supabase.from("catalog_items").select("kind").eq("id", catalogItemId).single();
+
+      if (cancelled) return;
+
+      if (res.error) {
+        // If we can’t read kind, we do NOT show LEGO-only UI.
+        setKindErr(res.error.message);
+        setIsBuildingBlocks(false);
+        return;
+      }
+
+      const kind = String((res.data as any)?.kind ?? "").toLowerCase().trim();
+      setIsBuildingBlocks(kind === "building_blocks");
+    }
+
+    loadKind();
+    return () => {
+      cancelled = true;
+    };
+  }, [catalogItemId]);
 
   const suggestedPrice = useMemo(() => {
     if (worthCad == null) return 20;
@@ -64,6 +95,8 @@ export default function CopiesList({
         <div>
           <div className="text-sm font-semibold text-gray-900">Your copies</div>
           <div className="text-xs text-gray-500">Each card below is one copy you own.</div>
+          {/* Optional dev visibility */}
+          {kindErr ? <div className="mt-2 text-xs text-red-600">Kind lookup failed: {kindErr}</div> : null}
         </div>
       </div>
 
