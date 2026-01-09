@@ -26,7 +26,7 @@ export default function CollectionItemScreen({ catalogItemId }: { catalogItemId:
   const router = useRouter();
   const { loading, err, item, photoUrl, copies, stats, refresh } = useCollectionItem(catalogItemId);
 
-  const [tab, setTab] = useState<TabKey>("overview");
+  const [tab, setTab] = useState<TabKey>("copies");
 
   const [worthCad, setWorthCad] = useState<number | null>(null);
   const [worthLoading, setWorthLoading] = useState(false);
@@ -69,6 +69,7 @@ export default function CollectionItemScreen({ catalogItemId }: { catalogItemId:
     []
   );
 
+  // Page states
   if (loading) {
     return (
       <div className="mx-auto max-w-6xl px-4 py-6">
@@ -141,10 +142,7 @@ export default function CollectionItemScreen({ catalogItemId }: { catalogItemId:
               <Chip label="Copies" value={String(stats.total)} />
               <Chip label="Raw" value={String(stats.raw)} />
               <Chip label="Graded" value={String(stats.graded)} />
-              <Chip
-                label="Value"
-                value={worthLoading ? "Loading…" : worthCad == null ? "—" : moneyCad(worthCad)}
-              />
+              <Chip label="Value" value={worthLoading ? "Loading…" : moneyCad(worthCad)} />
             </div>
 
             <div className="mt-5 flex flex-wrap gap-2">
@@ -168,33 +166,34 @@ export default function CollectionItemScreen({ catalogItemId }: { catalogItemId:
         </div>
       </div>
 
-      {/* Tabs (catalog-style) */}
-      <div className="rounded-3xl border bg-white shadow-sm overflow-hidden">
-        <div className="border-b bg-white">
-          <div className="p-4 flex flex-wrap gap-2">
-            {tabs.map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                onClick={() => setTab(t.key)}
-                className={cn(
-                  "rounded-full border px-4 py-2 text-sm transition",
-                  tab === t.key ? "bg-gray-900 text-white border-gray-900" : "bg-white hover:bg-gray-50"
-                )}
-              >
-                {t.label}
-              </button>
-            ))}
+      {/* Main layout: left content + persistent right sidebar */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-5 items-start">
+        {/* Left: Tabs + content */}
+        <div className="rounded-3xl border bg-white shadow-sm overflow-hidden">
+          <div className="border-b bg-white">
+            <div className="p-4 flex flex-wrap gap-2">
+              {tabs.map((t) => (
+                <button
+                  key={t.key}
+                  type="button"
+                  onClick={() => setTab(t.key)}
+                  className={cn(
+                    "rounded-full border px-4 py-2 text-sm transition",
+                    tab === t.key ? "bg-gray-900 text-white border-gray-900" : "bg-white hover:bg-gray-50"
+                  )}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
 
-        <div className="p-4">
-          {tab === "overview" && (
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_360px]">
+          <div className="p-4">
+            {tab === "overview" && (
               <div className="rounded-2xl border bg-gray-50 p-4">
                 <div className="text-lg font-semibold">At a glance</div>
                 <div className="mt-1 text-sm text-gray-600">
-                  This is your collection view of the item: what you own, what it’s worth, and what’s included per copy.
+                  This view is for what you own: copies, per-copy condition, and per-copy included minifigs.
                 </div>
 
                 <div className="mt-4 grid gap-3 md:grid-cols-3">
@@ -202,47 +201,84 @@ export default function CollectionItemScreen({ catalogItemId }: { catalogItemId:
                   <Stat label="Raw" value={String(stats.raw)} />
                   <Stat label="Graded" value={String(stats.graded)} />
                 </div>
+
+                <div className="mt-4 text-sm text-gray-600">
+                  Use the <span className="font-semibold">Copies</span> tab to manage conditions and included minifigs for
+                  each copy.
+                </div>
               </div>
+            )}
 
-              <div className="space-y-4">
-                <div className="rounded-2xl border bg-white p-4">
-                  <div className="text-sm font-semibold">Estimated value</div>
-                  <div className="mt-2 text-sm text-gray-600">
-                    {worthLoading ? (
-                      "Loading…"
-                    ) : worthCad == null ? (
-                      "No value data yet."
-                    ) : (
-                      <>
-                        <div className="text-2xl font-semibold text-gray-900">{moneyCad(worthCad)}</div>
-                        <div className="mt-1 text-xs text-gray-500">Based on catalog pricing data</div>
-                      </>
-                    )}
-                  </div>
-                </div>
+            {tab === "copies" && (
+              <CopiesList catalogItemId={catalogItemId} itemName={title} copies={copies as any} worthCad={worthCad} />
+            )}
 
-                <div className="rounded-2xl border bg-white p-4">
-                  <div className="text-sm font-semibold">Next actions</div>
-                  <div className="mt-2 text-sm text-gray-600">
-                    Use <span className="font-semibold">Copies</span> to manage each copy’s condition and included minifigs.
-                  </div>
-                </div>
+            {tab === "variants" && <VariantsTab catalogItemId={catalogItemId} />}
+            {tab === "reviews" && <ReviewsTab catalogItemId={catalogItemId} />}
+            {tab === "sales" && <SalesHistoryTab catalogItemId={catalogItemId} />}
+          </div>
+        </div>
+
+        {/* Right: persistent sidebar */}
+        <div className="space-y-5 lg:sticky lg:top-[78px]">
+          <div className="rounded-3xl border bg-white shadow-sm p-5">
+            <div className="text-sm font-semibold">Value</div>
+            <div className="mt-2 text-sm text-gray-600">
+              {worthLoading ? (
+                "Loading value…"
+              ) : worthCad == null ? (
+                "No value data yet."
+              ) : (
+                <>
+                  <div className="text-2xl font-semibold text-gray-900">{moneyCad(worthCad)}</div>
+                  <div className="mt-1 text-xs text-gray-500">Based on catalog pricing data</div>
+                </>
+              )}
+            </div>
+
+            <div className="mt-4 grid grid-cols-3 gap-2">
+              <MiniStat label="Copies" value={String(stats.total)} />
+              <MiniStat label="Raw" value={String(stats.raw)} />
+              <MiniStat label="Graded" value={String(stats.graded)} />
+            </div>
+          </div>
+
+          <div className="rounded-3xl border bg-white shadow-sm p-5">
+            <div className="text-sm font-semibold">What this page means</div>
+            <div className="mt-2 text-sm text-gray-600">
+              <div>
+                <span className="font-semibold">Copies</span> = each one you own.
+              </div>
+              <div className="mt-1">
+                <span className="font-semibold">Minifigs</span> are tracked per copy via{" "}
+                <span className="font-mono text-xs">user_collection_item_minifigs</span>.
+              </div>
+              <div className="mt-1">
+                <span className="font-semibold">Variants/Reviews/Sales</span> mirror catalog data.
               </div>
             </div>
-          )}
+          </div>
 
-          {tab === "copies" && (
-            <CopiesList
-              catalogItemId={catalogItemId}
-              itemName={title}
-              copies={copies as any}
-              worthCad={worthCad}
-            />
-          )}
+          <div className="rounded-3xl border bg-white shadow-sm p-5">
+            <div className="text-sm font-semibold">Quick actions</div>
+            <div className="mt-3 flex flex-col gap-2">
+              <button
+                type="button"
+                className="rounded-xl bg-black text-white px-4 py-2 text-sm hover:opacity-90"
+                onClick={() => setTab("copies")}
+              >
+                Manage copies
+              </button>
 
-          {tab === "variants" && <VariantsTab catalogItemId={catalogItemId} />}
-          {tab === "reviews" && <ReviewsTab catalogItemId={catalogItemId} />}
-          {tab === "sales" && <SalesHistoryTab catalogItemId={catalogItemId} />}
+              <button
+                type="button"
+                className="rounded-xl border bg-white px-4 py-2 text-sm hover:bg-gray-50"
+                onClick={() => router.push(`/catalog/${encodeURIComponent(catalogItemId)}`)}
+              >
+                Open catalog item →
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -263,6 +299,15 @@ function Stat({ label, value }: { label: string; value: string }) {
     <div className="rounded-2xl border bg-white p-4">
       <div className="text-xs text-gray-500">{label}</div>
       <div className="mt-1 text-lg font-semibold">{value}</div>
+    </div>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border bg-white p-3">
+      <div className="text-[11px] text-gray-500">{label}</div>
+      <div className="mt-1 text-sm font-semibold text-gray-900">{value}</div>
     </div>
   );
 }
