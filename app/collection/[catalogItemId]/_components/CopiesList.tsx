@@ -46,8 +46,9 @@ export default function CopiesList({
   itemName: string;
   worthCad: number | null;
 }) {
-  // ✅ Fail closed: default false, only enable for confirmed building_blocks
+  // ✅ Fail closed: only show LEGO panels if DB confirms building_blocks
   const [isBuildingBlocks, setIsBuildingBlocks] = useState(false);
+  const [kindLoading, setKindLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -55,6 +56,7 @@ export default function CopiesList({
     async function loadKind() {
       if (!catalogItemId) return;
 
+      setKindLoading(true);
       setIsBuildingBlocks(false);
 
       const res = await supabase.from("catalog_items").select("kind").eq("id", catalogItemId).single();
@@ -62,13 +64,15 @@ export default function CopiesList({
       if (cancelled) return;
 
       if (res.error) {
-        // if we can't read kind, do NOT show LEGO-only panels
+        // if kind lookup fails, do NOT show LEGO-only UI
         setIsBuildingBlocks(false);
+        setKindLoading(false);
         return;
       }
 
       const kind = String((res.data as any)?.kind ?? "").toLowerCase().trim();
       setIsBuildingBlocks(kind === "building_blocks");
+      setKindLoading(false);
     }
 
     loadKind();
@@ -97,7 +101,9 @@ export default function CopiesList({
 
       <div className="mt-5">
         {copies.length === 0 ? (
-          <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-slate-600">No copies found for this item.</div>
+          <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-slate-600">
+            No copies found for this item.
+          </div>
         ) : (
           <div className="space-y-5">
             {copies.map((c, idx) => (
@@ -130,18 +136,25 @@ export default function CopiesList({
                   </button>
                 </div>
 
-                {/* ✅ LEGO-only panels gated by confirmed kind */}
-                {isBuildingBlocks ? (
-                  <div className="mt-4 space-y-4">
-                    {c.grade ? (
-                      <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-slate-700">
-                        Graded copy — set condition checklist not shown.
-                      </div>
-                    ) : (
-                      <BuildingBlocksConditionCard conditionJson={c.condition_json ?? null} />
-                    )}
+                {/* ✅ Graded note is fine for all item types */}
+                {c.grade ? (
+                  <div className="mt-4 rounded-2xl border bg-slate-50 p-4 text-sm text-slate-700">
+                    Graded item — condition breakdown not shown.
+                  </div>
+                ) : null}
 
+                {/* ✅ LEGO-only panels */}
+                {!c.grade && isBuildingBlocks ? (
+                  <div className="mt-4 space-y-4">
+                    <BuildingBlocksConditionCard conditionJson={c.condition_json ?? null} />
                     <MinifigPanel userCollectionItemId={c.id} />
+                  </div>
+                ) : null}
+
+                {/* Optional: explain why LEGO panels are missing (only after kind loaded) */}
+                {!c.grade && !isBuildingBlocks && !kindLoading ? (
+                  <div className="mt-4 rounded-2xl border bg-slate-50 p-4 text-sm text-slate-700">
+                    This item type doesn’t use set-condition or minifigs.
                   </div>
                 ) : null}
 
