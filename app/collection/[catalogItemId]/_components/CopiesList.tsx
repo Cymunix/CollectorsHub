@@ -46,7 +46,8 @@ export default function CopiesList({
   worthCad: number | null;
   itemKind: string | null;
 }) {
-  const isBuildingBlocks = String(itemKind ?? "").toLowerCase() === "building_blocks";
+  const kind = String(itemKind ?? "").toLowerCase();
+  const isBuildingBlocks = kind === "building_blocks";
 
   const suggestedPrice = useMemo(() => {
     if (worthCad == null) return 20;
@@ -55,7 +56,6 @@ export default function CopiesList({
 
   const [open, setOpen] = useState(false);
   const [activeCopyId, setActiveCopyId] = useState<string | null>(null);
-
   const activeCopy = useMemo(() => copies.find((c) => c.id === activeCopyId) ?? null, [copies, activeCopyId]);
 
   return (
@@ -78,8 +78,6 @@ export default function CopiesList({
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
                       <div className="text-sm font-semibold text-gray-900">Copy #{copies.length - idx}</div>
-
-                      {/* Condition pill is safe for all item types */}
                       <ConditionPill userCollectionItemId={c.id} readOnly />
                     </div>
 
@@ -104,7 +102,7 @@ export default function CopiesList({
                   </button>
                 </div>
 
-                {/* ✅ Only show LEGO-specific panels for building_blocks */}
+                {/* ✅ LEGO-only sections */}
                 {isBuildingBlocks ? (
                   <div className="mt-4 space-y-4">
                     {c.grade ? (
