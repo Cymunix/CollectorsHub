@@ -11,11 +11,9 @@ import ListForSaleModal from "./ListForSaleModal";
 type CollectionCopy = {
   id: string;
   created_at: string | null;
-
   condition_json?: any | null;
   grade?: string | null;
   notes?: string | null;
-
   price_paid_cad?: number | null;
 };
 
@@ -46,36 +44,34 @@ export default function CopiesList({
   itemName: string;
   worthCad: number | null;
 }) {
-  // ✅ Fail closed: only show LEGO panels if DB confirms building_blocks
+  /** FAIL CLOSED: LEGO panels OFF unless DB confirms building_blocks */
   const [isBuildingBlocks, setIsBuildingBlocks] = useState(false);
-  const [kindLoading, setKindLoading] = useState(true);
+  const [kindLoaded, setKindLoaded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadKind() {
-      if (!catalogItemId) return;
-
-      setKindLoading(true);
       setIsBuildingBlocks(false);
+      setKindLoaded(false);
 
-      const res = await supabase.from("catalog_items").select("kind").eq("id", catalogItemId).single();
+      const res = await supabase
+        .from("catalog_items")
+        .select("kind")
+        .eq("id", catalogItemId)
+        .single();
 
       if (cancelled) return;
 
-      if (res.error) {
-        // if kind lookup fails, do NOT show LEGO-only UI
-        setIsBuildingBlocks(false);
-        setKindLoading(false);
-        return;
+      if (!res.error) {
+        const kind = String((res.data as any)?.kind ?? "").toLowerCase().trim();
+        setIsBuildingBlocks(kind === "building_blocks");
       }
 
-      const kind = String((res.data as any)?.kind ?? "").toLowerCase().trim();
-      setIsBuildingBlocks(kind === "building_blocks");
-      setKindLoading(false);
+      setKindLoaded(true);
     }
 
-    loadKind();
+    if (catalogItemId) loadKind();
     return () => {
       cancelled = true;
     };
@@ -88,85 +84,75 @@ export default function CopiesList({
 
   const [open, setOpen] = useState(false);
   const [activeCopyId, setActiveCopyId] = useState<string | null>(null);
-  const activeCopy = useMemo(() => copies.find((c) => c.id === activeCopyId) ?? null, [copies, activeCopyId]);
+  const activeCopy = useMemo(
+    () => copies.find((c) => c.id === activeCopyId) ?? null,
+    [copies, activeCopyId]
+  );
 
   return (
     <div className="rounded-3xl border bg-white shadow-sm p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-sm font-semibold text-gray-900">Your copies</div>
-          <div className="text-xs text-gray-500">Each card below is one copy you own.</div>
-        </div>
-      </div>
+      <div className="text-sm font-semibold text-gray-900">Your copies</div>
+      <div className="text-xs text-gray-500">Each card below is one copy you own.</div>
 
-      <div className="mt-5">
-        {copies.length === 0 ? (
-          <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-slate-600">
-            No copies found for this item.
-          </div>
-        ) : (
-          <div className="space-y-5">
-            {copies.map((c, idx) => (
-              <div key={c.id} className="rounded-3xl border bg-white shadow-sm p-5">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <div className="text-sm font-semibold text-gray-900">Copy #{copies.length - idx}</div>
-                      <ConditionPill userCollectionItemId={c.id} readOnly />
-                    </div>
-
-                    <div className="mt-1 text-xs text-gray-500">{fmtDate(c.created_at)}</div>
-
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {c.price_paid_cad != null ? pill("Paid", `$${Number(c.price_paid_cad).toFixed(2)} CAD`) : null}
-                      {worthCad != null ? pill("Worth", `$${Number(worthCad).toFixed(2)} CAD`) : null}
-                      {pill("Suggested list", `$${suggestedPrice.toFixed(2)} CAD`)}
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    className="rounded-xl bg-black text-white px-4 py-2 text-sm hover:opacity-90"
-                    onClick={() => {
-                      setActiveCopyId(c.id);
-                      setOpen(true);
-                    }}
-                  >
-                    List for sale
-                  </button>
+      <div className="mt-5 space-y-5">
+        {copies.map((c, idx) => (
+          <div key={c.id} className="rounded-3xl border bg-white shadow-sm p-5">
+            <div className="flex justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <div className="font-semibold">Copy #{copies.length - idx}</div>
+                  <ConditionPill userCollectionItemId={c.id} readOnly />
                 </div>
 
-                {/* ✅ Graded note is fine for all item types */}
-                {c.grade ? (
-                  <div className="mt-4 rounded-2xl border bg-slate-50 p-4 text-sm text-slate-700">
-                    Graded item — condition breakdown not shown.
-                  </div>
-                ) : null}
+                <div className="mt-1 text-xs text-gray-500">{fmtDate(c.created_at)}</div>
 
-                {/* ✅ LEGO-only panels */}
-                {!c.grade && isBuildingBlocks ? (
-                  <div className="mt-4 space-y-4">
-                    <BuildingBlocksConditionCard conditionJson={c.condition_json ?? null} />
-                    <MinifigPanel userCollectionItemId={c.id} />
-                  </div>
-                ) : null}
-
-                {/* Optional: explain why LEGO panels are missing (only after kind loaded) */}
-                {!c.grade && !isBuildingBlocks && !kindLoading ? (
-                  <div className="mt-4 rounded-2xl border bg-slate-50 p-4 text-sm text-slate-700">
-                    This item type doesn’t use set-condition or minifigs.
-                  </div>
-                ) : null}
-
-                {c.notes ? (
-                  <div className="mt-4 text-sm text-gray-700 whitespace-pre-wrap">{c.notes}</div>
-                ) : (
-                  <div className="mt-4 text-xs text-gray-500">No notes.</div>
-                )}
+                <div className="mt-3 flex gap-2 flex-wrap">
+                  {c.price_paid_cad != null && pill("Paid", `$${c.price_paid_cad.toFixed(2)} CAD`)}
+                  {worthCad != null && pill("Worth", `$${worthCad.toFixed(2)} CAD`)}
+                  {pill("Suggested list", `$${suggestedPrice.toFixed(2)} CAD`)}
+                </div>
               </div>
-            ))}
+
+              <button
+                className="rounded-xl bg-black text-white px-4 py-2 text-sm"
+                onClick={() => {
+                  setActiveCopyId(c.id);
+                  setOpen(true);
+                }}
+              >
+                List for sale
+              </button>
+            </div>
+
+            {/* Graded note (all types) */}
+            {c.grade && (
+              <div className="mt-4 rounded-xl border bg-slate-50 p-4 text-sm">
+                Graded item — detailed condition not applicable.
+              </div>
+            )}
+
+            {/* LEGO ONLY */}
+            {!c.grade && isBuildingBlocks && (
+              <div className="mt-4 space-y-4">
+                <BuildingBlocksConditionCard conditionJson={c.condition_json ?? null} />
+                <MinifigPanel userCollectionItemId={c.id} />
+              </div>
+            )}
+
+            {/* Non-LEGO explanation */}
+            {!c.grade && kindLoaded && !isBuildingBlocks && (
+              <div className="mt-4 rounded-xl border bg-slate-50 p-4 text-sm text-gray-600">
+                This item type does not use set conditions or minifigs.
+              </div>
+            )}
+
+            {c.notes ? (
+              <div className="mt-4 text-sm">{c.notes}</div>
+            ) : (
+              <div className="mt-4 text-xs text-gray-400">No notes.</div>
+            )}
           </div>
-        )}
+        ))}
       </div>
 
       <ListForSaleModal
