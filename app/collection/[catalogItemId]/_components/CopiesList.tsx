@@ -46,9 +46,8 @@ export default function CopiesList({
   itemName: string;
   worthCad: number | null;
 }) {
-  // ✅ Fail closed: default false, only turn true when we *confirm* building_blocks from catalog_items
+  // ✅ Fail closed: default false, only enable for confirmed building_blocks
   const [isBuildingBlocks, setIsBuildingBlocks] = useState(false);
-  const [kindErr, setKindErr] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -56,7 +55,6 @@ export default function CopiesList({
     async function loadKind() {
       if (!catalogItemId) return;
 
-      setKindErr(null);
       setIsBuildingBlocks(false);
 
       const res = await supabase.from("catalog_items").select("kind").eq("id", catalogItemId).single();
@@ -64,8 +62,7 @@ export default function CopiesList({
       if (cancelled) return;
 
       if (res.error) {
-        // If we can’t read kind, we do NOT show LEGO-only UI.
-        setKindErr(res.error.message);
+        // if we can't read kind, do NOT show LEGO-only panels
         setIsBuildingBlocks(false);
         return;
       }
@@ -95,8 +92,6 @@ export default function CopiesList({
         <div>
           <div className="text-sm font-semibold text-gray-900">Your copies</div>
           <div className="text-xs text-gray-500">Each card below is one copy you own.</div>
-          {/* Optional dev visibility */}
-          {kindErr ? <div className="mt-2 text-xs text-red-600">Kind lookup failed: {kindErr}</div> : null}
         </div>
       </div>
 
@@ -135,7 +130,7 @@ export default function CopiesList({
                   </button>
                 </div>
 
-                {/* ✅ LEGO-only sections */}
+                {/* ✅ LEGO-only panels gated by confirmed kind */}
                 {isBuildingBlocks ? (
                   <div className="mt-4 space-y-4">
                     {c.grade ? (
