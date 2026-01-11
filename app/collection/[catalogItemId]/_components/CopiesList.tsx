@@ -79,7 +79,7 @@ export default function CopiesList({
     };
   }, [catalogItemId]);
 
-  // FIX: Return null instead of 20 to avoid fake pricing
+  // Return null instead of fake pricing when worth is missing
   const suggestedPrice = useMemo(() => {
     if (worthCad == null || worthCad === 0) return null;
     return Math.max(1, Math.round(worthCad * 0.95 * 100) / 100);
@@ -148,7 +148,7 @@ export default function CopiesList({
                       {/* Handles N/A cleanly */}
                       {pill(
                         "Suggested list",
-                        suggestedPrice
+                        suggestedPrice != null
                           ? `$${suggestedPrice.toFixed(2)} CAD`
                           : "N/A"
                       )}
@@ -215,7 +215,8 @@ export default function CopiesList({
         catalogItemId={catalogItemId}
         userCollectionItemId={activeCopy?.id ?? ""}
         itemName={itemName}
-        defaultPriceCad={suggestedPrice}
+        // FIX: ListForSaleModal expects number, suggestedPrice can be null
+        defaultPriceCad={suggestedPrice ?? 0}
       />
     </div>
   );
