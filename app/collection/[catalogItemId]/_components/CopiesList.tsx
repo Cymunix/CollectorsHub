@@ -51,17 +51,22 @@ export default function CopiesList({
     let cancelled = false;
 
     async function loadKind() {
-      // Reset state while loading
       setIsBuildingBlocks(false);
       setKindLoaded(false);
 
-      const res = await supabase.from("catalog_items").select("kind").eq("id", catalogItemId).single();
+      const res = await supabase
+        .from("catalog_items")
+        .select("kind")
+        .eq("id", catalogItemId)
+        .single();
 
       if (cancelled) return;
 
       if (!res.error) {
-        // Robust check: normalize string to lowercase and trim spaces
-        const kind = String((res.data as any)?.kind ?? "").toLowerCase().trim();
+        // Robust check: handles "building_blocks", "LEGO", etc.
+        const kind = String((res.data as any)?.kind ?? "")
+          .toLowerCase()
+          .trim();
         setIsBuildingBlocks(kind === "building_blocks");
       }
 
@@ -74,56 +79,83 @@ export default function CopiesList({
     };
   }, [catalogItemId]);
 
-  // FIX 1: Return null if no worthCad, instead of arbitrary 20
+  // FIX: Return null instead of 20 to avoid fake pricing
   const suggestedPrice = useMemo(() => {
-    if (worthCad == null) return null;
+    if (worthCad == null || worthCad === 0) return null;
     return Math.max(1, Math.round(worthCad * 0.95 * 100) / 100);
   }, [worthCad]);
 
   const [open, setOpen] = useState(false);
   const [activeCopyId, setActiveCopyId] = useState<string | null>(null);
-  const activeCopy = useMemo(() => copies.find((c) => c.id === activeCopyId) ?? null, [copies, activeCopyId]);
+  const activeCopy = useMemo(
+    () => copies.find((c) => c.id === activeCopyId) ?? null,
+    [copies, activeCopyId]
+  );
 
   return (
     <div className="rounded-3xl border bg-white shadow-sm p-5">
       <div className="text-sm font-semibold text-gray-900">Your copies</div>
-      <div className="text-xs text-gray-500">Each card below is one copy you own.</div>
+      <div className="text-xs text-gray-500">
+        Each card below is one copy you own.
+      </div>
 
       <div className="mt-5 space-y-5">
         {copies.length === 0 ? (
-          <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-slate-600">No copies found for this item.</div>
+          <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-slate-600">
+            No copies found for this item.
+          </div>
         ) : (
           copies.map((c, idx) => {
             const copyNumber = copies.length - idx;
 
             return (
-              <div key={c.id} className="rounded-3xl border bg-white shadow-sm p-5">
+              <div
+                key={c.id}
+                className="rounded-3xl border bg-white shadow-sm p-5"
+              >
                 {/* Header row */}
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <div className="text-sm font-semibold text-gray-900">Copy #{copyNumber}</div>
+                      <div className="text-sm font-semibold text-gray-900">
+                        Copy #{copyNumber}
+                      </div>
                       <ConditionPill userCollectionItemId={c.id} readOnly />
-                      
-                      {/* Only show this tag if kind is strictly building_blocks */}
-                      {isBuildingBlocks ? (
+
+                      {/* ONLY show badge if confirmed LEGO */}
+                      {isBuildingBlocks && (
                         <span className="rounded-full border bg-white px-2 py-1 text-xs text-gray-600">
                           LEGO set copy
                         </span>
-                      ) : null}
+                      )}
                     </div>
 
-                    <div className="mt-1 text-xs text-gray-500">{fmtDate(c.created_at)}</div>
+                    <div className="mt-1 text-xs text-gray-500">
+                      {fmtDate(c.created_at)}
+                    </div>
 
                     <div className="mt-3 flex flex-wrap gap-2">
-                      {c.price_paid_cad != null ? pill("Paid", `$${Number(c.price_paid_cad).toFixed(2)} CAD`) : null}
-                      {worthCad != null ? pill("Worth", `$${Number(worthCad).toFixed(2)} CAD`) : null}
-                      
-                      {/* FIX 2: Handle null suggestedPrice gracefully */}
-                      {pill("Suggested list", suggestedPrice ? `$${suggestedPrice.toFixed(2)} CAD` : "N/A")}
+                      {c.price_paid_cad != null
+                        ? pill(
+                            "Paid",
+                            `$${Number(c.price_paid_cad).toFixed(2)} CAD`
+                          )
+                        : null}
+                      {worthCad != null
+                        ? pill("Worth", `$${Number(worthCad).toFixed(2)} CAD`)
+                        : null}
+
+                      {/* Handles N/A cleanly */}
+                      {pill(
+                        "Suggested list",
+                        suggestedPrice
+                          ? `$${suggestedPrice.toFixed(2)} CAD`
+                          : "N/A"
+                      )}
                     </div>
                   </div>
 
+                  {/* Button Section */}
                   <div className="shrink-0">
                     <button
                       type="button"
@@ -138,7 +170,7 @@ export default function CopiesList({
                   </div>
                 </div>
 
-                {/* Body */}
+                {/* Body Section */}
                 <div className="mt-4 space-y-4">
                   {c.grade ? (
                     <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-slate-700">
@@ -146,15 +178,17 @@ export default function CopiesList({
                     </div>
                   ) : null}
 
-                  {/* ONLY render LEGO panels if it is explicitly a building block */}
+                  {/* STRICT CHECK: Must be not graded AND confirmed LEGO */}
                   {!c.grade && isBuildingBlocks ? (
                     <>
-                      <BuildingBlocksConditionCard conditionJson={c.condition_json ?? null} />
+                      <BuildingBlocksConditionCard
+                        conditionJson={c.condition_json ?? null}
+                      />
                       <MinifigPanel userCollectionItemId={c.id} />
                     </>
                   ) : null}
 
-                  {/* Non-LEGO explanation */}
+                  {/* Non-LEGO Message */}
                   {!c.grade && kindLoaded && !isBuildingBlocks ? (
                     <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-gray-600">
                       Standard item condition applies.
@@ -162,7 +196,9 @@ export default function CopiesList({
                   ) : null}
 
                   {c.notes ? (
-                    <div className="text-sm text-gray-700 whitespace-pre-wrap">{c.notes}</div>
+                    <div className="text-sm text-gray-700 whitespace-pre-wrap">
+                      {c.notes}
+                    </div>
                   ) : (
                     <div className="text-xs text-gray-500">No notes.</div>
                   )}
@@ -179,7 +215,7 @@ export default function CopiesList({
         catalogItemId={catalogItemId}
         userCollectionItemId={activeCopy?.id ?? ""}
         itemName={itemName}
-        defaultPriceCad={suggestedPrice ?? 0} // Pass 0 or handle null inside the modal
+        defaultPriceCad={suggestedPrice}
       />
     </div>
   );
