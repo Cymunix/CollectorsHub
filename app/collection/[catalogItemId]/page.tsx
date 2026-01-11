@@ -11,6 +11,9 @@ import AuthModal from "@/components/AuthModal";
 
 import CollectionItemScreen from "./_components/CollectionItemScreen";
 
+// ... (Keep your Type definitions: CatalogLite, ConditionMeta, CollectionItemLite) ...
+// ... (For brevity, I'm assuming the types are defined as in your snippet) ...
+
 type CatalogLite = {
   id: string;
   name: string | null;
@@ -26,20 +29,14 @@ type ConditionMeta = {
 type CollectionItemLite = {
   id: string;
   catalog_item_id: string;
-
   quantity: number | null;
-
-  // ✅ real schema fields
   condition_meta: ConditionMeta | null;
   graded: boolean | null;
   grade: number | null;
-
   paid_price_cents: number | null;
   paid_currency: string | null;
-
   notes: string | null;
   created_at: string | null;
-
   catalog: CatalogLite | null;
 };
 
@@ -55,7 +52,6 @@ export default function CollectionItemPage() {
 
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-
   const [row, setRow] = useState<CollectionItemLite | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
 
@@ -72,7 +68,6 @@ export default function CollectionItemPage() {
         setLoading(true);
         setErr(null);
 
-        // Require auth (collection is user-owned)
         const { data: auth } = await supabase.auth.getUser();
         if (cancelled) return;
 
@@ -83,9 +78,6 @@ export default function CollectionItemPage() {
           return;
         }
 
-        // ✅ IMPORTANT:
-        // Your route is /collection/[catalogItemId], so we fetch the user's collection row(s) for that catalogue item.
-        // If you can have multiple rows per catalogue item, you must decide which one to show or redirect elsewhere.
         const res = await supabase
           .from("user_collection_items")
           .select(
@@ -132,19 +124,14 @@ export default function CollectionItemPage() {
         const mapped: CollectionItemLite = {
           id: data.id,
           catalog_item_id: data.catalog_item_id,
-
           quantity: data.quantity ?? null,
-
           condition_meta: (data.condition_meta ?? null) as ConditionMeta | null,
           graded: data.graded ?? null,
           grade: data.grade ?? null,
-
           paid_price_cents: data.paid_price_cents ?? null,
           paid_currency: data.paid_currency ?? null,
-
           notes: data.notes ?? null,
           created_at: data.created_at ?? null,
-
           catalog: data.catalog
             ? {
                 id: data.catalog.id,
@@ -174,7 +161,6 @@ export default function CollectionItemPage() {
     <>
       <Header />
       <SecondaryNav />
-
       <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
 
       <main className="mx-auto max-w-6xl px-4 pb-16 pt-6">
@@ -189,26 +175,18 @@ export default function CollectionItemPage() {
           <div className="text-sm text-gray-500">Loading…</div>
         ) : err ? (
           <div className="rounded-xl border bg-white p-4">
-            <button onClick={() => router.back()} className="text-sm text-gray-600 hover:underline">
-              ← Back
-            </button>
             <div className="mt-3 text-sm text-red-600">{err}</div>
           </div>
         ) : !row ? (
           <div className="rounded-xl border bg-white p-4">
-            <button onClick={() => router.back()} className="text-sm text-gray-600 hover:underline">
-              ← Back
-            </button>
-            <div className="mt-3 text-sm text-gray-700">
-              {authOpen ? "Sign in to view your collection item." : "No collection entry found for this item."}
-            </div>
+             {/* ... Empty state ... */}
+             <div className="mt-3 text-sm text-gray-700">No collection entry found.</div>
           </div>
         ) : (
+          /* ✅ UPDATE: Pass the full 'item' row here */
           <CollectionItemScreen
             key={row.id}
-            collectionItemId={row.id}
-            catalogItemId={row.catalog_item_id}
-            catalogMeta={row.catalog}
+            item={row} 
             onRequireAuth={() => setAuthOpen(true)}
           />
         )}
