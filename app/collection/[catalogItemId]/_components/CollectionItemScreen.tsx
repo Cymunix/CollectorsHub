@@ -1,9 +1,13 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
-import { supabase } from "@/lib/supabaseClient";
+import React, { useMemo, useState } from "react";
 
-import CopiesList from "./CopiesList";
+import ItemImage from "@/app/catalog/[id]/blocks/item_image";
+
+import BuildingBlocksConditionCard from "./BuildingBlocksConditionCard";
+import MinifigPanel from "./MinifigPanel";
+import ConditionPill from "./ConditionPill";
+import ListForSaleModal from "./ListForSaleModal";
 
 type CatalogLite = {
   id: string;
@@ -11,192 +15,170 @@ type CatalogLite = {
   kind: string | null;
 };
 
-type CollectionCopy = {
+type ConditionMeta = {
+  status?: string;
+  flags?: string[];
+  [k: string]: any;
+};
+
+export type CollectionItemLite = {
   id: string;
+  catalog_item_id: string;
+
+  condition_meta: ConditionMeta | null;
+
+  graded: boolean | null;
+  grade: number | null;
+
+  paid_price_cents: number | null;
+  notes: string | null;
   created_at: string | null;
-  condition_json?: any | null;
-  grade?: string | null;
-  notes?: string | null;
-  price_paid_cad?: number | null;
+
+  catalog: CatalogLite | null;
 };
 
 type Props = {
-  catalogItemId: string;
+  item: CollectionItemLite;
   onRequireAuth?: () => void;
 };
 
-type TabKey = "overview" | "copies";
-
-function TabButton({
-  active,
-  children,
-  onClick,
-}: {
-  active: boolean;
-  children: React.ReactNode;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={[
-        "rounded-full px-3 py-1 text-sm border",
-        active ? "bg-black text-white border-black" : "bg-white text-gray-700 hover:bg-gray-50",
-      ].join(" ")}
-    >
-      {children}
-    </button>
-  );
+function toLocalDateTime(s: string | null) {
+  if (!s) return "";
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleString();
 }
 
-export default function CollectionItemScreen({ catalogItemId, onRequireAuth }: Props) {
-  const [tab, setTab] = useState<TabKey>("overview");
+function centsToCad(cents: number | null): number {
+  if (cents == null) return 0;
+  const n = cents / 100;
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
+}
 
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
+export default function CollectionItemScreen({ item }: Props) {
+  const [sellModalOpen, setSellModalOpen] = useState(false);
 
-  const [catalog, setCatalog] = useState<CatalogLite | null>(null);
-  const [copies, setCopies] = useState<CollectionCopy[]>([]);
+  const itemName = item.catalog?.name?.trim() || "Untitled item";
 
-  // You can wire worthCad later if you’ve got a pricing source; keeping null is safe.
-  const worthCad: number | null = null;
+  // ✅ Strict kind gate. Nothing else is allowed to show minifigs.
+  const kind = useMemo(
+    () => String(item.catalog?.kind ?? "").toLowerCase().trim(),
+    [item.catalog?.kind]
+  );
 
-  useEffect(() => {
-    let cancelled = false;
+  const isBuildingBlocks = kind === "building_blocks";
+  const graded = Boolean(item.graded);
 
-    async function load() {
-      try {
-        if (!catalogItemId) {
-          setLoading(false);
-          return;
-        }
+  const defaultPriceCad = useMemo(
+    () => centsToCad(item.paid_price_cents),
+    [item.paid_price_cents]
+  );
 
-        setLoading(true);
-        setErr(null);
-
-        const { data: auth } = await supabase.auth.getUser();
-        if (cancelled) return;
-
-        if (!auth?.user) {
-          onRequireAuth?.();
-          setCatalog(null);
-          setCopies([]);
-          setLoading(false);
-          return;
-        }
-
-        // Load item basics (name/kind)
-        const itemRes = await supabase
-          .from("catalog_items")
-          .select("id,name,kind")
-          .eq("id", catalogItemId)
-          .maybeSingle();
-
-        if (cancelled) return;
-
-        if (itemRes.error) {
-          setErr(itemRes.error.message);
-          setCatalog(null);
-          setCopies([]);
-          setLoading(false);
-          return;
-        }
-
-        const item = itemRes.data as any;
-        setCatalog(
-          item
-            ? { id: item.id, name: item.name ?? null, kind: item.kind ?? null }
-            : null
-        );
-
-        // Load user's copies for this item
-        const copiesRes = await supabase
-          .from("user_collection_items")
-          .select("id,created_at,condition_json,grade,notes,price_paid_cad")
-          .eq("catalog_item_id", catalogItemId)
-          .order("created_at", { ascending: false });
-
-        if (cancelled) return;
-
-        if (copiesRes.error) {
-          setErr(copiesRes.error.message);
-          setCopies([]);
-          setLoading(false);
-          return;
-        }
-
-        setCopies((copiesRes.data ?? []) as any);
-        setLoading(false);
-      } catch (e: any) {
-        if (cancelled) return;
-        setErr(e?.message ?? "Unexpected error");
-        setCatalog(null);
-        setCopies([]);
-        setLoading(false);
-      }
-    }
-
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [catalogItemId, onRequireAuth]);
-
-  const itemName = useMemo(() => catalog?.name?.trim() || "Untitled item", [catalog?.name]);
-
-  if (loading) return <div className="text-sm text-gray-500">Loading…</div>;
-
-  if (err) {
-    return (
-      <div className="rounded-2xl border bg-white p-4 text-sm text-red-600">
-        {err}
-      </div>
-    );
-  }
-
-  if (!catalog) {
-    return (
-      <div className="rounded-2xl border bg-white p-4 text-sm text-gray-700">
-        Item not found.
-      </div>
-    );
-  }
+  const notes = item.notes?.trim() ? item.notes : "No notes.";
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="rounded-3xl border bg-white p-5 shadow-sm">
-        <div className="text-2xl font-semibold text-gray-900">{itemName}</div>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <TabButton active={tab === "overview"} onClick={() => setTab("overview")}>
-            Overview
-          </TabButton>
-          <TabButton active={tab === "copies"} onClick={() => setTab("copies")}>
-            Your copies ({copies.length})
-          </TabButton>
+    <div className="mx-auto max-w-6xl px-4 pb-12 pt-6">
+      {/* Title row */}
+      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+        <div className="min-w-0">
+          <h1 className="truncate text-2xl font-semibold text-gray-900">
+            {itemName}
+          </h1>
+
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-gray-600">
+            <ConditionPill userCollectionItemId={item.id} readOnly />
+
+            {isBuildingBlocks ? (
+              <span className="rounded-full border bg-white px-2 py-1 text-xs text-gray-600">
+                LEGO set copy
+              </span>
+            ) : null}
+
+            {item.created_at ? (
+              <span className="text-xs text-gray-500">
+                Added {toLocalDateTime(item.created_at)}
+              </span>
+            ) : null}
+          </div>
         </div>
+
+        <button
+          type="button"
+          onClick={() => setSellModalOpen(true)}
+          className="inline-flex items-center justify-center rounded-xl bg-black px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+        >
+          List for sale
+        </button>
       </div>
 
-      {/* Tabs */}
-      {tab === "overview" ? (
-        <div className="rounded-3xl border bg-white p-5 shadow-sm">
-          <div className="text-sm font-semibold text-gray-900">Overview</div>
-          <div className="mt-2 text-sm text-gray-700">
-            Kind: <span className="font-semibold">{String(catalog.kind ?? "unknown")}</span>
+      {/* Main grid */}
+      <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_360px]">
+        {/* Left column */}
+        <div className="space-y-6">
+          <div className="rounded-3xl border bg-white p-5 shadow-sm">
+            <ItemImage catalogItemId={item.catalog_item_id} itemName={itemName} />
           </div>
-          <div className="mt-1 text-sm text-gray-700">
-            Copies you own: <span className="font-semibold">{copies.length}</span>
+
+          <div className="rounded-3xl border bg-white p-5 shadow-sm">
+            <div className="text-sm font-semibold text-gray-900">Condition</div>
+
+            <div className="mt-4 space-y-4">
+              {graded ? (
+                <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-gray-700">
+                  Graded item{item.grade != null ? ` • Grade ${item.grade}` : ""}.
+                </div>
+              ) : null}
+
+              {/* ✅ MINIFIGS CAN ONLY APPEAR HERE:
+                  - must be building_blocks
+                  - must NOT be graded
+               */}
+              {!graded && isBuildingBlocks ? (
+                <>
+                  <BuildingBlocksConditionCard
+                    conditionJson={item.condition_meta}
+                  />
+                  <MinifigPanel
+                    userCollectionItemId={item.id}
+                    // If you applied the upgraded MinifigPanel that supports this prop,
+                    // it prevents "No minifigs..." noise even for LEGO copies without rows.
+                    hideIfEmpty
+                  />
+                </>
+              ) : null}
+
+              {/* ✅ Non-LEGO and not graded: no minifig mention, ever */}
+              {!graded && !isBuildingBlocks ? (
+                <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-gray-600">
+                  Standard item condition applies.
+                </div>
+              ) : null}
+
+              <div className="text-sm text-gray-700 whitespace-pre-wrap">
+                {notes}
+              </div>
+            </div>
           </div>
         </div>
-      ) : (
-        <CopiesList
-          copies={copies}
-          catalogItemId={catalogItemId}
-          itemName={itemName}
-          worthCad={worthCad}
-        />
-      )}
+
+        {/* Right column */}
+        <aside className="space-y-6">
+          <div className="rounded-3xl border bg-white p-5 shadow-sm">
+            <div className="text-sm font-semibold text-gray-900">Your copy</div>
+            <div className="mt-2 text-sm text-gray-700">
+              Paid: ${defaultPriceCad.toFixed(2)} CAD
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <ListForSaleModal
+        open={sellModalOpen}
+        onClose={() => setSellModalOpen(false)}
+        catalogItemId={item.catalog_item_id}
+        userCollectionItemId={item.id}
+        itemName={itemName}
+        defaultPriceCad={defaultPriceCad}
+      />
     </div>
   );
 }
