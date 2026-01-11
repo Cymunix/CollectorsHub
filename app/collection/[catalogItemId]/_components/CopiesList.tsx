@@ -63,10 +63,7 @@ export default function CopiesList({
       if (cancelled) return;
 
       if (!res.error) {
-        // Robust check: handles "building_blocks", "LEGO", etc.
-        const kind = String((res.data as any)?.kind ?? "")
-          .toLowerCase()
-          .trim();
+        const kind = String((res.data as any)?.kind ?? "").toLowerCase().trim();
         setIsBuildingBlocks(kind === "building_blocks");
       }
 
@@ -123,11 +120,11 @@ export default function CopiesList({
                       <ConditionPill userCollectionItemId={c.id} readOnly />
 
                       {/* ONLY show badge if confirmed LEGO */}
-                      {isBuildingBlocks && (
+                      {kindLoaded && isBuildingBlocks ? (
                         <span className="rounded-full border bg-white px-2 py-1 text-xs text-gray-600">
                           LEGO set copy
                         </span>
-                      )}
+                      ) : null}
                     </div>
 
                     <div className="mt-1 text-xs text-gray-500">
@@ -145,7 +142,6 @@ export default function CopiesList({
                         ? pill("Worth", `$${Number(worthCad).toFixed(2)} CAD`)
                         : null}
 
-                      {/* Handles N/A cleanly */}
                       {pill(
                         "Suggested list",
                         suggestedPrice != null
@@ -178,18 +174,27 @@ export default function CopiesList({
                     </div>
                   ) : null}
 
-                  {/* STRICT CHECK: Must be not graded AND confirmed LEGO */}
-                  {!c.grade && isBuildingBlocks ? (
+                  {/* ✅ MINIFIGS/BB CONDITION ONLY WHEN:
+                      - kindLoaded (prevents flicker / wrong interim)
+                      - not graded
+                      - item is building_blocks
+                  */}
+                  {kindLoaded && !c.grade && isBuildingBlocks ? (
                     <>
                       <BuildingBlocksConditionCard
                         conditionJson={c.condition_json ?? null}
                       />
-                      <MinifigPanel userCollectionItemId={c.id} />
+                      <MinifigPanel
+                        userCollectionItemId={c.id}
+                        // Requires the updated MinifigPanel I gave you earlier.
+                        // If you haven't updated it yet, either do so, or remove this prop.
+                        hideIfEmpty
+                      />
                     </>
                   ) : null}
 
                   {/* Non-LEGO Message */}
-                  {!c.grade && kindLoaded && !isBuildingBlocks ? (
+                  {kindLoaded && !c.grade && !isBuildingBlocks ? (
                     <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-gray-600">
                       Standard item condition applies.
                     </div>
@@ -215,7 +220,6 @@ export default function CopiesList({
         catalogItemId={catalogItemId}
         userCollectionItemId={activeCopy?.id ?? ""}
         itemName={itemName}
-        // FIX: ListForSaleModal expects number, suggestedPrice can be null
         defaultPriceCad={suggestedPrice ?? 0}
       />
     </div>
