@@ -1,19 +1,14 @@
-// app/collection/[catalogItemId]/_components/CollectionItemScreen.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { loadItemWorthCad } from "../_lib/worth";
+import { loadItemWorthCad } from "../../_lib/worth";
 
 import CopiesList from "./CopiesList";
 import VariantsTab from "./VariantsTab";
 import ReviewsTab from "./ReviewsTab";
 import SalesHistoryTab from "./SalesHistoryTab";
-
-function cn(...xs: Array<string | false | null | undefined>) {
-  return xs.filter(Boolean).join(" ");
-}
 
 type TabKey = "overview" | "copies" | "variants" | "reviews" | "sales";
 
@@ -33,13 +28,17 @@ export type CollectionItemLite = {
   id: string;
   catalog_item_id: string;
   quantity: number | null;
+
   condition_meta: ConditionMeta | null;
   graded: boolean | null;
   grade: number | null;
+
   paid_price_cents: number | null;
   paid_currency: string | null;
+
   notes: string | null;
   created_at: string | null;
+
   catalog: CatalogLite | null;
 };
 
@@ -48,27 +47,22 @@ type Props = {
   onRequireAuth?: () => void;
 };
 
+function cn(...xs: Array<string | false | null | undefined>) {
+  return xs.filter(Boolean).join(" ");
+}
+
 function moneyCad(n: number | null) {
   if (n == null || !Number.isFinite(n)) return "—";
   return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD" }).format(n);
 }
 
 function conditionLabel(item: CollectionItemLite) {
-  const meta = item.condition_meta;
-  const status = (meta?.status ?? "").toString().trim();
-  if (status) return status;
-  return "Unknown";
-}
-
-function flagsLabel(item: CollectionItemLite) {
-  const flags = item.condition_meta?.flags;
-  if (!Array.isArray(flags) || flags.length === 0) return null;
-  return flags.join(", ");
+  const s = String(item.condition_meta?.status ?? "").trim();
+  return s || "Unknown";
 }
 
 export default function CollectionItemScreen({ item, onRequireAuth }: Props) {
   const router = useRouter();
-
   const catalogItemId = item.catalog_item_id;
 
   const [tab, setTab] = useState<TabKey>("overview");
@@ -86,9 +80,9 @@ export default function CollectionItemScreen({ item, onRequireAuth }: Props) {
         const v = await loadItemWorthCad(catalogItemId);
         if (!cancelled) setWorthCad(v);
       } catch (e) {
-        // If worth loading ever becomes auth-protected later, open auth modal.
-        // For now, fail silently and keep UI usable.
-        if (String(e ?? "").toLowerCase().includes("auth")) onRequireAuth?.();
+        // Don't crash the page just because worth couldn't load.
+        const msg = String(e ?? "").toLowerCase();
+        if (msg.includes("auth") || msg.includes("jwt") || msg.includes("rls")) onRequireAuth?.();
       } finally {
         if (!cancelled) setWorthLoading(false);
       }
@@ -100,10 +94,7 @@ export default function CollectionItemScreen({ item, onRequireAuth }: Props) {
     };
   }, [catalogItemId, onRequireAuth]);
 
-  const title = useMemo(() => {
-    const a = item.catalog?.name?.trim();
-    return a || "Untitled item";
-  }, [item.catalog?.name]);
+  const title = useMemo(() => item.catalog?.name?.trim() || "Untitled item", [item.catalog?.name]);
 
   const subtitle = useMemo(() => {
     const qty = item.quantity ?? 0;
@@ -123,18 +114,13 @@ export default function CollectionItemScreen({ item, onRequireAuth }: Props) {
     []
   );
 
-  const cond = conditionLabel(item);
-  const flags = flagsLabel(item);
-
   const paidCad = useMemo(() => {
-    if (!item.paid_price_cents) return null;
-    // If you start supporting multi-currency, you can switch formatter based on paid_currency.
+    if (item.paid_price_cents == null) return null;
     return item.paid_price_cents / 100;
   }, [item.paid_price_cents]);
 
   return (
     <div className="mx-auto max-w-6xl px-4 pb-16 pt-6 space-y-5">
-      {/* Top nav row */}
       <div className="flex items-center justify-between gap-3">
         <button
           type="button"
@@ -144,25 +130,19 @@ export default function CollectionItemScreen({ item, onRequireAuth }: Props) {
           ← Back
         </button>
 
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            className="rounded-xl border bg-white px-3 py-2 text-sm hover:bg-gray-50"
-            onClick={() => router.push(`/catalog/${encodeURIComponent(catalogItemId)}`)}
-            title="Open the catalogue page for this item"
-          >
-            Open catalogue item →
-          </button>
-        </div>
+        <button
+          type="button"
+          className="rounded-xl border bg-white px-3 py-2 text-sm hover:bg-gray-50"
+          onClick={() => router.push(`/catalog/${encodeURIComponent(catalogItemId)}`)}
+          title="Open the catalogue page for this item"
+        >
+          Open catalogue item →
+        </button>
       </div>
 
-      {/* Hero (catalog-style) */}
       <div className="rounded-3xl border bg-white shadow-sm overflow-hidden">
         <div className="grid grid-cols-1 md:grid-cols-[260px_1fr]">
           <div className="bg-slate-50">
-            {/* You’re not passing photoUrl anymore.
-                Wire it later from catalogue images, or keep the old hook if you need photos.
-             */}
             <div className="aspect-[4/3] flex items-center justify-center text-xs text-gray-400">No photo</div>
           </div>
 
@@ -182,8 +162,7 @@ export default function CollectionItemScreen({ item, onRequireAuth }: Props) {
 
             <div className="mt-4 flex flex-wrap gap-2">
               <Chip label="Qty" value={String(item.quantity ?? 0)} />
-              <Chip label="Condition" value={cond} />
-              {flags ? <Chip label="Flags" value={flags} /> : null}
+              <Chip label="Condition" value={conditionLabel(item)} />
               <Chip label="Paid" value={paidCad == null ? "—" : moneyCad(paidCad)} />
               <Chip label="Value" value={worthLoading ? "Loading…" : worthCad == null ? "—" : moneyCad(worthCad)} />
               {item.graded ? <Chip label="Grade" value={item.grade == null ? "—" : String(item.grade)} /> : null}
@@ -210,7 +189,6 @@ export default function CollectionItemScreen({ item, onRequireAuth }: Props) {
         </div>
       </div>
 
-      {/* Tabs (catalog-style) */}
       <div className="rounded-3xl border bg-white shadow-sm overflow-hidden">
         <div className="border-b bg-white">
           <div className="p-4 flex flex-wrap gap-2">
@@ -236,33 +214,17 @@ export default function CollectionItemScreen({ item, onRequireAuth }: Props) {
               <div className="rounded-2xl border bg-gray-50 p-4">
                 <div className="text-lg font-semibold">At a glance</div>
                 <div className="mt-1 text-sm text-gray-600">
-                  This is your collection view: condition + what you paid + your notes. Catalogue info stays in catalog.
+                  This is your collection view: condition + what you paid + notes. Catalogue info stays in catalog.
                 </div>
 
                 <div className="mt-4 grid gap-3 md:grid-cols-3">
                   <Stat label="Quantity" value={String(item.quantity ?? 0)} />
-                  <Stat label="Condition" value={cond} />
+                  <Stat label="Condition" value={conditionLabel(item)} />
                   <Stat label="Paid" value={paidCad == null ? "—" : moneyCad(paidCad)} />
                 </div>
               </div>
 
               <div className="space-y-4">
-                <div className="rounded-2xl border bg-white p-4">
-                  <div className="text-sm font-semibold">Estimated value</div>
-                  <div className="mt-2 text-sm text-gray-600">
-                    {worthLoading ? (
-                      "Loading…"
-                    ) : worthCad == null ? (
-                      "No value data yet."
-                    ) : (
-                      <>
-                        <div className="text-2xl font-semibold text-gray-900">{moneyCad(worthCad)}</div>
-                        <div className="mt-1 text-xs text-gray-500">Based on catalogue pricing data</div>
-                      </>
-                    )}
-                  </div>
-                </div>
-
                 <div className="rounded-2xl border bg-white p-4">
                   <div className="text-sm font-semibold">Notes</div>
                   <div className="mt-2 text-sm text-gray-600">{item.notes?.trim() ? item.notes : "No notes yet."}</div>
@@ -275,9 +237,7 @@ export default function CollectionItemScreen({ item, onRequireAuth }: Props) {
             <CopiesList
               catalogItemId={catalogItemId}
               itemName={title}
-              // You haven't passed copy rows in this new model.
-              // If CopiesList requires them, either refactor it to fetch by catalogItemId,
-              // or pass them from the page.
+              // If your CopiesList expects real rows, change CopiesList to fetch internally by catalogItemId.
               copies={[] as any}
               worthCad={worthCad}
             />
