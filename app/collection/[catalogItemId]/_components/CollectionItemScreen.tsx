@@ -24,21 +24,20 @@ type ConditionMeta = {
 export type CollectionItemLite = {
   id: string;
   catalog_item_id: string;
-
   condition_meta: ConditionMeta | null;
-
   graded: boolean | null;
   grade: number | null;
-
   paid_price_cents: number | null;
   notes: string | null;
   created_at: string | null;
-
   catalog: CatalogLite | null;
 };
 
 type Props = {
+  // We keep 'item' as the primary data source
   item: CollectionItemLite;
+  // Added to satisfy the parent component's call in page.tsx
+  catalogItemId?: string; 
   onRequireAuth?: () => void;
 };
 
@@ -54,12 +53,11 @@ function centsToCad(cents: number | null): number {
   return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
 }
 
-export default function CollectionItemScreen({ item }: Props) {
+export default function CollectionItemScreen({ item, onRequireAuth }: Props) {
   const [sellModalOpen, setSellModalOpen] = useState(false);
 
   const itemName = item.catalog?.name?.trim() || "Untitled item";
 
-  // ✅ Strict kind gate. Nothing else is allowed to show minifigs.
   const kind = useMemo(
     () => String(item.catalog?.kind ?? "").toLowerCase().trim(),
     [item.catalog?.kind]
@@ -128,10 +126,6 @@ export default function CollectionItemScreen({ item }: Props) {
                 </div>
               ) : null}
 
-              {/* ✅ MINIFIGS CAN ONLY APPEAR HERE:
-                  - must be building_blocks
-                  - must NOT be graded
-               */}
               {!graded && isBuildingBlocks ? (
                 <>
                   <BuildingBlocksConditionCard
@@ -139,14 +133,11 @@ export default function CollectionItemScreen({ item }: Props) {
                   />
                   <MinifigPanel
                     userCollectionItemId={item.id}
-                    // If you applied the upgraded MinifigPanel that supports this prop,
-                    // it prevents "No minifigs..." noise even for LEGO copies without rows.
                     hideIfEmpty
                   />
                 </>
               ) : null}
 
-              {/* ✅ Non-LEGO and not graded: no minifig mention, ever */}
               {!graded && !isBuildingBlocks ? (
                 <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-gray-600">
                   Standard item condition applies.
