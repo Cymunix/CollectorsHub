@@ -37,8 +37,13 @@ type CollectionItemLite = {
 
 function getRouteId(params: unknown): string {
   const p = params as any;
-  // Support a few likely param names so you don’t brick the page if you rename the folder.
-  return String(p?.id ?? p?.collectionItemId ?? p?.collection_item_id ?? "");
+  return String(
+    p?.id ??
+    p?.collectionItemId ??
+    p?.collection_item_id ??
+    p?.catalogItemId ??      // ✅ add this
+    ""
+  );
 }
 
 export default function CollectionItemPage() {
@@ -191,3 +196,4 @@ export default function CollectionItemPage() {
     </>
   );
 }
+
