@@ -115,13 +115,14 @@ export default function CollectionItemScreen({ item, onRequireAuth }: Props) {
       </div>
 
       <ListForSaleModal
-        open={sellModalOpen}
-        onClose={() => setSellModalOpen(false)}
-        onRequireAuth={onRequireAuth}
-        userCollectionItemId={item.id}
-        catalogItemId={item.catalog_item_id}
-        suggestedPriceCad={suggestedPriceCad}
-      />
+  open={sellModalOpen}
+  onClose={() => setSellModalOpen(false)}
+  catalogItemId={item.catalog_item_id}
+  userCollectionItemId={item.id}
+  itemName={item.catalog?.name ?? "Untitled item"}
+  defaultPriceCad={0}
+/>
     </div>
   );
 }
+
