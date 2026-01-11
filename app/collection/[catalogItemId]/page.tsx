@@ -5,10 +5,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
-import Header from "@/components/Header";
-import SecondaryNav from "@/components/SecondaryNav";
 import AuthModal from "@/components/AuthModal";
-
 import CollectionItemScreen from "./_components/CollectionItemScreen";
 
 type CatalogLite = {
@@ -137,7 +134,13 @@ export default function CollectionItemPage() {
           notes: d.notes ?? null,
           created_at: d.created_at ?? null,
 
-          catalog: d.catalog ? { id: d.catalog.id, name: d.catalog.name ?? null, kind: d.catalog.kind ?? null } : null,
+          catalog: d.catalog
+            ? {
+                id: d.catalog.id,
+                name: d.catalog.name ?? null,
+                kind: d.catalog.kind ?? null,
+              }
+            : null,
         };
 
         setRow(mapped);
@@ -158,30 +161,42 @@ export default function CollectionItemPage() {
 
   return (
     <>
-      <Header />
-      <SecondaryNav />
       <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
 
+      {/* IMPORTANT:
+          Header/SecondaryNav should be rendered by your app layout.
+          If you render them here as well, you will get doubled headers. */}
       <main className="mx-auto max-w-6xl px-4 pb-16 pt-6">
         {!catalogItemId ? (
           <div className="rounded-xl border bg-white p-4">
-            <button onClick={() => router.back()} className="text-sm text-gray-600 hover:underline">
+            <button
+              onClick={() => router.back()}
+              className="text-sm text-gray-600 hover:underline"
+            >
               ← Back
             </button>
-            <div className="mt-3 text-sm text-red-600">Missing catalogue item id in route.</div>
+            <div className="mt-3 text-sm text-red-600">
+              Missing catalogue item id in route.
+            </div>
           </div>
         ) : loading ? (
           <div className="text-sm text-gray-500">Loading…</div>
         ) : err ? (
           <div className="rounded-xl border bg-white p-4">
-            <button onClick={() => router.back()} className="text-sm text-gray-600 hover:underline">
+            <button
+              onClick={() => router.back()}
+              className="text-sm text-gray-600 hover:underline"
+            >
               ← Back
             </button>
             <div className="mt-3 text-sm text-red-600">{err}</div>
           </div>
         ) : !row ? (
           <div className="rounded-xl border bg-white p-4">
-            <button onClick={() => router.back()} className="text-sm text-gray-600 hover:underline">
+            <button
+              onClick={() => router.back()}
+              className="text-sm text-gray-600 hover:underline"
+            >
               ← Back
             </button>
             <div className="mt-3 text-sm text-gray-700">
