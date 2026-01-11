@@ -1,15 +1,21 @@
-// app/collection/[catalogItemId]/page.tsx
+// app/collection/[catalogItemId]/_components/CollectionItemScreen.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabaseClient";
+import { useRouter } from "next/navigation";
 
-import Header from "@/components/Header";
-import SecondaryNav from "@/components/SecondaryNav";
-import AuthModal from "@/components/AuthModal";
+import { loadItemWorthCad } from "../_lib/worth";
 
-import CollectionItemScreen from "./_components/CollectionItemScreen";
+import CopiesList from "./CopiesList";
+import VariantsTab from "./VariantsTab";
+import ReviewsTab from "./ReviewsTab";
+import SalesHistoryTab from "./SalesHistoryTab";
+
+function cn(...xs: Array<string | false | null | undefined>) {
+  return xs.filter(Boolean).join(" ");
+}
+
+type TabKey = "overview" | "copies" | "variants" | "reviews" | "sales";
 
 type CatalogLite = {
   id: string;
@@ -17,11 +23,17 @@ type CatalogLite = {
   kind: string | null;
 };
 
-type CollectionItemLite = {
+type ConditionMeta = {
+  status?: string;
+  flags?: string[];
+  [k: string]: any;
+};
+
+export type CollectionItemLite = {
   id: string;
   catalog_item_id: string;
   quantity: number | null;
-  condition_meta: any | null;
+  condition_meta: ConditionMeta | null;
   graded: boolean | null;
   grade: number | null;
   paid_price_cents: number | null;
@@ -31,67 +43,269 @@ type CollectionItemLite = {
   catalog: CatalogLite | null;
 };
 
-export default function CollectionItemPage() {
-  const params = useParams();
-  const router = useRouter();
-  const catalogItemId = String(params?.catalogItemId ?? "");
+type Props = {
+  item: CollectionItemLite;
+  onRequireAuth?: () => void;
+};
 
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
-  const [row, setRow] = useState<CollectionItemLite | null>(null);
-  const [authOpen, setAuthOpen] = useState(false);
+function moneyCad(n: number | null) {
+  if (n == null || !Number.isFinite(n)) return "—";
+  return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD" }).format(n);
+}
+
+function conditionLabel(item: CollectionItemLite) {
+  const meta = item.condition_meta;
+  const status = (meta?.status ?? "").toString().trim();
+  if (status) return status;
+  return "Unknown";
+}
+
+function flagsLabel(item: CollectionItemLite) {
+  const flags = item.condition_meta?.flags;
+  if (!Array.isArray(flags) || flags.length === 0) return null;
+  return flags.join(", ");
+}
+
+export default function CollectionItemScreen({ item, onRequireAuth }: Props) {
+  const router = useRouter();
+
+  const catalogItemId = item.catalog_item_id;
+
+  const [tab, setTab] = useState<TabKey>("overview");
+
+  const [worthCad, setWorthCad] = useState<number | null>(null);
+  const [worthLoading, setWorthLoading] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    async function load() {
+
+    const run = async () => {
+      if (!catalogItemId) return;
+      setWorthLoading(true);
       try {
-        setLoading(true);
-        const { data: auth } = await supabase.auth.getUser();
-        if (cancelled) return;
-
-        if (!auth?.user) {
-          setAuthOpen(true);
-          setLoading(false);
-          return;
-        }
-
-        const res = await supabase
-          .from("user_collection_items")
-          .select(`
-            id, catalog_item_id, quantity, condition_meta, graded, grade,
-            paid_price_cents, paid_currency, notes, created_at,
-            catalog:catalog_items!user_collection_items_catalog_item_id_fkey (id, name, kind)
-          `)
-          .eq("catalog_item_id", catalogItemId)
-          .limit(1)
-          .maybeSingle();
-
-        if (cancelled) return;
-        if (res.error) throw res.error;
-
-        setRow(res.data as any);
-      } catch (e: any) {
-        setErr(e.message);
+        const v = await loadItemWorthCad(catalogItemId);
+        if (!cancelled) setWorthCad(v);
+      } catch (e) {
+        // If worth loading ever becomes auth-protected later, open auth modal.
+        // For now, fail silently and keep UI usable.
+        if (String(e ?? "").toLowerCase().includes("auth")) onRequireAuth?.();
       } finally {
-        setLoading(false);
+        if (!cancelled) setWorthLoading(false);
       }
-    }
-    load();
-    return () => { cancelled = true; };
-  }, [catalogItemId]);
+    };
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [catalogItemId, onRequireAuth]);
+
+  const title = useMemo(() => {
+    const a = item.catalog?.name?.trim();
+    return a || "Untitled item";
+  }, [item.catalog?.name]);
+
+  const subtitle = useMemo(() => {
+    const qty = item.quantity ?? 0;
+    if (!qty) return "No copies yet";
+    return `${qty} copy${qty === 1 ? "" : "ies"}`;
+  }, [item.quantity]);
+
+  const tabs = useMemo(
+    () =>
+      [
+        { key: "overview" as const, label: "Overview" },
+        { key: "copies" as const, label: "Copies" },
+        { key: "variants" as const, label: "Variants" },
+        { key: "reviews" as const, label: "Reviews" },
+        { key: "sales" as const, label: "Sales History" },
+      ] as const,
+    []
+  );
+
+  const cond = conditionLabel(item);
+  const flags = flagsLabel(item);
+
+  const paidCad = useMemo(() => {
+    if (!item.paid_price_cents) return null;
+    // If you start supporting multi-currency, you can switch formatter based on paid_currency.
+    return item.paid_price_cents / 100;
+  }, [item.paid_price_cents]);
 
   return (
-    <>
-      <Header />
-      <SecondaryNav />
-      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
-      <main className="mx-auto max-w-6xl px-4 pb-16 pt-6">
-        {loading ? <div>Loading...</div> : row ? (
-          <CollectionItemScreen item={row} />
-        ) : (
-          <div className="text-red-600">Item not found in collection.</div>
-        )}
-      </main>
-    </>
+    <div className="mx-auto max-w-6xl px-4 pb-16 pt-6 space-y-5">
+      {/* Top nav row */}
+      <div className="flex items-center justify-between gap-3">
+        <button
+          type="button"
+          className="rounded-xl border bg-white px-3 py-2 text-sm hover:bg-gray-50"
+          onClick={() => router.push("/collection")}
+        >
+          ← Back
+        </button>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="rounded-xl border bg-white px-3 py-2 text-sm hover:bg-gray-50"
+            onClick={() => router.push(`/catalog/${encodeURIComponent(catalogItemId)}`)}
+            title="Open the catalogue page for this item"
+          >
+            Open catalogue item →
+          </button>
+        </div>
+      </div>
+
+      {/* Hero (catalog-style) */}
+      <div className="rounded-3xl border bg-white shadow-sm overflow-hidden">
+        <div className="grid grid-cols-1 md:grid-cols-[260px_1fr]">
+          <div className="bg-slate-50">
+            {/* You’re not passing photoUrl anymore.
+                Wire it later from catalogue images, or keep the old hook if you need photos.
+             */}
+            <div className="aspect-[4/3] flex items-center justify-center text-xs text-gray-400">No photo</div>
+          </div>
+
+          <div className="p-6">
+            <div className="text-2xl font-semibold tracking-tight">{title}</div>
+            <div className="mt-1 text-sm text-gray-500">{subtitle}</div>
+
+            <div className="mt-2 text-xs text-gray-400">
+              Collection row: <span className="font-mono">{item.id}</span>
+              {item.catalog?.kind ? (
+                <>
+                  {" "}
+                  • <span className="uppercase tracking-wide">{item.catalog.kind}</span>
+                </>
+              ) : null}
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Chip label="Qty" value={String(item.quantity ?? 0)} />
+              <Chip label="Condition" value={cond} />
+              {flags ? <Chip label="Flags" value={flags} /> : null}
+              <Chip label="Paid" value={paidCad == null ? "—" : moneyCad(paidCad)} />
+              <Chip label="Value" value={worthLoading ? "Loading…" : worthCad == null ? "—" : moneyCad(worthCad)} />
+              {item.graded ? <Chip label="Grade" value={item.grade == null ? "—" : String(item.grade)} /> : null}
+            </div>
+
+            <div className="mt-5 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="rounded-xl bg-black text-white px-4 py-2 text-sm hover:opacity-90"
+                onClick={() => setTab("copies")}
+              >
+                View copies
+              </button>
+
+              <button
+                type="button"
+                className="rounded-xl border bg-white px-4 py-2 text-sm hover:bg-gray-50"
+                onClick={() => setTab("overview")}
+              >
+                Overview
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Tabs (catalog-style) */}
+      <div className="rounded-3xl border bg-white shadow-sm overflow-hidden">
+        <div className="border-b bg-white">
+          <div className="p-4 flex flex-wrap gap-2">
+            {tabs.map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setTab(t.key)}
+                className={cn(
+                  "rounded-full border px-4 py-2 text-sm transition",
+                  tab === t.key ? "bg-gray-900 text-white border-gray-900" : "bg-white hover:bg-gray-50"
+                )}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="p-4">
+          {tab === "overview" && (
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_360px]">
+              <div className="rounded-2xl border bg-gray-50 p-4">
+                <div className="text-lg font-semibold">At a glance</div>
+                <div className="mt-1 text-sm text-gray-600">
+                  This is your collection view: condition + what you paid + your notes. Catalogue info stays in catalog.
+                </div>
+
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                  <Stat label="Quantity" value={String(item.quantity ?? 0)} />
+                  <Stat label="Condition" value={cond} />
+                  <Stat label="Paid" value={paidCad == null ? "—" : moneyCad(paidCad)} />
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="rounded-2xl border bg-white p-4">
+                  <div className="text-sm font-semibold">Estimated value</div>
+                  <div className="mt-2 text-sm text-gray-600">
+                    {worthLoading ? (
+                      "Loading…"
+                    ) : worthCad == null ? (
+                      "No value data yet."
+                    ) : (
+                      <>
+                        <div className="text-2xl font-semibold text-gray-900">{moneyCad(worthCad)}</div>
+                        <div className="mt-1 text-xs text-gray-500">Based on catalogue pricing data</div>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border bg-white p-4">
+                  <div className="text-sm font-semibold">Notes</div>
+                  <div className="mt-2 text-sm text-gray-600">{item.notes?.trim() ? item.notes : "No notes yet."}</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {tab === "copies" && (
+            <CopiesList
+              catalogItemId={catalogItemId}
+              itemName={title}
+              // You haven't passed copy rows in this new model.
+              // If CopiesList requires them, either refactor it to fetch by catalogItemId,
+              // or pass them from the page.
+              copies={[] as any}
+              worthCad={worthCad}
+            />
+          )}
+
+          {tab === "variants" && <VariantsTab catalogItemId={catalogItemId} />}
+          {tab === "reviews" && <ReviewsTab catalogItemId={catalogItemId} />}
+          {tab === "sales" && <SalesHistoryTab catalogItemId={catalogItemId} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Chip({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1 text-sm">
+      <span className="text-gray-600">{label}</span>
+      <span className="font-semibold text-gray-900">{value}</span>
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border bg-white p-4">
+      <div className="text-xs text-gray-500">{label}</div>
+      <div className="mt-1 text-lg font-semibold">{value}</div>
+    </div>
   );
 }
