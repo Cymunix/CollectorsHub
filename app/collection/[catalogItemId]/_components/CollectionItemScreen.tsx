@@ -17,13 +17,46 @@ function cn(...xs: Array<string | false | null | undefined>) {
 
 type TabKey = "overview" | "copies" | "variants" | "reviews" | "sales";
 
+type CatalogLite = {
+  id: string;
+  name: string | null;
+  kind: string | null;
+};
+
+type Props = {
+  collectionItemId: string;
+  catalogItemId: string;
+  catalogMeta: CatalogLite | null;
+  onRequireAuth?: () => void;
+};
+
 function moneyCad(n: number | null) {
   if (n == null || !Number.isFinite(n)) return "—";
   return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD" }).format(n);
 }
 
-export default function CollectionItemScreen({ catalogItemId }: { catalogItemId: string }) {
+function looksLikeAuthError(e: unknown) {
+  const s = String(e ?? "").toLowerCase();
+  return (
+    s.includes("jwt") ||
+    s.includes("not authenticated") ||
+    s.includes("auth") ||
+    s.includes("permission") ||
+    s.includes("row level security") ||
+    s.includes("rls")
+  );
+}
+
+export default function CollectionItemScreen({
+  collectionItemId,
+  catalogItemId,
+  catalogMeta,
+  onRequireAuth,
+}: Props) {
   const router = useRouter();
+
+  // Keep existing behaviour: screen fetches collection details via catalogItemId
+  // (We can later refactor hook to accept collectionItemId instead.)
   const { loading, err, item, photoUrl, copies, stats, refresh } = useCollectionItem(catalogItemId);
 
   const [tab, setTab] = useState<TabKey>("overview");
@@ -33,8 +66,10 @@ export default function CollectionItemScreen({ catalogItemId }: { catalogItemId:
 
   useEffect(() => {
     let cancelled = false;
+
     const run = async () => {
       if (!catalogItemId) return;
+
       setWorthLoading(true);
       try {
         const v = await loadItemWorthCad(catalogItemId);
@@ -43,13 +78,24 @@ export default function CollectionItemScreen({ catalogItemId }: { catalogItemId:
         if (!cancelled) setWorthLoading(false);
       }
     };
+
     run();
     return () => {
       cancelled = true;
     };
   }, [catalogItemId]);
 
-  const title = item?.name?.trim() || "Untitled item";
+  // If the hook errors because of auth, open modal via page callback
+  useEffect(() => {
+    if (!err) return;
+    if (looksLikeAuthError(err)) onRequireAuth?.();
+  }, [err, onRequireAuth]);
+
+  const title = useMemo(() => {
+    const a = item?.name?.trim();
+    const b = catalogMeta?.name?.trim();
+    return a || b || "Untitled item";
+  }, [item?.name, catalogMeta?.name]);
 
   const subtitle = useMemo(() => {
     const total = stats.total;
@@ -68,6 +114,14 @@ export default function CollectionItemScreen({ catalogItemId }: { catalogItemId:
       ] as const,
     []
   );
+
+  if (!catalogItemId) {
+    return (
+      <div className="mx-auto max-w-6xl px-4 py-6">
+        <div className="rounded-3xl border bg-white p-6 text-sm text-red-700">Missing catalogue item id.</div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -114,9 +168,9 @@ export default function CollectionItemScreen({ catalogItemId }: { catalogItemId:
             type="button"
             className="rounded-xl border bg-white px-3 py-2 text-sm hover:bg-gray-50"
             onClick={() => router.push(`/catalog/${encodeURIComponent(catalogItemId)}`)}
-            title="Open the catalog page for this item"
+            title="Open the catalogue page for this item"
           >
-            Open catalog item →
+            Open catalogue item →
           </button>
         </div>
       </div>
@@ -136,6 +190,16 @@ export default function CollectionItemScreen({ catalogItemId }: { catalogItemId:
           <div className="p-6">
             <div className="text-2xl font-semibold tracking-tight">{title}</div>
             <div className="mt-1 text-sm text-gray-500">{subtitle}</div>
+
+            <div className="mt-2 text-xs text-gray-400">
+              Collection item: <span className="font-mono">{collectionItemId}</span>
+              {catalogMeta?.kind ? (
+                <>
+                  {" "}
+                  • <span className="uppercase tracking-wide">{catalogMeta.kind}</span>
+                </>
+              ) : null}
+            </div>
 
             <div className="mt-4 flex flex-wrap gap-2">
               <Chip label="Copies" value={String(stats.total)} />
@@ -212,7 +276,7 @@ export default function CollectionItemScreen({ catalogItemId }: { catalogItemId:
                     ) : (
                       <>
                         <div className="text-2xl font-semibold text-gray-900">{moneyCad(worthCad)}</div>
-                        <div className="mt-1 text-xs text-gray-500">Based on catalog pricing data</div>
+                        <div className="mt-1 text-xs text-gray-500">Based on catalogue pricing data</div>
                       </>
                     )}
                   </div>
@@ -229,12 +293,7 @@ export default function CollectionItemScreen({ catalogItemId }: { catalogItemId:
           )}
 
           {tab === "copies" && (
-            <CopiesList
-              catalogItemId={catalogItemId}
-              itemName={title}
-              copies={copies as any}
-              worthCad={worthCad}
-            />
+            <CopiesList catalogItemId={catalogItemId} itemName={title} copies={copies as any} worthCad={worthCad} />
           )}
 
           {tab === "variants" && <VariantsTab catalogItemId={catalogItemId} />}
