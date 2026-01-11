@@ -1,16 +1,15 @@
+// app/collection/[catalogItemId]/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabaseClient";
 
-import { loadItemWorthCad } from "../../_lib/worth";
+import Header from "@/components/Header";
+import SecondaryNav from "@/components/SecondaryNav";
+import AuthModal from "@/components/AuthModal";
 
-import CopiesList from "./CopiesList";
-import VariantsTab from "./VariantsTab";
-import ReviewsTab from "./ReviewsTab";
-import SalesHistoryTab from "./SalesHistoryTab";
-
-type TabKey = "overview" | "copies" | "variants" | "reviews" | "sales";
+import CollectionItemScreen from "./_components/CollectionItemScreen";
 
 type CatalogLite = {
   id: string;
@@ -42,230 +41,157 @@ export type CollectionItemLite = {
   catalog: CatalogLite | null;
 };
 
-type Props = {
-  item: CollectionItemLite;
-  onRequireAuth?: () => void;
-};
-
-function cn(...xs: Array<string | false | null | undefined>) {
-  return xs.filter(Boolean).join(" ");
+function getRouteCatalogItemId(params: unknown): string {
+  const p = params as any;
+  return String(p?.catalogItemId ?? "");
 }
 
-function moneyCad(n: number | null) {
-  if (n == null || !Number.isFinite(n)) return "—";
-  return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD" }).format(n);
-}
-
-function conditionLabel(item: CollectionItemLite) {
-  const s = String(item.condition_meta?.status ?? "").trim();
-  return s || "Unknown";
-}
-
-export default function CollectionItemScreen({ item, onRequireAuth }: Props) {
+export default function CollectionItemPage() {
+  const params = useParams();
   const router = useRouter();
-  const catalogItemId = item.catalog_item_id;
+  const catalogItemId = useMemo(() => getRouteCatalogItemId(params), [params]);
 
-  const [tab, setTab] = useState<TabKey>("overview");
-
-  const [worthCad, setWorthCad] = useState<number | null>(null);
-  const [worthLoading, setWorthLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [row, setRow] = useState<CollectionItemLite | null>(null);
+  const [authOpen, setAuthOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
 
-    const run = async () => {
-      if (!catalogItemId) return;
-      setWorthLoading(true);
+    async function load() {
       try {
-        const v = await loadItemWorthCad(catalogItemId);
-        if (!cancelled) setWorthCad(v);
-      } catch (e) {
-        // Don't crash the page just because worth couldn't load.
-        const msg = String(e ?? "").toLowerCase();
-        if (msg.includes("auth") || msg.includes("jwt") || msg.includes("rls")) onRequireAuth?.();
-      } finally {
-        if (!cancelled) setWorthLoading(false);
-      }
-    };
+        if (!catalogItemId) {
+          setLoading(false);
+          return;
+        }
 
-    run();
+        setLoading(true);
+        setErr(null);
+
+        const { data: auth } = await supabase.auth.getUser();
+        if (cancelled) return;
+
+        if (!auth?.user) {
+          setAuthOpen(true);
+          setRow(null);
+          setLoading(false);
+          return;
+        }
+
+        const res = await supabase
+          .from("user_collection_items")
+          .select(
+            `
+            id,
+            catalog_item_id,
+            quantity,
+            condition_meta,
+            graded,
+            grade,
+            paid_price_cents,
+            paid_currency,
+            notes,
+            created_at,
+            catalog:catalog_items!user_collection_items_catalog_item_id_fkey (
+              id,
+              name,
+              kind
+            )
+          `
+          )
+          .eq("catalog_item_id", catalogItemId)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (cancelled) return;
+
+        if (res.error) {
+          setErr(res.error.message);
+          setRow(null);
+          setLoading(false);
+          return;
+        }
+
+        if (!res.data) {
+          setRow(null);
+          setLoading(false);
+          return;
+        }
+
+        const d = res.data as any;
+
+        const mapped: CollectionItemLite = {
+          id: d.id,
+          catalog_item_id: d.catalog_item_id,
+          quantity: d.quantity ?? null,
+
+          condition_meta: (d.condition_meta ?? null) as ConditionMeta | null,
+          graded: d.graded ?? null,
+          grade: d.grade ?? null,
+
+          paid_price_cents: d.paid_price_cents ?? null,
+          paid_currency: d.paid_currency ?? null,
+
+          notes: d.notes ?? null,
+          created_at: d.created_at ?? null,
+
+          catalog: d.catalog ? { id: d.catalog.id, name: d.catalog.name ?? null, kind: d.catalog.kind ?? null } : null,
+        };
+
+        setRow(mapped);
+        setLoading(false);
+      } catch (e: any) {
+        if (cancelled) return;
+        setErr(e?.message ?? "Unexpected error");
+        setRow(null);
+        setLoading(false);
+      }
+    }
+
+    load();
     return () => {
       cancelled = true;
     };
-  }, [catalogItemId, onRequireAuth]);
-
-  const title = useMemo(() => item.catalog?.name?.trim() || "Untitled item", [item.catalog?.name]);
-
-  const subtitle = useMemo(() => {
-    const qty = item.quantity ?? 0;
-    if (!qty) return "No copies yet";
-    return `${qty} copy${qty === 1 ? "" : "ies"}`;
-  }, [item.quantity]);
-
-  const tabs = useMemo(
-    () =>
-      [
-        { key: "overview" as const, label: "Overview" },
-        { key: "copies" as const, label: "Copies" },
-        { key: "variants" as const, label: "Variants" },
-        { key: "reviews" as const, label: "Reviews" },
-        { key: "sales" as const, label: "Sales History" },
-      ] as const,
-    []
-  );
-
-  const paidCad = useMemo(() => {
-    if (item.paid_price_cents == null) return null;
-    return item.paid_price_cents / 100;
-  }, [item.paid_price_cents]);
+  }, [catalogItemId]);
 
   return (
-    <div className="mx-auto max-w-6xl px-4 pb-16 pt-6 space-y-5">
-      <div className="flex items-center justify-between gap-3">
-        <button
-          type="button"
-          className="rounded-xl border bg-white px-3 py-2 text-sm hover:bg-gray-50"
-          onClick={() => router.push("/collection")}
-        >
-          ← Back
-        </button>
+    <>
+      <Header />
+      <SecondaryNav />
+      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
 
-        <button
-          type="button"
-          className="rounded-xl border bg-white px-3 py-2 text-sm hover:bg-gray-50"
-          onClick={() => router.push(`/catalog/${encodeURIComponent(catalogItemId)}`)}
-          title="Open the catalogue page for this item"
-        >
-          Open catalogue item →
-        </button>
-      </div>
-
-      <div className="rounded-3xl border bg-white shadow-sm overflow-hidden">
-        <div className="grid grid-cols-1 md:grid-cols-[260px_1fr]">
-          <div className="bg-slate-50">
-            <div className="aspect-[4/3] flex items-center justify-center text-xs text-gray-400">No photo</div>
+      <main className="mx-auto max-w-6xl px-4 pb-16 pt-6">
+        {!catalogItemId ? (
+          <div className="rounded-xl border bg-white p-4">
+            <button onClick={() => router.back()} className="text-sm text-gray-600 hover:underline">
+              ← Back
+            </button>
+            <div className="mt-3 text-sm text-red-600">Missing catalogue item id in route.</div>
           </div>
-
-          <div className="p-6">
-            <div className="text-2xl font-semibold tracking-tight">{title}</div>
-            <div className="mt-1 text-sm text-gray-500">{subtitle}</div>
-
-            <div className="mt-2 text-xs text-gray-400">
-              Collection row: <span className="font-mono">{item.id}</span>
-              {item.catalog?.kind ? (
-                <>
-                  {" "}
-                  • <span className="uppercase tracking-wide">{item.catalog.kind}</span>
-                </>
-              ) : null}
-            </div>
-
-            <div className="mt-4 flex flex-wrap gap-2">
-              <Chip label="Qty" value={String(item.quantity ?? 0)} />
-              <Chip label="Condition" value={conditionLabel(item)} />
-              <Chip label="Paid" value={paidCad == null ? "—" : moneyCad(paidCad)} />
-              <Chip label="Value" value={worthLoading ? "Loading…" : worthCad == null ? "—" : moneyCad(worthCad)} />
-              {item.graded ? <Chip label="Grade" value={item.grade == null ? "—" : String(item.grade)} /> : null}
-            </div>
-
-            <div className="mt-5 flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="rounded-xl bg-black text-white px-4 py-2 text-sm hover:opacity-90"
-                onClick={() => setTab("copies")}
-              >
-                View copies
-              </button>
-
-              <button
-                type="button"
-                className="rounded-xl border bg-white px-4 py-2 text-sm hover:bg-gray-50"
-                onClick={() => setTab("overview")}
-              >
-                Overview
-              </button>
+        ) : loading ? (
+          <div className="text-sm text-gray-500">Loading…</div>
+        ) : err ? (
+          <div className="rounded-xl border bg-white p-4">
+            <button onClick={() => router.back()} className="text-sm text-gray-600 hover:underline">
+              ← Back
+            </button>
+            <div className="mt-3 text-sm text-red-600">{err}</div>
+          </div>
+        ) : !row ? (
+          <div className="rounded-xl border bg-white p-4">
+            <button onClick={() => router.back()} className="text-sm text-gray-600 hover:underline">
+              ← Back
+            </button>
+            <div className="mt-3 text-sm text-gray-700">
+              {authOpen ? "Sign in to view your collection item." : "No collection entry found."}
             </div>
           </div>
-        </div>
-      </div>
-
-      <div className="rounded-3xl border bg-white shadow-sm overflow-hidden">
-        <div className="border-b bg-white">
-          <div className="p-4 flex flex-wrap gap-2">
-            {tabs.map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                onClick={() => setTab(t.key)}
-                className={cn(
-                  "rounded-full border px-4 py-2 text-sm transition",
-                  tab === t.key ? "bg-gray-900 text-white border-gray-900" : "bg-white hover:bg-gray-50"
-                )}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="p-4">
-          {tab === "overview" && (
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_360px]">
-              <div className="rounded-2xl border bg-gray-50 p-4">
-                <div className="text-lg font-semibold">At a glance</div>
-                <div className="mt-1 text-sm text-gray-600">
-                  This is your collection view: condition + what you paid + notes. Catalogue info stays in catalog.
-                </div>
-
-                <div className="mt-4 grid gap-3 md:grid-cols-3">
-                  <Stat label="Quantity" value={String(item.quantity ?? 0)} />
-                  <Stat label="Condition" value={conditionLabel(item)} />
-                  <Stat label="Paid" value={paidCad == null ? "—" : moneyCad(paidCad)} />
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                <div className="rounded-2xl border bg-white p-4">
-                  <div className="text-sm font-semibold">Notes</div>
-                  <div className="mt-2 text-sm text-gray-600">{item.notes?.trim() ? item.notes : "No notes yet."}</div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {tab === "copies" && (
-            <CopiesList
-              catalogItemId={catalogItemId}
-              itemName={title}
-              // If your CopiesList expects real rows, change CopiesList to fetch internally by catalogItemId.
-              copies={[] as any}
-              worthCad={worthCad}
-            />
-          )}
-
-          {tab === "variants" && <VariantsTab catalogItemId={catalogItemId} />}
-          {tab === "reviews" && <ReviewsTab catalogItemId={catalogItemId} />}
-          {tab === "sales" && <SalesHistoryTab catalogItemId={catalogItemId} />}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Chip({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1 text-sm">
-      <span className="text-gray-600">{label}</span>
-      <span className="font-semibold text-gray-900">{value}</span>
-    </div>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl border bg-white p-4">
-      <div className="text-xs text-gray-500">{label}</div>
-      <div className="mt-1 text-lg font-semibold">{value}</div>
-    </div>
+        ) : (
+          <CollectionItemScreen item={row} onRequireAuth={() => setAuthOpen(true)} />
+        )}
+      </main>
+    </>
   );
 }
