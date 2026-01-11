@@ -44,7 +44,6 @@ export default function CopiesList({
   itemName: string;
   worthCad: number | null;
 }) {
-  // Fail closed: LEGO panels OFF unless DB confirms building_blocks
   const [isBuildingBlocks, setIsBuildingBlocks] = useState(false);
   const [kindLoaded, setKindLoaded] = useState(false);
 
@@ -52,6 +51,7 @@ export default function CopiesList({
     let cancelled = false;
 
     async function loadKind() {
+      // Reset state while loading
       setIsBuildingBlocks(false);
       setKindLoaded(false);
 
@@ -60,6 +60,7 @@ export default function CopiesList({
       if (cancelled) return;
 
       if (!res.error) {
+        // Robust check: normalize string to lowercase and trim spaces
         const kind = String((res.data as any)?.kind ?? "").toLowerCase().trim();
         setIsBuildingBlocks(kind === "building_blocks");
       }
@@ -73,8 +74,9 @@ export default function CopiesList({
     };
   }, [catalogItemId]);
 
+  // FIX 1: Return null if no worthCad, instead of arbitrary 20
   const suggestedPrice = useMemo(() => {
-    if (worthCad == null) return 20;
+    if (worthCad == null) return null;
     return Math.max(1, Math.round(worthCad * 0.95 * 100) / 100);
   }, [worthCad]);
 
@@ -102,6 +104,8 @@ export default function CopiesList({
                     <div className="flex flex-wrap items-center gap-2">
                       <div className="text-sm font-semibold text-gray-900">Copy #{copyNumber}</div>
                       <ConditionPill userCollectionItemId={c.id} readOnly />
+                      
+                      {/* Only show this tag if kind is strictly building_blocks */}
                       {isBuildingBlocks ? (
                         <span className="rounded-full border bg-white px-2 py-1 text-xs text-gray-600">
                           LEGO set copy
@@ -114,11 +118,12 @@ export default function CopiesList({
                     <div className="mt-3 flex flex-wrap gap-2">
                       {c.price_paid_cad != null ? pill("Paid", `$${Number(c.price_paid_cad).toFixed(2)} CAD`) : null}
                       {worthCad != null ? pill("Worth", `$${Number(worthCad).toFixed(2)} CAD`) : null}
-                      {pill("Suggested list", `$${suggestedPrice.toFixed(2)} CAD`)}
+                      
+                      {/* FIX 2: Handle null suggestedPrice gracefully */}
+                      {pill("Suggested list", suggestedPrice ? `$${suggestedPrice.toFixed(2)} CAD` : "N/A")}
                     </div>
                   </div>
 
-                  {/* ✅ Button must stay a button, not a stretched block */}
                   <div className="shrink-0">
                     <button
                       type="button"
@@ -135,14 +140,13 @@ export default function CopiesList({
 
                 {/* Body */}
                 <div className="mt-4 space-y-4">
-                  {/* Graded note applies to all */}
                   {c.grade ? (
                     <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-slate-700">
                       Graded item — detailed condition not applicable.
                     </div>
                   ) : null}
 
-                  {/* LEGO ONLY */}
+                  {/* ONLY render LEGO panels if it is explicitly a building block */}
                   {!c.grade && isBuildingBlocks ? (
                     <>
                       <BuildingBlocksConditionCard conditionJson={c.condition_json ?? null} />
@@ -153,11 +157,10 @@ export default function CopiesList({
                   {/* Non-LEGO explanation */}
                   {!c.grade && kindLoaded && !isBuildingBlocks ? (
                     <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-gray-600">
-                      This item type does not use set conditions or minifigs.
+                      Standard item condition applies.
                     </div>
                   ) : null}
 
-                  {/* Notes */}
                   {c.notes ? (
                     <div className="text-sm text-gray-700 whitespace-pre-wrap">{c.notes}</div>
                   ) : (
@@ -176,7 +179,7 @@ export default function CopiesList({
         catalogItemId={catalogItemId}
         userCollectionItemId={activeCopy?.id ?? ""}
         itemName={itemName}
-        defaultPriceCad={suggestedPrice}
+        defaultPriceCad={suggestedPrice ?? 0} // Pass 0 or handle null inside the modal
       />
     </div>
   );
