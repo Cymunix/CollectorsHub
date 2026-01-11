@@ -1,3 +1,4 @@
+// app/collection/[catalogItemId]/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -10,47 +11,47 @@ import AuthModal from "@/components/AuthModal";
 
 import CollectionItemScreen from "./_components/CollectionItemScreen";
 
-/**
- * Collection/[id] should behave like catalog/[id]:
- * - Load one “page model” up front
- * - Render one screen component (no minifig branching in the page layer)
- * - Keep catalogue vs collection responsibilities clean
- */
-
 type CatalogLite = {
   id: string;
   name: string | null;
   kind: string | null;
 };
 
+type ConditionMeta = {
+  status?: string;
+  flags?: string[];
+  [k: string]: any;
+};
+
 type CollectionItemLite = {
   id: string;
   catalog_item_id: string;
+
   quantity: number | null;
-  condition_text: string | null;
-  graded_score: number | null;
-  paid_price: number | null;
+
+  // ✅ real schema fields
+  condition_meta: ConditionMeta | null;
+  graded: boolean | null;
+  grade: number | null;
+
+  paid_price_cents: number | null;
+  paid_currency: string | null;
+
   notes: string | null;
-  acquired_at: string | null;
+  created_at: string | null;
+
   catalog: CatalogLite | null;
 };
 
-function getRouteId(params: unknown): string {
+function getRouteCatalogItemId(params: unknown): string {
   const p = params as any;
-  return String(
-    p?.id ??
-    p?.collectionItemId ??
-    p?.collection_item_id ??
-    p?.catalogItemId ??      // ✅ add this
-    ""
-  );
+  return String(p?.catalogItemId ?? "");
 }
 
 export default function CollectionItemPage() {
   const params = useParams();
   const router = useRouter();
-
-  const collectionItemId = useMemo(() => getRouteId(params), [params]);
+  const catalogItemId = useMemo(() => getRouteCatalogItemId(params), [params]);
 
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -63,7 +64,7 @@ export default function CollectionItemPage() {
 
     async function load() {
       try {
-        if (!collectionItemId) {
+        if (!catalogItemId) {
           setLoading(false);
           return;
         }
@@ -71,7 +72,7 @@ export default function CollectionItemPage() {
         setLoading(true);
         setErr(null);
 
-        // If you want to hard-require auth for collection pages, do it here.
+        // Require auth (collection is user-owned)
         const { data: auth } = await supabase.auth.getUser();
         if (cancelled) return;
 
@@ -82,27 +83,34 @@ export default function CollectionItemPage() {
           return;
         }
 
+        // ✅ IMPORTANT:
+        // Your route is /collection/[catalogItemId], so we fetch the user's collection row(s) for that catalogue item.
+        // If you can have multiple rows per catalogue item, you must decide which one to show or redirect elsewhere.
         const res = await supabase
           .from("user_collection_items")
           .select(
             `
+            id,
+            catalog_item_id,
+            quantity,
+            condition_meta,
+            graded,
+            grade,
+            paid_price_cents,
+            paid_currency,
+            notes,
+            created_at,
+            catalog:catalog_items!user_collection_items_catalog_item_id_fkey (
               id,
-              catalog_item_id,
-              quantity,
-              condition_text,
-              graded_score,
-              paid_price,
-              notes,
-              acquired_at,
-              catalog:catalog_items!user_collection_items_catalog_item_id_fkey (
-                id,
-                name,
-                kind
-              )
-            `
+              name,
+              kind
+            )
+          `
           )
-          .eq("id", collectionItemId)
-          .single();
+          .eq("catalog_item_id", catalogItemId)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
 
         if (cancelled) return;
 
@@ -113,17 +121,30 @@ export default function CollectionItemPage() {
           return;
         }
 
+        if (!res.data) {
+          setRow(null);
+          setLoading(false);
+          return;
+        }
+
         const data = res.data as any;
 
         const mapped: CollectionItemLite = {
           id: data.id,
           catalog_item_id: data.catalog_item_id,
+
           quantity: data.quantity ?? null,
-          condition_text: data.condition_text ?? null,
-          graded_score: data.graded_score ?? null,
-          paid_price: data.paid_price ?? null,
+
+          condition_meta: (data.condition_meta ?? null) as ConditionMeta | null,
+          graded: data.graded ?? null,
+          grade: data.grade ?? null,
+
+          paid_price_cents: data.paid_price_cents ?? null,
+          paid_currency: data.paid_currency ?? null,
+
           notes: data.notes ?? null,
-          acquired_at: data.acquired_at ?? null,
+          created_at: data.created_at ?? null,
+
           catalog: data.catalog
             ? {
                 id: data.catalog.id,
@@ -147,7 +168,7 @@ export default function CollectionItemPage() {
     return () => {
       cancelled = true;
     };
-  }, [collectionItemId]);
+  }, [catalogItemId]);
 
   return (
     <>
@@ -157,12 +178,12 @@ export default function CollectionItemPage() {
       <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
 
       <main className="mx-auto max-w-6xl px-4 pb-16 pt-6">
-        {!collectionItemId ? (
+        {!catalogItemId ? (
           <div className="rounded-xl border bg-white p-4">
             <button onClick={() => router.back()} className="text-sm text-gray-600 hover:underline">
               ← Back
             </button>
-            <div className="mt-3 text-sm text-red-600">Missing collection item id in route.</div>
+            <div className="mt-3 text-sm text-red-600">Missing catalogue item id in route.</div>
           </div>
         ) : loading ? (
           <div className="text-sm text-gray-500">Loading…</div>
@@ -179,7 +200,7 @@ export default function CollectionItemPage() {
               ← Back
             </button>
             <div className="mt-3 text-sm text-gray-700">
-              {authOpen ? "Sign in to view your collection item." : "Collection item not found."}
+              {authOpen ? "Sign in to view your collection item." : "No collection entry found for this item."}
             </div>
           </div>
         ) : (
@@ -188,7 +209,6 @@ export default function CollectionItemPage() {
             collectionItemId={row.id}
             catalogItemId={row.catalog_item_id}
             catalogMeta={row.catalog}
-            // Keep auth handling consistent with your catalog page pattern.
             onRequireAuth={() => setAuthOpen(true)}
           />
         )}
@@ -196,4 +216,3 @@ export default function CollectionItemPage() {
     </>
   );
 }
-
