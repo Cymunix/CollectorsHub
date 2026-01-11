@@ -2,10 +2,19 @@
 
 import React, { useMemo, useState } from "react";
 
+import Header from "@/components/Header";
+import SecondaryNav from "@/components/SecondaryNav";
+
 import BuildingBlocksConditionCard from "./BuildingBlocksConditionCard";
 import MinifigPanel from "./MinifigPanel";
 import ConditionPill from "./ConditionPill";
 import ListForSaleModal from "./ListForSaleModal";
+
+// If you have these on your catalog page, reuse them:
+import ItemImage from "@/app/catalog/[id]/blocks/item_image";
+import ItemValueBlock from "@/app/catalog/[id]/blocks/item_value_block";
+import ItemDescription from "@/app/catalog/[id]/blocks/item_description";
+// ^ if paths differ, change them to wherever your catalog page imports from.
 
 type CatalogLite = {
   id: string;
@@ -42,87 +51,158 @@ type Props = {
 
 function toLocalDateTime(s: string | null) {
   if (!s) return "";
-  try {
-    return new Date(s).toLocaleString();
-  } catch {
-    return "";
-  }
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleString();
 }
 
-export default function CollectionItemScreen({ item, onRequireAuth }: Props) {
+function centsToCad(cents: number | null): number {
+  if (cents == null) return 0;
+  const n = cents / 100;
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
+}
+
+export default function CollectionItemScreen({ item }: Props) {
   const [sellModalOpen, setSellModalOpen] = useState(false);
 
-  const kind = useMemo(() => (item.catalog?.kind ?? "").toLowerCase().trim(), [item.catalog?.kind]);
+  const kind = useMemo(
+    () => String(item.catalog?.kind ?? "").toLowerCase().trim(),
+    [item.catalog?.kind]
+  );
+
   const isBuildingBlocks = kind === "building_blocks";
   const isMinifig = kind === "minifig";
+  const graded = Boolean(item.graded);
 
-  // Strict: no default/fake price
-  const suggestedPriceCad: number | null = null;
+  const itemName = item.catalog?.name?.trim() || "Untitled item";
+  const defaultPriceCad = useMemo(
+    () => centsToCad(item.paid_price_cents),
+    [item.paid_price_cents]
+  );
 
   return (
-    <div className="rounded-3xl border bg-white shadow-sm p-5">
-      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="text-sm font-semibold text-gray-900">Copy</div>
+    <div className="min-h-screen bg-slate-50">
+      <Header />
+      <SecondaryNav />
 
-            <ConditionPill userCollectionItemId={item.id} readOnly />
+      <main className="mx-auto max-w-6xl px-4 pb-12 pt-6">
+        {/* Title row (catalog screen usually has a title section) */}
+        <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+          <div className="min-w-0">
+            <div className="text-2xl font-semibold text-gray-900 truncate">
+              {itemName}
+            </div>
 
-            {isBuildingBlocks ? (
-              <span className="rounded-full border bg-white px-2 py-1 text-xs text-gray-600">LEGO set copy</span>
-            ) : null}
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-gray-600">
+              <span className="inline-flex items-center gap-2">
+                <ConditionPill userCollectionItemId={item.id} readOnly />
+              </span>
 
-            {isMinifig ? (
-              <span className="rounded-full border bg-white px-2 py-1 text-xs text-gray-600">Minifig</span>
-            ) : null}
+              {isBuildingBlocks ? (
+                <span className="rounded-full border bg-white px-2 py-1 text-xs text-gray-600">
+                  LEGO set copy
+                </span>
+              ) : null}
+
+              {isMinifig ? (
+                <span className="rounded-full border bg-white px-2 py-1 text-xs text-gray-600">
+                  Minifig
+                </span>
+              ) : null}
+
+              {item.created_at ? (
+                <span className="text-xs text-gray-500">
+                  Added: {toLocalDateTime(item.created_at)}
+                </span>
+              ) : null}
+            </div>
           </div>
 
-          <div className="mt-1 text-xs text-gray-500">{toLocalDateTime(item.created_at)}</div>
+          <button
+            type="button"
+            onClick={() => setSellModalOpen(true)}
+            className="inline-flex items-center justify-center rounded-xl bg-black px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+          >
+            List for sale
+          </button>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setSellModalOpen(true)}
-          className="inline-flex items-center justify-center rounded-xl bg-black px-4 py-2 text-sm font-medium text-white hover:opacity-90"
-        >
-          List for sale
-        </button>
-      </div>
+        {/* Main grid — this is what makes it look like the catalog screen */}
+        <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_360px]">
+          {/* Left column: image + description + condition panels */}
+          <div className="space-y-6">
+            <div className="rounded-3xl border bg-white p-5 shadow-sm">
+              {/* Reuse the catalog image block if you have it */}
+              <ItemImage />
+            </div>
 
-      <div className="mt-4 space-y-4">
-        {/* Only show BB condition + minifigs when (a) building blocks, (b) not graded */}
-        {!item.graded && isBuildingBlocks ? (
-          <>
-            <BuildingBlocksConditionCard conditionJson={item.condition_meta} />
-            <MinifigPanel userCollectionItemId={item.id} />
-          </>
-        ) : null}
+            <div className="rounded-3xl border bg-white p-5 shadow-sm">
+              {/* Reuse the catalog description block if you have it */}
+              <ItemDescription />
+            </div>
 
-        {/* If graded, show graded info only */}
-        {item.graded ? (
-          <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-gray-700">
-            Graded item{item.grade != null ? ` • Grade ${item.grade}` : ""}.
+            {/* Your collection-specific condition area, styled like catalog blocks */}
+            <div className="rounded-3xl border bg-white p-5 shadow-sm">
+              <div className="text-sm font-semibold text-gray-900">Condition</div>
+              <div className="mt-1 text-xs text-gray-500">
+                This is specific to your copy.
+              </div>
+
+              <div className="mt-4 space-y-4">
+                {graded ? (
+                  <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-gray-700">
+                    Graded item{item.grade != null ? ` • Grade ${item.grade}` : ""}.
+                  </div>
+                ) : null}
+
+                {!graded && isBuildingBlocks ? (
+                  <>
+                    <BuildingBlocksConditionCard conditionJson={item.condition_meta} />
+                    <MinifigPanel userCollectionItemId={item.id} />
+                  </>
+                ) : null}
+
+                {!graded && !isBuildingBlocks ? (
+                  <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-gray-600">
+                    Standard item condition applies.
+                  </div>
+                ) : null}
+
+                <div className="text-sm text-gray-700 whitespace-pre-wrap">
+                  {item.notes?.trim() ? item.notes : "No notes."}
+                </div>
+              </div>
+            </div>
           </div>
-        ) : null}
 
-        {/* Non-building-blocks and not graded: generic message */}
-        {!item.graded && !isBuildingBlocks ? (
-          <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-gray-600">Standard item condition applies.</div>
-        ) : null}
+          {/* Right column: value/actions (catalog screen style sidebar) */}
+          <aside className="space-y-6">
+            <div className="rounded-3xl border bg-white p-5 shadow-sm">
+              {/* Reuse catalog “value block” if you have it */}
+              <ItemValueBlock />
+            </div>
 
-        {/* Notes */}
-        <div className="text-sm text-gray-700 whitespace-pre-wrap">{item.notes?.trim() ? item.notes : "No notes."}</div>
-      </div>
+            {/* You can add other sidebar cards here to match catalog screen */}
+            <div className="rounded-3xl border bg-white p-5 shadow-sm">
+              <div className="text-sm font-semibold text-gray-900">Your copy</div>
+              <div className="mt-2 text-sm text-gray-700">
+                Paid: ${defaultPriceCad.toFixed(2)} CAD
+              </div>
+              <div className="mt-3 text-xs text-gray-500">
+                More copy-specific stats can live here (sale history, watchers, etc).
+              </div>
+            </div>
+          </aside>
+        </div>
 
-      <ListForSaleModal
-  open={sellModalOpen}
-  onClose={() => setSellModalOpen(false)}
-  catalogItemId={item.catalog_item_id}
-  userCollectionItemId={item.id}
-  itemName={item.catalog?.name ?? "Untitled item"}
-  defaultPriceCad={0}
-/>
+        <ListForSaleModal
+          open={sellModalOpen}
+          onClose={() => setSellModalOpen(false)}
+          catalogItemId={item.catalog_item_id}
+          userCollectionItemId={item.id}
+          itemName={itemName}
+          defaultPriceCad={defaultPriceCad}
+        />
+      </main>
     </div>
   );
 }
-
