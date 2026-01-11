@@ -15,6 +15,18 @@ function clampQty(v: any) {
   return Number.isFinite(n) ? Math.max(0, n) : 0;
 }
 
+function isAuthishError(e: any) {
+  const s = String(e?.message ?? e ?? "").toLowerCase();
+  return (
+    s.includes("jwt") ||
+    s.includes("not authenticated") ||
+    s.includes("auth") ||
+    s.includes("permission") ||
+    s.includes("row level security") ||
+    s.includes("rls")
+  );
+}
+
 export default function ListForSaleModal(props: {
   open: boolean;
   onClose: () => void;
@@ -22,8 +34,9 @@ export default function ListForSaleModal(props: {
   userCollectionItemId: string;
   itemName: string;
   defaultPriceCad: number;
+  onRequireAuth?: () => void; // ✅ NEW
 }) {
-  const { open, onClose, catalogItemId, userCollectionItemId, itemName, defaultPriceCad } = props;
+  const { open, onClose, catalogItemId, userCollectionItemId, itemName, defaultPriceCad, onRequireAuth } = props;
 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -36,12 +49,23 @@ export default function ListForSaleModal(props: {
   // load per-copy minifigs so you can choose which are included in the listing
   useEffect(() => {
     let cancelled = false;
+
     const load = async () => {
       if (!open) return;
+
       setErr(null);
       setLoading(true);
 
       try {
+        // Quick auth check so we can open the modal prompt cleanly
+        const { data: auth } = await supabase.auth.getUser();
+        if (cancelled) return;
+
+        if (!auth?.user) {
+          onRequireAuth?.();
+          throw new Error("Not authenticated");
+        }
+
         const res = await supabase
           .from("user_collection_item_minifigs")
           .select(
@@ -81,8 +105,11 @@ export default function ListForSaleModal(props: {
 
         if (!cancelled) setRows(mapped);
       } catch (e: any) {
-        if (!cancelled) setErr(e?.message || "Failed to load minifigs");
-        if (!cancelled) setRows([]);
+        if (cancelled) return;
+
+        if (isAuthishError(e)) onRequireAuth?.();
+        setErr(e?.message || "Failed to load minifigs");
+        setRows([]);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -92,7 +119,7 @@ export default function ListForSaleModal(props: {
     return () => {
       cancelled = true;
     };
-  }, [open, userCollectionItemId]);
+  }, [open, userCollectionItemId, onRequireAuth]);
 
   useEffect(() => {
     if (!open) return;
@@ -115,6 +142,12 @@ export default function ListForSaleModal(props: {
 
     setLoading(true);
     try {
+      const { data: auth } = await supabase.auth.getUser();
+      if (!auth?.user) {
+        onRequireAuth?.();
+        throw new Error("Not authenticated");
+      }
+
       const listing = await createMarketplaceListing({
         userCollectionItemId,
         catalogItemId,
@@ -130,6 +163,7 @@ export default function ListForSaleModal(props: {
 
       onClose();
     } catch (e: any) {
+      if (isAuthishError(e)) onRequireAuth?.();
       setErr(e?.message || "Failed to create listing");
     } finally {
       setLoading(false);
