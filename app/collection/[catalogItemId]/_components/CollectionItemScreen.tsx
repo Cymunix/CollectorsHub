@@ -1,324 +1,105 @@
+// app/collection/[catalogItemId]/_components/CollectionItemScreen.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import React, { useMemo } from "react";
+import BuildingBlocksConditionCard from "@/components/BuildingBlocksConditionCard"; // Adjust import path as needed
+import MinifigPanel from "@/components/MinifigPanel"; // Adjust import path
+import ConditionPill from "@/components/ConditionPill"; // Adjust import path
+import ListForSaleModal from "@/components/ListForSaleModal"; // Adjust import path
 
-import { useCollectionItem } from "../_hooks/useCollectionItem";
-import { loadItemWorthCad } from "../_lib/worth";
-
-import CopiesList from "./CopiesList";
-import VariantsTab from "./VariantsTab";
-import ReviewsTab from "./ReviewsTab";
-import SalesHistoryTab from "./SalesHistoryTab";
-
-function cn(...xs: Array<string | false | null | undefined>) {
-  return xs.filter(Boolean).join(" ");
-}
-
-type TabKey = "overview" | "copies" | "variants" | "reviews" | "sales";
-
-type CatalogLite = {
+// Match the Type from the parent
+type CollectionItemLite = {
   id: string;
-  name: string | null;
-  kind: string | null;
+  catalog_item_id: string;
+  // ... other fields matching parent ...
+  condition_meta: any | null;
+  graded: boolean | null;
+  grade: number | null;
+  paid_price_cents: number | null;
+  notes: string | null;
+  created_at: string | null;
+  catalog: {
+    id: string;
+    name: string | null;
+    kind: string | null;
+  } | null;
 };
-
-type Props = {
-  collectionItemId: string;
-  catalogItemId: string;
-  catalogMeta: CatalogLite | null;
-  onRequireAuth?: () => void;
-};
-
-function moneyCad(n: number | null) {
-  if (n == null || !Number.isFinite(n)) return "—";
-  return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD" }).format(n);
-}
-
-function looksLikeAuthError(e: unknown) {
-  const s = String(e ?? "").toLowerCase();
-  return (
-    s.includes("jwt") ||
-    s.includes("not authenticated") ||
-    s.includes("auth") ||
-    s.includes("permission") ||
-    s.includes("row level security") ||
-    s.includes("rls")
-  );
-}
 
 export default function CollectionItemScreen({
-  collectionItemId,
-  catalogItemId,
-  catalogMeta,
+  item,
   onRequireAuth,
-}: Props) {
-  const router = useRouter();
+}: {
+  item: CollectionItemLite;
+  onRequireAuth: () => void;
+}) {
+  const [sellModalOpen, setSellModalOpen] = React.useState(false);
 
-  // Keep existing behaviour: screen fetches collection details via catalogItemId
-  // (We can later refactor hook to accept collectionItemId instead.)
-  const { loading, err, item, photoUrl, copies, stats, refresh } = useCollectionItem(catalogItemId);
+  // ✅ FIX 1: Determine if it's LEGO immediately. No async fetch needed.
+  const isBuildingBlocks = useMemo(() => {
+    const k = (item.catalog?.kind ?? "").toLowerCase().trim();
+    return k === "building_blocks";
+  }, [item.catalog]);
 
-  const [tab, setTab] = useState<TabKey>("overview");
-
-  const [worthCad, setWorthCad] = useState<number | null>(null);
-  const [worthLoading, setWorthLoading] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const run = async () => {
-      if (!catalogItemId) return;
-
-      setWorthLoading(true);
-      try {
-        const v = await loadItemWorthCad(catalogItemId);
-        if (!cancelled) setWorthCad(v);
-      } finally {
-        if (!cancelled) setWorthLoading(false);
-      }
-    };
-
-    run();
-    return () => {
-      cancelled = true;
-    };
-  }, [catalogItemId]);
-
-  // If the hook errors because of auth, open modal via page callback
-  useEffect(() => {
-    if (!err) return;
-    if (looksLikeAuthError(err)) onRequireAuth?.();
-  }, [err, onRequireAuth]);
-
-  const title = useMemo(() => {
-    const a = item?.name?.trim();
-    const b = catalogMeta?.name?.trim();
-    return a || b || "Untitled item";
-  }, [item?.name, catalogMeta?.name]);
-
-  const subtitle = useMemo(() => {
-    const total = stats.total;
-    if (!total) return "No copies yet";
-    return `${total} copy${total === 1 ? "" : "ies"} • ${stats.raw} raw • ${stats.graded} graded`;
-  }, [stats]);
-
-  const tabs = useMemo(
-    () =>
-      [
-        { key: "overview" as const, label: "Overview" },
-        { key: "copies" as const, label: "Copies" },
-        { key: "variants" as const, label: "Variants" },
-        { key: "reviews" as const, label: "Reviews" },
-        { key: "sales" as const, label: "Sales History" },
-      ] as const,
-    []
-  );
-
-  if (!catalogItemId) {
-    return (
-      <div className="mx-auto max-w-6xl px-4 py-6">
-        <div className="rounded-3xl border bg-white p-6 text-sm text-red-700">Missing catalogue item id.</div>
-      </div>
-    );
-  }
-
-  if (loading) {
-    return (
-      <div className="mx-auto max-w-6xl px-4 py-6">
-        <div className="rounded-3xl border bg-white p-6 text-sm text-gray-600">Loading…</div>
-      </div>
-    );
-  }
-
-  if (err) {
-    return (
-      <div className="mx-auto max-w-6xl px-4 py-6">
-        <div className="rounded-3xl border border-red-200 bg-red-50 p-6 text-sm text-red-700">{String(err)}</div>
-      </div>
-    );
-  }
+  // ✅ FIX 2: Handle Price Logic (Assuming worthCad passed or calculated)
+  // If you are passing worth via props, use that. 
+  // If worth is not passed, default to null. DO NOT default to 20.
+  const suggestedPrice = null; // Update this if you have worth data
 
   return (
-    <div className="mx-auto max-w-6xl px-4 pb-16 pt-6 space-y-5">
-      {/* Top nav row */}
-      <div className="flex items-center justify-between gap-3">
+    <div className="rounded-3xl border bg-white shadow-sm p-5">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+           <div className="flex flex-wrap items-center gap-2">
+              <div className="text-sm font-semibold text-gray-900">Copy #1</div>
+              <ConditionPill userCollectionItemId={item.id} readOnly />
+              
+              {/* ✅ Only show this if confirmed LEGO */}
+              {isBuildingBlocks && (
+                <span className="rounded-full border bg-white px-2 py-1 text-xs text-gray-600">
+                  LEGO set copy
+                </span>
+              )}
+           </div>
+           <div className="mt-1 text-xs text-gray-500">
+              {item.created_at ? new Date(item.created_at).toLocaleString() : ""}
+           </div>
+        </div>
+        
         <button
-          type="button"
-          className="rounded-xl border bg-white px-3 py-2 text-sm hover:bg-gray-50"
-          onClick={() => router.push("/collection")}
+           onClick={() => setSellModalOpen(true)}
+           className="inline-flex items-center justify-center rounded-xl bg-black px-4 py-2 text-sm font-medium text-white"
         >
-          ← Back
+           List for sale
         </button>
-
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            className={cn(
-              "rounded-xl px-3 py-2 text-sm",
-              loading ? "border bg-gray-100 text-gray-500" : "border bg-white hover:bg-gray-50"
-            )}
-            onClick={refresh}
-            disabled={loading}
-          >
-            Refresh
-          </button>
-
-          <button
-            type="button"
-            className="rounded-xl border bg-white px-3 py-2 text-sm hover:bg-gray-50"
-            onClick={() => router.push(`/catalog/${encodeURIComponent(catalogItemId)}`)}
-            title="Open the catalogue page for this item"
-          >
-            Open catalogue item →
-          </button>
-        </div>
       </div>
 
-      {/* Hero (catalog-style) */}
-      <div className="rounded-3xl border bg-white shadow-sm overflow-hidden">
-        <div className="grid grid-cols-1 md:grid-cols-[260px_1fr]">
-          <div className="bg-slate-50">
-            {photoUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={photoUrl} alt={title} className="h-full w-full object-cover aspect-[4/3]" />
-            ) : (
-              <div className="aspect-[4/3] flex items-center justify-center text-xs text-gray-400">No photo</div>
-            )}
-          </div>
+      <div className="mt-4 space-y-4">
+         {/* ✅ FIX 3: Strict Logic for Minifig Panel */}
+         {!item.graded && isBuildingBlocks ? (
+            <>
+              <BuildingBlocksConditionCard conditionJson={item.condition_meta} />
+              <MinifigPanel userCollectionItemId={item.id} />
+            </>
+         ) : null}
 
-          <div className="p-6">
-            <div className="text-2xl font-semibold tracking-tight">{title}</div>
-            <div className="mt-1 text-sm text-gray-500">{subtitle}</div>
-
-            <div className="mt-2 text-xs text-gray-400">
-              Collection item: <span className="font-mono">{collectionItemId}</span>
-              {catalogMeta?.kind ? (
-                <>
-                  {" "}
-                  • <span className="uppercase tracking-wide">{catalogMeta.kind}</span>
-                </>
-              ) : null}
+         {/* Standard Note for Non-LEGO */}
+         {!item.graded && !isBuildingBlocks && (
+            <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-gray-600">
+               Standard item condition applies.
             </div>
+         )}
 
-            <div className="mt-4 flex flex-wrap gap-2">
-              <Chip label="Copies" value={String(stats.total)} />
-              <Chip label="Raw" value={String(stats.raw)} />
-              <Chip label="Graded" value={String(stats.graded)} />
-              <Chip label="Value" value={worthLoading ? "Loading…" : worthCad == null ? "—" : moneyCad(worthCad)} />
-            </div>
-
-            <div className="mt-5 flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="rounded-xl bg-black text-white px-4 py-2 text-sm hover:opacity-90"
-                onClick={() => setTab("copies")}
-              >
-                View copies
-              </button>
-
-              <button
-                type="button"
-                className="rounded-xl border bg-white px-4 py-2 text-sm hover:bg-gray-50"
-                onClick={() => setTab("overview")}
-              >
-                Overview
-              </button>
-            </div>
-          </div>
-        </div>
+         {/* Notes */}
+         <div className="text-sm text-gray-700 whitespace-pre-wrap">
+            {item.notes || "No notes."}
+         </div>
       </div>
-
-      {/* Tabs (catalog-style) */}
-      <div className="rounded-3xl border bg-white shadow-sm overflow-hidden">
-        <div className="border-b bg-white">
-          <div className="p-4 flex flex-wrap gap-2">
-            {tabs.map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                onClick={() => setTab(t.key)}
-                className={cn(
-                  "rounded-full border px-4 py-2 text-sm transition",
-                  tab === t.key ? "bg-gray-900 text-white border-gray-900" : "bg-white hover:bg-gray-50"
-                )}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="p-4">
-          {tab === "overview" && (
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_360px]">
-              <div className="rounded-2xl border bg-gray-50 p-4">
-                <div className="text-lg font-semibold">At a glance</div>
-                <div className="mt-1 text-sm text-gray-600">
-                  This is your collection view of the item: what you own, what it’s worth, and what’s included per copy.
-                </div>
-
-                <div className="mt-4 grid gap-3 md:grid-cols-3">
-                  <Stat label="Copies" value={String(stats.total)} />
-                  <Stat label="Raw" value={String(stats.raw)} />
-                  <Stat label="Graded" value={String(stats.graded)} />
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                <div className="rounded-2xl border bg-white p-4">
-                  <div className="text-sm font-semibold">Estimated value</div>
-                  <div className="mt-2 text-sm text-gray-600">
-                    {worthLoading ? (
-                      "Loading…"
-                    ) : worthCad == null ? (
-                      "No value data yet."
-                    ) : (
-                      <>
-                        <div className="text-2xl font-semibold text-gray-900">{moneyCad(worthCad)}</div>
-                        <div className="mt-1 text-xs text-gray-500">Based on catalogue pricing data</div>
-                      </>
-                    )}
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border bg-white p-4">
-                  <div className="text-sm font-semibold">Next actions</div>
-                  <div className="mt-2 text-sm text-gray-600">
-                    Use <span className="font-semibold">Copies</span> to manage each copy’s condition and included items.
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {tab === "copies" && (
-            <CopiesList catalogItemId={catalogItemId} itemName={title} copies={copies as any} worthCad={worthCad} />
-          )}
-
-          {tab === "variants" && <VariantsTab catalogItemId={catalogItemId} />}
-          {tab === "reviews" && <ReviewsTab catalogItemId={catalogItemId} />}
-          {tab === "sales" && <SalesHistoryTab catalogItemId={catalogItemId} />}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Chip({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1 text-sm">
-      <span className="text-gray-600">{label}</span>
-      <span className="font-semibold text-gray-900">{value}</span>
-    </div>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl border bg-white p-4">
-      <div className="text-xs text-gray-500">{label}</div>
-      <div className="mt-1 text-lg font-semibold">{value}</div>
+      
+      <ListForSaleModal 
+        open={sellModalOpen}
+        onClose={() => setSellModalOpen(false)}
+        // ... pass other props ...
+      />
     </div>
   );
 }
