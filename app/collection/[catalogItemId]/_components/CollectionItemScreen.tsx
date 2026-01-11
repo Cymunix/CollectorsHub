@@ -59,6 +59,7 @@ export default function CollectionItemScreen({ item }: Props) {
 
   const itemName = item.catalog?.name?.trim() || "Untitled item";
 
+  // ✅ Strict kind gate. Nothing else is allowed to show minifigs.
   const kind = useMemo(
     () => String(item.catalog?.kind ?? "").toLowerCase().trim(),
     [item.catalog?.kind]
@@ -76,7 +77,7 @@ export default function CollectionItemScreen({ item }: Props) {
 
   return (
     <div className="mx-auto max-w-6xl px-4 pb-12 pt-6">
-      {/* Title row (NO Header/Nav here — layout/page owns that) */}
+      {/* Title row */}
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div className="min-w-0">
           <h1 className="truncate text-2xl font-semibold text-gray-900">
@@ -127,22 +128,34 @@ export default function CollectionItemScreen({ item }: Props) {
                 </div>
               ) : null}
 
-              {/* ✅ Minifigs ONLY for building_blocks and ONLY when not graded */}
+              {/* ✅ MINIFIGS CAN ONLY APPEAR HERE:
+                  - must be building_blocks
+                  - must NOT be graded
+               */}
               {!graded && isBuildingBlocks ? (
                 <>
-                  <BuildingBlocksConditionCard conditionJson={item.condition_meta} />
-                  <MinifigPanel userCollectionItemId={item.id} />
+                  <BuildingBlocksConditionCard
+                    conditionJson={item.condition_meta}
+                  />
+                  <MinifigPanel
+                    userCollectionItemId={item.id}
+                    // If you applied the upgraded MinifigPanel that supports this prop,
+                    // it prevents "No minifigs..." noise even for LEGO copies without rows.
+                    hideIfEmpty
+                  />
                 </>
               ) : null}
 
-              {/* ✅ Non-LEGO: do NOT mention minifigs at all */}
+              {/* ✅ Non-LEGO and not graded: no minifig mention, ever */}
               {!graded && !isBuildingBlocks ? (
                 <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-gray-600">
                   Standard item condition applies.
                 </div>
               ) : null}
 
-              <div className="text-sm text-gray-700 whitespace-pre-wrap">{notes}</div>
+              <div className="text-sm text-gray-700 whitespace-pre-wrap">
+                {notes}
+              </div>
             </div>
           </div>
         </div>
