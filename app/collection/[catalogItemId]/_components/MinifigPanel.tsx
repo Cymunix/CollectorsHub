@@ -34,13 +34,18 @@ function clampQty(v: any) {
   return Number.isFinite(n) ? Math.max(0, n) : 0;
 }
 
-function normalizeStorageUrl(raw: string | null, bucketEnvKey: string, fallbackBucket: string): string | null {
+function normalizeStorageUrl(
+  raw: string | null,
+  bucketEnvKey: string,
+  fallbackBucket: string
+): string | null {
   if (!raw) return null;
   const s = String(raw).trim();
   if (!s) return null;
   if (s.startsWith("http://") || s.startsWith("https://")) return s;
 
-  const bucket = (process.env[bucketEnvKey] as string | undefined) ?? fallbackBucket;
+  const bucket =
+    (process.env[bucketEnvKey] as string | undefined) ?? fallbackBucket;
   try {
     const { data } = supabase.storage.from(bucket).getPublicUrl(s);
     return data?.publicUrl ?? null;
@@ -52,9 +57,22 @@ function normalizeStorageUrl(raw: string | null, bucketEnvKey: string, fallbackB
 export default function MinifigPanel({
   userCollectionItemId,
   readOnly = false,
+  hideIfEmpty = true,
+  title = "Minifigs",
 }: {
   userCollectionItemId: string;
   readOnly?: boolean;
+
+  /**
+   * If true (default), renders NOTHING when there are zero minifig rows.
+   * This prevents non-LEGO items from showing "Minifigs" / "No minifigs…" noise.
+   */
+  hideIfEmpty?: boolean;
+
+  /**
+   * Optional title (default: "Minifigs"). If you pass "" it hides the title bar.
+   */
+  title?: string;
 }) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -62,7 +80,8 @@ export default function MinifigPanel({
   const [savingIds, setSavingIds] = useState<Record<string, boolean>>({});
   const inflight = useRef<Record<string, number>>({}); // per-row request versioning
 
-  const setSaving = (id: string, v: boolean) => setSavingIds((p) => ({ ...p, [id]: v }));
+  const setSaving = (id: string, v: boolean) =>
+    setSavingIds((p) => ({ ...p, [id]: v }));
 
   const load = useCallback(async () => {
     if (!userCollectionItemId) return;
@@ -119,9 +138,16 @@ export default function MinifigPanel({
     setErr(null);
 
     // optimistic update
-    setRows((prev) => prev.map((r) => (r.id === rowId ? { ...r, ...patch } : r)));
+    setRows((prev) =>
+      prev.map((r) => (r.id === rowId ? { ...r, ...patch } : r))
+    );
 
-    const res = await supabase.from("user_collection_item_minifigs").update(patch).eq("id", rowId).select("id").single();
+    const res = await supabase
+      .from("user_collection_item_minifigs")
+      .update(patch)
+      .eq("id", rowId)
+      .select("id")
+      .single();
 
     // ignore if a newer update already started
     if (inflight.current[rowId] !== v) return;
@@ -134,9 +160,16 @@ export default function MinifigPanel({
     setSaving(rowId, false);
   }
 
+  const shouldHideCompletely =
+    hideIfEmpty && !loading && !err && rows.length === 0;
+
   const body = useMemo(() => {
     if (loading) {
-      return <div className="rounded-xl bg-gray-50 border px-4 py-3 text-sm text-gray-500">Loading minifigs…</div>;
+      return (
+        <div className="rounded-xl bg-gray-50 border px-4 py-3 text-sm text-gray-500">
+          Loading minifigs…
+        </div>
+      );
     }
 
     if (err) {
@@ -148,6 +181,7 @@ export default function MinifigPanel({
     }
 
     if (rows.length === 0) {
+      // If hideIfEmpty is true, we won't render this at all.
       return (
         <div className="rounded-xl bg-gray-50 border px-4 py-3 text-sm text-gray-500">
           No minifigs recorded for this copy.
@@ -185,8 +219,12 @@ export default function MinifigPanel({
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="text-sm font-semibold text-gray-900 truncate">{label}</div>
-                      <div className="text-xs text-gray-500 truncate">{number ? `#${number}` : "No number"}</div>
+                      <div className="text-sm font-semibold text-gray-900 truncate">
+                        {label}
+                      </div>
+                      <div className="text-xs text-gray-500 truncate">
+                        {number ? `#${number}` : "No number"}
+                      </div>
                     </div>
 
                     <label className="flex items-center gap-2 text-sm text-gray-700 select-none">
@@ -197,8 +235,10 @@ export default function MinifigPanel({
                         disabled={readOnly || busy}
                         onChange={(e) => {
                           const included = e.target.checked;
-                          // if excluded, force qty to 0 (prevents nonsense data)
-                          updateRow(r.id, { included, included_qty: included ? qty : 0 });
+                          updateRow(r.id, {
+                            included,
+                            included_qty: included ? qty : 0,
+                          });
                         }}
                       />
                       Included
@@ -217,7 +257,11 @@ export default function MinifigPanel({
                         disabled={readOnly || busy || !r.included}
                         onChange={(e) => {
                           const n = clampQty(e.target.value);
-                          setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, included_qty: n } : x)));
+                          setRows((prev) =>
+                            prev.map((x) =>
+                              x.id === r.id ? { ...x, included_qty: n } : x
+                            )
+                          );
                         }}
                         onBlur={(e) => {
                           const n = clampQty(e.target.value);
@@ -234,12 +278,15 @@ export default function MinifigPanel({
                       disabled={readOnly || busy}
                       onChange={(e) => {
                         const v = e.target.value;
-                        setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, notes: v } : x)));
+                        setRows((prev) =>
+                          prev.map((x) => (x.id === r.id ? { ...x, notes: v } : x))
+                        );
                       }}
                       onBlur={(e) => {
                         const v = e.target.value.trim();
                         const next = v.length ? v : null;
-                        if ((next ?? null) !== (r.notes ?? null)) updateRow(r.id, { notes: next });
+                        if ((next ?? null) !== (r.notes ?? null))
+                          updateRow(r.id, { notes: next });
                       }}
                     />
 
@@ -254,20 +301,28 @@ export default function MinifigPanel({
     );
   }, [err, loading, rows, readOnly, savingIds, load]);
 
+  // ✅ If empty and hideIfEmpty, render nothing at all
+  if (shouldHideCompletely) return null;
+
+  const showTitleBar = title.trim().length > 0;
+
   return (
-    <div className="mt-4">
-      <div className="flex items-center justify-between mb-2">
-        <div className="text-sm font-semibold text-gray-900">Minifigs</div>
-        {!readOnly ? (
-          <button
-            type="button"
-            className="text-xs text-gray-500 hover:text-gray-900 underline underline-offset-4"
-            onClick={load}
-          >
-            Refresh
-          </button>
-        ) : null}
-      </div>
+    <div className={showTitleBar ? "mt-4" : ""}>
+      {showTitleBar ? (
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-sm font-semibold text-gray-900">{title}</div>
+          {!readOnly ? (
+            <button
+              type="button"
+              className="text-xs text-gray-500 hover:text-gray-900 underline underline-offset-4"
+              onClick={load}
+            >
+              Refresh
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       {body}
     </div>
   );
