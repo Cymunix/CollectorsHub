@@ -1,4 +1,5 @@
 {
+  "/page": "app/page.js",
   "/catalog/page": "app/catalog/page.js",
   "/collection/page": "app/collection/page.js",
   "/collection/[catalogItemId]/page": "app/collection/[catalogItemId]/page.js"
