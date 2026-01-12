@@ -1,11 +1,10 @@
-// app/collection/[catalogItemId]/page.tsx
 "use client";
 
 import React, { useMemo, useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"; // or "@supabase/ssr" depending on your version
 
 import AuthModal from "@/components/AuthModal";
-// We import the component AND the type definition
 import CollectionItemScreen, { CollectionItemLite } from "./_components/CollectionItemScreen";
 
 function getRouteCatalogItemId(params: unknown): string {
@@ -22,44 +21,66 @@ export default function CollectionItemPage() {
   const [loading, setLoading] = useState(true);
   const [item, setItem] = useState<CollectionItemLite | null>(null);
 
-  // ------------------------------------------------------------------
-  // DATA FETCHING LAYER
-  // Since this is a Client Component, we fetch data on mount.
-  // Replace the mock object below with your actual API call (e.g. Supabase)
-  // ------------------------------------------------------------------
+  // Initialize Supabase client
+  const supabase = createClientComponentClient();
+
   useEffect(() => {
     if (!catalogItemId) return;
 
-    setLoading(true);
+    const fetchItem = async () => {
+      setLoading(true);
+      
+      try {
+        // 1. Get current user
+        const { data: { user } } = await supabase.auth.getUser();
+        
+        if (!user) {
+          console.error("No user logged in");
+          setLoading(false);
+          return;
+        }
 
-    // TODO: Replace this timeout with: const data = await fetchCollectionItem(catalogItemId);
-    const timer = setTimeout(() => {
-      const mockItem: CollectionItemLite = {
-        id: "mock-collection-id",
-        catalog_item_id: catalogItemId,
-        condition_meta: { status: "new" },
-        graded: false,
-        grade: null,
-        paid_price_cents: 2499,
-        notes: "Loaded from Client Component page.",
-        created_at: new Date().toISOString(),
-        catalog: {
-          id: "cat-1",
-          name: "Mock Item Title",
-          kind: "building_blocks",
-        },
-      };
+        // 2. Fetch the real item from the database
+        // We match 'catalog_item_id' from the URL and ensure it belongs to the user
+        const { data, error } = await supabase
+          .from("collection_items")
+          .select(`
+            *,
+            catalog:catalog_items (
+              id,
+              name,
+              kind
+            )
+          `)
+          .eq("catalog_item_id", catalogItemId)
+          .eq("user_id", user.id)
+          .maybeSingle(); // Use maybeSingle() to handle "not found" gracefully
 
-      setItem(mockItem);
-      setLoading(false);
-    }, 500);
+        if (error) {
+          console.error("Error fetching item:", error);
+        }
 
-    return () => clearTimeout(timer);
-  }, [catalogItemId]);
+        // 3. Set the real data
+        if (data) {
+            // We cast the data to match your TypeScript type
+            // You might need to adjust the select query above if your relation name isn't 'catalog_items'
+            setItem(data as unknown as CollectionItemLite);
+        } else {
+            setItem(null);
+        }
+
+      } catch (err) {
+        console.error("Unexpected error:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchItem();
+  }, [catalogItemId, supabase]);
 
   // ------------------------------------------------------------------
 
-  // 1. Handle missing Route Param
   if (!catalogItemId) {
     return (
       <main className="mx-auto max-w-6xl px-4 pt-6">
@@ -73,34 +94,36 @@ export default function CollectionItemPage() {
     );
   }
 
-  // 2. Handle Loading State
   if (loading) {
     return (
       <main className="mx-auto max-w-6xl px-4 pt-12 flex justify-center">
-        <div className="text-sm text-gray-500">Loading item...</div>
+        <div className="text-sm text-gray-500">Loading collection...</div>
       </main>
     );
   }
 
-  // 3. Handle Item Not Found (after fetching)
   if (!item) {
     return (
       <main className="mx-auto max-w-6xl px-4 pt-6">
         <div className="rounded-xl border bg-white p-8 text-center text-gray-500">
           Item not found in your collection.
         </div>
+        <div className="text-center mt-4">
+             <button onClick={() => router.back()} className="text-sm text-blue-600 hover:underline">
+               Go back
+             </button>
+        </div>
       </main>
     );
   }
 
-  // 4. Render Success State
   return (
     <>
       <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
 
       <main className="bg-gray-50 min-h-screen">
         <CollectionItemScreen
-          item={item} // <--- The Type Error is fixed here
+          item={item}
           catalogItemId={catalogItemId}
           onRequireAuth={() => setAuthOpen(true)}
         />
