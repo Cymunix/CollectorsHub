@@ -2,8 +2,8 @@
 
 import React, { useMemo, useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"; // or "@supabase/ssr" depending on your version
 
+import { supabase } from "@/lib/supabaseClient";
 import AuthModal from "@/components/AuthModal";
 import CollectionItemScreen, { CollectionItemLite } from "./_components/CollectionItemScreen";
 
@@ -21,65 +21,68 @@ export default function CollectionItemPage() {
   const [loading, setLoading] = useState(true);
   const [item, setItem] = useState<CollectionItemLite | null>(null);
 
-  // Initialize Supabase client
-  const supabase = createClientComponentClient();
-
   useEffect(() => {
     if (!catalogItemId) return;
 
+    let cancelled = false;
+
     const fetchItem = async () => {
       setLoading(true);
-      
+
       try {
-        // 1. Get current user
-        const { data: { user } } = await supabase.auth.getUser();
-        
-        if (!user) {
-          console.error("No user logged in");
-          setLoading(false);
+        // 1) Get current user (client-side session)
+        const {
+          data: { user },
+          error: userErr,
+        } = await supabase.auth.getUser();
+
+        // Not signed in => show auth modal + stop
+        if (userErr || !user) {
+          if (!cancelled) {
+            setItem(null);
+            setAuthOpen(true);
+          }
           return;
         }
 
-        // 2. Fetch the real item from the database
-        // We match 'catalog_item_id' from the URL and ensure it belongs to the user
+        // 2) Fetch item in this user's collection that matches the route catalog item id
         const { data, error } = await supabase
           .from("collection_items")
-          .select(`
+          .select(
+            `
             *,
             catalog:catalog_items (
               id,
               name,
               kind
             )
-          `)
+          `
+          )
           .eq("catalog_item_id", catalogItemId)
           .eq("user_id", user.id)
-          .maybeSingle(); // Use maybeSingle() to handle "not found" gracefully
+          .maybeSingle();
 
         if (error) {
           console.error("Error fetching item:", error);
         }
 
-        // 3. Set the real data
-        if (data) {
-            // We cast the data to match your TypeScript type
-            // You might need to adjust the select query above if your relation name isn't 'catalog_items'
-            setItem(data as unknown as CollectionItemLite);
-        } else {
-            setItem(null);
+        if (!cancelled) {
+          setItem((data ?? null) as unknown as CollectionItemLite);
         }
-
       } catch (err) {
         console.error("Unexpected error:", err);
+        if (!cancelled) setItem(null);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
     fetchItem();
-  }, [catalogItemId, supabase]);
 
-  // ------------------------------------------------------------------
+    return () => {
+      cancelled = true;
+    };
+  }, [catalogItemId]);
 
   if (!catalogItemId) {
     return (
@@ -105,13 +108,14 @@ export default function CollectionItemPage() {
   if (!item) {
     return (
       <main className="mx-auto max-w-6xl px-4 pt-6">
+        <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
         <div className="rounded-xl border bg-white p-8 text-center text-gray-500">
           Item not found in your collection.
         </div>
         <div className="text-center mt-4">
-             <button onClick={() => router.back()} className="text-sm text-blue-600 hover:underline">
-               Go back
-             </button>
+          <button onClick={() => router.back()} className="text-sm text-blue-600 hover:underline">
+            Go back
+          </button>
         </div>
       </main>
     );
