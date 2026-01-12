@@ -30,6 +30,11 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/collection/loading.js"
+    ],
+    "/collection/[catalogItemId]/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/collection/[catalogItemId]/page.js"
     ]
   }
 }
