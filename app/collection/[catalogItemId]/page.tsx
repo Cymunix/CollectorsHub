@@ -8,8 +8,9 @@ import { supabase } from "@/lib/supabaseClient";
 import Header from "@/components/Header";
 import SecondaryNav from "@/components/SecondaryNav";
 
-// ✅ your detailed description component
+// ⬇️ same folder pattern as your ItemDescription
 import ItemDescription from "../../catalog/[id]/blocks/item_description";
+import ItemImage from "../../catalog/[id]/blocks/item_image";
 
 type CollectionItemRow = {
   id: string;
@@ -29,19 +30,16 @@ type CatalogItemRow = {
   description?: string | null;
   release_year?: number | null;
   set_number?: string | null;
-
-  // may exist in your schema
-  category_id?: string | null;
-
-  // join payload if relationship exists
-  categories?: { name?: string | null } | null;
 };
 
 type TabKey = "overview" | "copies";
 
 function money(n: number | null | undefined) {
   const v = typeof n === "number" ? n : 0;
-  return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD" }).format(v);
+  return new Intl.NumberFormat("en-CA", {
+    style: "currency",
+    currency: "CAD",
+  }).format(v);
 }
 
 function labelCondition(condition: string | null | undefined) {
@@ -71,41 +69,14 @@ function TabButton({
       onClick={onClick}
       className={[
         "rounded-full px-4 py-2 text-sm transition",
-        active ? "bg-gray-900 text-white" : "border bg-white text-gray-800 hover:bg-gray-50",
+        active
+          ? "bg-gray-900 text-white"
+          : "border bg-white text-gray-800 hover:bg-gray-50",
       ].join(" ")}
     >
       {children}
     </button>
   );
-}
-
-async function fetchIsAdmin(userId: string): Promise<boolean> {
-  // Best-effort: try likely profile tables/columns without hard failing.
-  // If your project uses a different table/column, swap it here.
-  try {
-    // 1) user_profiles.role
-    const { data, error } = await supabase
-      .from("user_profiles")
-      .select("role")
-      .eq("id", userId)
-      .maybeSingle();
-
-    if (!error && data?.role) return String(data.role).toLowerCase() === "admin";
-  } catch {}
-
-  try {
-    // 2) profiles.role
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", userId)
-      .maybeSingle();
-
-    if (!error && data?.role) return String(data.role).toLowerCase() === "admin";
-  } catch {}
-
-  // default safe
-  return false;
 }
 
 export default function CollectionItemPage() {
@@ -121,8 +92,6 @@ export default function CollectionItemPage() {
   const [catalog, setCatalog] = useState<CatalogItemRow | null>(null);
 
   const [tab, setTab] = useState<TabKey>("overview");
-
-  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -152,19 +121,13 @@ export default function CollectionItemPage() {
           return;
         }
 
-        // admin check (best effort, safe default false)
-        const admin = await fetchIsAdmin(user.id);
-
-        // ✅ Fetch catalog item + category name (if relationship exists)
-        // If your FK relationship is not named "categories", change it to whatever Supabase generated.
         const { data: catRow, error: catErr } = await supabase
           .from("catalog_items")
-          .select("id,name,kind,description,release_year,set_number,category_id,categories(name)")
+          .select("*")
           .eq("id", catalogItemId)
           .maybeSingle();
 
         if (catErr) throw catErr;
-
         if (!catRow) {
           if (!cancelled) {
             setErr("Catalog item not found.");
@@ -192,8 +155,7 @@ export default function CollectionItemPage() {
         }
 
         if (!cancelled) {
-          setIsAdmin(admin);
-          setCatalog(catRow as any);
+          setCatalog(catRow as CatalogItemRow);
           setCopies(rows);
           setPrimary(rows[0]);
           setLoading(false);
@@ -215,11 +177,6 @@ export default function CollectionItemPage() {
   const title = catalog?.name ?? "Collection item";
   const kind = catalog?.kind ?? null;
 
-  const categoryName = useMemo(() => {
-    const n = (catalog as any)?.categories?.name ?? null;
-    return typeof n === "string" ? n : null;
-  }, [catalog]);
-
   const conditionDisplay = useMemo(() => {
     const score = primary?.graded_score ?? null;
     if (typeof score === "number") return `Graded: ${score}`;
@@ -233,7 +190,9 @@ export default function CollectionItemPage() {
 
       <div className="mx-auto max-w-6xl px-4 py-8">
         {loading ? (
-          <div className="rounded-2xl border bg-white p-6 text-sm text-gray-600">Loading…</div>
+          <div className="rounded-2xl border bg-white p-6 text-sm text-gray-600">
+            Loading…
+          </div>
         ) : err ? (
           <div>
             <div className="mb-4">
@@ -245,7 +204,9 @@ export default function CollectionItemPage() {
               </button>
             </div>
             <div className="rounded-2xl border bg-white p-6">
-              <div className="text-sm font-semibold text-gray-900">Can’t load item</div>
+              <div className="text-sm font-semibold text-gray-900">
+                Can’t load item
+              </div>
               <div className="mt-2 text-sm text-gray-700">{err}</div>
             </div>
           </div>
@@ -257,27 +218,45 @@ export default function CollectionItemPage() {
           <>
             {/* Header */}
             <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
-              <div className="min-w-0">
-                <h1 className="text-2xl font-semibold text-gray-900 truncate">{title}</h1>
-                <div className="mt-1 text-sm text-gray-600">
-                  {kind ? kind : "unknown"}
-                  {catalog.release_year ? ` • ${catalog.release_year}` : ""}
-                  {catalog.set_number ? ` • Set ${catalog.set_number}` : ""}
+              <div className="min-w-0 flex gap-4">
+                {/* ✅ IMAGE */}
+                <div className="w-[120px] shrink-0">
+                  <ItemImage
+                    catalogItemId={catalog.id}
+                    itemName={title}
+                  />
                 </div>
 
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <Link
-                    href="/collection"
-                    className="rounded-full border bg-white px-4 py-2 text-sm hover:bg-gray-50"
-                  >
-                    Back to collection
-                  </Link>
+                <div className="min-w-0">
+                  <h1 className="text-2xl font-semibold text-gray-900 truncate">
+                    {title}
+                  </h1>
+                  <div className="mt-1 text-sm text-gray-600">
+                    {kind ?? "unknown"}
+                    {catalog.release_year
+                      ? ` • ${catalog.release_year}`
+                      : ""}
+                    {catalog.set_number
+                      ? ` • Set ${catalog.set_number}`
+                      : ""}
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <Link
+                      href="/collection"
+                      className="rounded-full border bg-white px-4 py-2 text-sm hover:bg-gray-50"
+                    >
+                      Back to collection
+                    </Link>
+                  </div>
                 </div>
               </div>
 
               <div className="rounded-2xl border bg-white px-4 py-3">
                 <div className="text-xs text-gray-500">Condition</div>
-                <div className="text-sm font-semibold text-gray-900">{conditionDisplay}</div>
+                <div className="text-sm font-semibold text-gray-900">
+                  {conditionDisplay}
+                </div>
               </div>
             </div>
 
@@ -285,32 +264,40 @@ export default function CollectionItemPage() {
               {/* Left */}
               <div className="space-y-4">
                 <div className="flex flex-wrap items-center gap-2">
-                  <TabButton active={tab === "overview"} onClick={() => setTab("overview")}>
+                  <TabButton
+                    active={tab === "overview"}
+                    onClick={() => setTab("overview")}
+                  >
                     Overview
                   </TabButton>
-                  <TabButton active={tab === "copies"} onClick={() => setTab("copies")}>
+                  <TabButton
+                    active={tab === "copies"}
+                    onClick={() => setTab("copies")}
+                  >
                     Copies ({copies.length})
                   </TabButton>
                 </div>
 
-                {tab === "overview" ? (
-                  // ✅ Replace the dumb “Description” block with your proper component
+                {tab === "overview" && (
                   <ItemDescription
                     catalogItemId={catalog.id}
-                    isAdmin={isAdmin}
-                    categoryName={categoryName}
+                    isAdmin={false}
                   />
-                ) : null}
+                )}
 
-                {tab === "copies" ? (
+                {tab === "copies" && (
                   <div className="rounded-2xl border bg-white p-4">
-                    <div className="text-sm font-semibold text-gray-900">Your copies</div>
+                    <div className="text-sm font-semibold text-gray-900">
+                      Your copies
+                    </div>
                     <div className="mt-3 space-y-3">
                       {copies.map((c, idx) => {
                         const isPrimary = c.id === primary.id;
                         const score = c.graded_score ?? null;
                         const condition =
-                          typeof score === "number" ? `Graded: ${score}` : labelCondition(c.condition);
+                          typeof score === "number"
+                            ? `Graded: ${score}`
+                            : labelCondition(c.condition);
 
                         return (
                           <div key={c.id} className="rounded-2xl border p-3">
@@ -318,58 +305,72 @@ export default function CollectionItemPage() {
                               <div className="min-w-0">
                                 <div className="text-sm font-semibold text-gray-900">
                                   Copy {idx + 1}{" "}
-                                  {isPrimary ? (
-                                    <span className="text-xs text-gray-500">(primary)</span>
-                                  ) : null}
+                                  {isPrimary && (
+                                    <span className="text-xs text-gray-500">
+                                      (primary)
+                                    </span>
+                                  )}
                                 </div>
-                                <div className="mt-1 text-sm text-gray-700">{condition}</div>
+                                <div className="mt-1 text-sm text-gray-700">
+                                  {condition}
+                                </div>
                               </div>
                               <div className="text-right">
                                 <div className="text-sm font-semibold text-gray-900">
                                   {money(c.paid_price)}
                                 </div>
-                                <div className="text-xs text-gray-500">Paid</div>
+                                <div className="text-xs text-gray-500">
+                                  Paid
+                                </div>
                               </div>
                             </div>
 
-                            {c.notes?.trim() ? (
+                            {c.notes?.trim() && (
                               <div className="mt-2 text-sm text-gray-700 whitespace-pre-wrap">
                                 {c.notes}
                               </div>
-                            ) : null}
+                            )}
                           </div>
                         );
                       })}
                     </div>
                   </div>
-                ) : null}
+                )}
               </div>
 
               {/* Right */}
               <aside className="space-y-4 lg:sticky lg:top-6 lg:self-start">
                 <div className="rounded-2xl border bg-white p-4">
-                  <div className="text-sm font-semibold text-gray-900">Ownership</div>
+                  <div className="text-sm font-semibold text-gray-900">
+                    Ownership
+                  </div>
 
                   <div className="mt-3 space-y-3 text-sm">
                     <div className="flex items-center justify-between gap-3">
                       <div className="text-gray-600">Condition</div>
-                      <div className="font-medium text-gray-900">{conditionDisplay}</div>
+                      <div className="font-medium text-gray-900">
+                        {conditionDisplay}
+                      </div>
                     </div>
 
                     <div className="flex items-center justify-between gap-3">
                       <div className="text-gray-600">Paid</div>
-                      <div className="font-medium text-gray-900">{money(primary.paid_price)}</div>
+                      <div className="font-medium text-gray-900">
+                        {money(primary.paid_price)}
+                      </div>
                     </div>
                   </div>
 
-                  {primary.notes?.trim() ? (
+                  {primary.notes?.trim() && (
                     <>
-                      <div className="mt-4 text-sm font-semibold text-gray-900">Notes</div>
+                      <div className="mt-4 text-sm font-semibold text-gray-900">
+                        Notes
+                      </div>
                       <div className="mt-2 text-sm text-gray-700 whitespace-pre-wrap">
                         {primary.notes}
                       </div>
                     </>
-                  ) : null}
+                  )}
                 </div>
               </aside>
             </div>
@@ -379,4 +380,3 @@ export default function CollectionItemPage() {
     </div>
   );
 }
-
