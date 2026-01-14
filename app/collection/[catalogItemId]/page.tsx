@@ -6,8 +6,8 @@ import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 // These are in /components/collection per your tree screenshot
-import Header from "@/components/collection/Header";
-import SecondaryNav from "@/components/collection/SecondaryNav";
+import Header from "@/components/Header";
+import SecondaryNav from "@/components/SecondaryNav";
 
 type CollectionItemRow = {
   id: string;
@@ -327,3 +327,4 @@ export default function CollectionItemPage() {
     </div>
   );
 }
+
