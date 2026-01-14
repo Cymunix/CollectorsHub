@@ -12,12 +12,9 @@ import SecondaryNav from "@/components/SecondaryNav";
 import ItemDescription from "../../catalog/[id]/blocks/item_description";
 import ItemImage from "../../catalog/[id]/blocks/item_image";
 
-// ✅ Reviews + marketplace helpers (as you provided)
-import { fetchItemReviews, insertItemReview } from "../_lib/queries";
-import type { ReviewRow } from "../_lib/queries";
-
-import { createMarketplaceListing, saveListingMinifigs } from "../_lib/marketplace";
-
+/* --------------------------------
+   Types
+--------------------------------- */
 type CollectionItemRow = {
   id: string;
   user_id?: string | null;
@@ -40,6 +37,25 @@ type CatalogItemRow = {
 
 type TabKey = "overview" | "copies" | "reviews";
 
+export type ReviewRow = {
+  id: string;
+  catalog_item_id: string;
+  user_id: string;
+  rating: number;
+  title: string | null;
+  body: string | null;
+  created_at: string;
+};
+
+type MinifigRow = {
+  minifig_id: string;
+  included_qty: number;
+  catalog_minifigs: { name: string | null; minifig_number: string | null; image_url: string | null } | null;
+};
+
+/* --------------------------------
+   Helpers
+--------------------------------- */
 function money(n: number | null | undefined) {
   const v = typeof n === "number" ? n : 0;
   return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD" }).format(v);
@@ -80,9 +96,6 @@ function TabButton({
   );
 }
 
-/* ----------------------------
-   REVIEWS TAB (inline)
------------------------------ */
 function clampRating(n: any) {
   const x = Number(n);
   if (!Number.isFinite(x)) return 5;
@@ -94,12 +107,99 @@ function Stars({ n }: { n: number }) {
   return <div className="text-sm leading-none">{stars.join("")}</div>;
 }
 
+function clampQty(v: any) {
+  const n = Math.floor(Number(v ?? 0));
+  return Number.isFinite(n) ? Math.max(0, n) : 0;
+}
+
+/* --------------------------------
+   Inline DB functions (NO imports)
+--------------------------------- */
+
+// ✅ Reviews
+async function fetchItemReviews(catalogItemId: string): Promise<ReviewRow[]> {
+  const res = await supabase
+    .from("catalog_item_reviews")
+    .select("id,catalog_item_id,user_id,rating,title,body,created_at")
+    .eq("catalog_item_id", catalogItemId)
+    .order("created_at", { ascending: false });
+
+  if (res.error) throw res.error;
+  return (res.data ?? []) as ReviewRow[];
+}
+
+async function insertItemReview(args: {
+  catalogItemId: string;
+  userId: string;
+  rating: number;
+  title: string | null;
+  body: string;
+}): Promise<void> {
+  const res = await supabase.from("catalog_item_reviews").insert([
+    {
+      catalog_item_id: args.catalogItemId,
+      user_id: args.userId,
+      rating: args.rating,
+      title: args.title,
+      body: args.body,
+    },
+  ]);
+
+  if (res.error) throw res.error;
+}
+
+// ✅ Marketplace
+async function createMarketplaceListing(args: {
+  userCollectionItemId: string;
+  catalogItemId: string;
+  title: string;
+  priceCad: number;
+  description: string | null;
+}): Promise<{ id: string }> {
+  const res = await supabase
+    .from("marketplace_listings")
+    .insert([
+      {
+        user_collection_item_id: args.userCollectionItemId,
+        catalog_item_id: args.catalogItemId,
+        title: args.title,
+        price_cad: args.priceCad,
+        description: args.description,
+      },
+    ])
+    .select("id")
+    .single();
+
+  if (res.error) throw res.error;
+  if (!res.data?.id) throw new Error("Listing created but no id returned.");
+  return { id: String(res.data.id) };
+}
+
+async function saveListingMinifigs(args: { listingId: string; rows: Array<{ minifig_id: string; included_qty: number }> }) {
+  if (!args.rows.length) return;
+
+  const payload = args.rows.map((r) => ({
+    listing_id: args.listingId,
+    minifig_id: r.minifig_id,
+    included_qty: r.included_qty,
+  }));
+
+  // upsert so re-listing / re-saving doesn't duplicate
+  const res = await supabase
+    .from("marketplace_listing_minifigs")
+    .upsert(payload, { onConflict: "listing_id,minifig_id" });
+
+  if (res.error) throw res.error;
+}
+
+/* --------------------------------
+   Reviews Tab (inline)
+--------------------------------- */
 function ReviewsTab({ catalogItemId }: { catalogItemId: string }) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [rows, setRows] = useState<ReviewRow[]>([]);
 
-  // add form
   const [rating, setRating] = useState<number>(5);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
@@ -194,11 +294,8 @@ function ReviewsTab({ catalogItemId }: { catalogItemId: string }) {
         <div className="mt-4 rounded-xl border border-green-200 bg-green-50 p-3 text-sm text-green-800">{savedMsg}</div>
       )}
 
-      {/* Add review */}
       <div className="mt-4 rounded-2xl border bg-white p-4">
-        <div className="flex items-center justify-between">
-          <div className="font-semibold">Add a review</div>
-        </div>
+        <div className="font-semibold">Add a review</div>
 
         <div className="mt-3 grid gap-3 md:grid-cols-3">
           <div className="md:col-span-1">
@@ -253,7 +350,6 @@ function ReviewsTab({ catalogItemId }: { catalogItemId: string }) {
         </div>
       </div>
 
-      {/* Review list */}
       <div className="mt-4">
         {loading ? (
           <div className="space-y-2">
@@ -283,20 +379,9 @@ function ReviewsTab({ catalogItemId }: { catalogItemId: string }) {
   );
 }
 
-/* ----------------------------
-   LIST FOR SALE MODAL (inline)
------------------------------ */
-type MinifigRow = {
-  minifig_id: string;
-  included_qty: number;
-  catalog_minifigs: { name: string | null; minifig_number: string | null; image_url: string | null } | null;
-};
-
-function clampQty(v: any) {
-  const n = Math.floor(Number(v ?? 0));
-  return Number.isFinite(n) ? Math.max(0, n) : 0;
-}
-
+/* --------------------------------
+   List For Sale Modal (inline)
+--------------------------------- */
 function ListForSaleModal(props: {
   open: boolean;
   onClose: () => void;
@@ -315,7 +400,6 @@ function ListForSaleModal(props: {
     Array<{ minifig_id: string; name: string; number: string | null; image_url: string | null; include: boolean; qty: number }>
   >([]);
 
-  // load per-copy minifigs so you can choose which are included in the listing
   useEffect(() => {
     let cancelled = false;
 
@@ -352,7 +436,6 @@ function ListForSaleModal(props: {
           const number = (m?.minifig_number ?? null) as string | null;
           const img = (m?.image_url ?? null) as string | null;
 
-          // default include = whatever is included in the copy
           const qty = clampQty((r as any).included_qty);
           return {
             minifig_id: String((r as any).minifig_id),
@@ -549,9 +632,9 @@ function ListForSaleModal(props: {
   );
 }
 
-/* ----------------------------
-   PAGE
------------------------------ */
+/* --------------------------------
+   Page
+--------------------------------- */
 export default function CollectionItemPage() {
   const params = useParams();
   const router = useRouter();
@@ -598,9 +681,13 @@ export default function CollectionItemPage() {
           return;
         }
 
-        const { data: catRow, error: catErr } = await supabase.from("catalog_items").select("*").eq("id", catalogItemId).maybeSingle();
-        if (catErr) throw catErr;
+        const { data: catRow, error: catErr } = await supabase
+          .from("catalog_items")
+          .select("*")
+          .eq("id", catalogItemId)
+          .maybeSingle();
 
+        if (catErr) throw catErr;
         if (!catRow) {
           if (!cancelled) {
             setErr("Catalog item not found.");
@@ -672,7 +759,10 @@ export default function CollectionItemPage() {
         ) : err ? (
           <div>
             <div className="mb-4">
-              <button className="rounded-full border bg-white px-4 py-2 text-sm hover:bg-gray-50" onClick={() => router.back()}>
+              <button
+                className="rounded-full border bg-white px-4 py-2 text-sm hover:bg-gray-50"
+                onClick={() => router.back()}
+              >
                 Back
               </button>
             </div>
@@ -685,7 +775,6 @@ export default function CollectionItemPage() {
           <div className="rounded-2xl border bg-white p-6 text-sm text-gray-700">Missing data to render this page.</div>
         ) : (
           <>
-            {/* Listing modal */}
             <ListForSaleModal
               open={listOpen}
               onClose={() => {
@@ -701,7 +790,6 @@ export default function CollectionItemPage() {
             {/* Header */}
             <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0 flex gap-4">
-                {/* IMAGE */}
                 <div className="w-[120px] shrink-0">
                   <ItemImage catalogItemId={catalog.id} itemName={title} />
                 </div>
@@ -767,7 +855,6 @@ export default function CollectionItemPage() {
                                 </div>
                                 <div className="mt-1 text-sm text-gray-700">{condition}</div>
 
-                                {/* actions */}
                                 <div className="mt-3 flex flex-wrap gap-2">
                                   <button
                                     type="button"
