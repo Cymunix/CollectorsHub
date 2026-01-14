@@ -5,11 +5,6 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
-// IMPORTANT:
-// If your MinifigPanel import path differs, adjust it.
-// If you don't want minifigs at all on this page yet, delete this import + usage.
-import MinifigPanel from "./_components/MinifigPanel";
-
 type CollectionItemRow = {
   id: string;
   user_id?: string | null;
@@ -34,7 +29,7 @@ type CatalogItemRow = {
   manufacturer_id?: string | null;
   publisher_id?: string | null;
 
-  // LEGO-ish optional fields (won’t break if absent)
+  // Optional fields your schema may or may not have
   set_number?: string | null;
 };
 
@@ -83,14 +78,17 @@ function TabButton({
 export default function CollectionItemPage() {
   const params = useParams();
   const router = useRouter();
+
+  // Route is /collection/[catalogItemId]
   const catalogItemId = String(params?.catalogItemId ?? "");
 
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  const [item, setItem] = useState<CollectionItemRow | null>(null);
-  const [catalog, setCatalog] = useState<CatalogItemRow | null>(null);
+  const [primary, setPrimary] = useState<CollectionItemRow | null>(null);
   const [copies, setCopies] = useState<CollectionItemRow[]>([]);
+  const [catalog, setCatalog] = useState<CatalogItemRow | null>(null);
+
   const [tab, setTab] = useState<TabKey>("overview");
 
   useEffect(() => {
@@ -98,7 +96,7 @@ export default function CollectionItemPage() {
 
     async function run() {
       if (!catalogItemId) {
-        setErr("Missing catalog item id in route.");
+        setErr("Missing catalog item id in the route.");
         setLoading(false);
         return;
       }
@@ -107,24 +105,37 @@ export default function CollectionItemPage() {
       setErr(null);
 
       try {
-        // 1) Must be signed in
+        // Auth
         const {
           data: { user },
           error: userErr,
         } = await supabase.auth.getUser();
-
         if (userErr) throw userErr;
         if (!user) {
           if (!cancelled) {
-            setErr("You must be signed in to view this page.");
+            setErr("You must be signed in to view this item.");
             setLoading(false);
           }
           return;
         }
 
-        // 2) Load the user's collection item row for this catalog item
-        // If you allow multiple copies, there will be multiple rows.
-        // We'll pick the oldest as "primary", and show the rest in Copies tab.
+        // Load catalog item
+        const { data: catRow, error: catErr } = await supabase
+          .from("catalog_items")
+          .select("*")
+          .eq("id", catalogItemId)
+          .maybeSingle();
+
+        if (catErr) throw catErr;
+        if (!catRow) {
+          if (!cancelled) {
+            setErr("Catalog item not found.");
+            setLoading(false);
+          }
+          return;
+        }
+
+        // Load all user copies for this catalog item
         const { data: ownedRows, error: ownedErr } = await supabase
           .from("user_collection_items")
           .select("*")
@@ -143,29 +154,10 @@ export default function CollectionItemPage() {
           return;
         }
 
-        const primary = rows[0];
-
-        // 3) Load catalog row
-        const { data: catRow, error: catErr } = await supabase
-          .from("catalog_items")
-          .select("*")
-          .eq("id", catalogItemId)
-          .maybeSingle();
-
-        if (catErr) throw catErr;
-
-        if (!catRow) {
-          if (!cancelled) {
-            setErr("Catalog item not found.");
-            setLoading(false);
-          }
-          return;
-        }
-
         if (!cancelled) {
-          setItem(primary);
           setCatalog(catRow as CatalogItemRow);
           setCopies(rows);
+          setPrimary(rows[0]);
           setLoading(false);
         }
       } catch (e: any) {
@@ -186,15 +178,10 @@ export default function CollectionItemPage() {
   const kind = catalog?.kind ?? null;
 
   const conditionDisplay = useMemo(() => {
-    const score = item?.graded_score ?? null;
+    const score = primary?.graded_score ?? null;
     if (typeof score === "number") return `Graded: ${score}`;
-    return labelCondition(item?.condition ?? null);
-  }, [item?.condition, item?.graded_score]);
-
-  // HARD GATE: don't show minifigs unless it makes sense
-  const showMinifigs = useMemo(() => {
-    return kind === "building_blocks" || kind === "minifig";
-  }, [kind]);
+    return labelCondition(primary?.condition ?? null);
+  }, [primary?.condition, primary?.graded_score]);
 
   if (loading) {
     return (
@@ -223,7 +210,7 @@ export default function CollectionItemPage() {
     );
   }
 
-  if (!item || !catalog) {
+  if (!catalog || !primary) {
     return (
       <div className="mx-auto max-w-6xl px-4 py-8">
         <div className="rounded-2xl border bg-white p-6 text-sm text-gray-700">
@@ -261,11 +248,9 @@ export default function CollectionItemPage() {
         </div>
       </div>
 
-      {/* Main grid */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_360px]">
         {/* Left */}
         <div className="space-y-4">
-          {/* Tabs */}
           <div className="flex flex-wrap items-center gap-2">
             <TabButton active={tab === "overview"} onClick={() => setTab("overview")}>
               Overview
@@ -275,25 +260,8 @@ export default function CollectionItemPage() {
             </TabButton>
           </div>
 
-          {/* Overview */}
           {tab === "overview" ? (
             <div className="space-y-4">
-              {/* Kind-specific panels */}
-              {showMinifigs ? (
-                <div className="rounded-2xl border bg-white p-4">
-                  <div className="text-sm font-semibold text-gray-900">Minifigs</div>
-
-                  {/* IMPORTANT:
-                      We do NOT pass hideIfEmpty here. That prop does not exist and will fail your build.
-                      If you want it, you add it to MinifigPanel properly later.
-                   */}
-                  <div className="mt-3">
-                    <MinifigPanel userCollectionItemId={item.id} />
-                  </div>
-                </div>
-              ) : null}
-
-              {/* Description */}
               <div className="rounded-2xl border bg-white p-4">
                 <div className="text-sm font-semibold text-gray-900">Description</div>
                 <div className="mt-2 text-sm text-gray-700 whitespace-pre-wrap">
@@ -303,49 +271,44 @@ export default function CollectionItemPage() {
             </div>
           ) : null}
 
-          {/* Copies */}
           {tab === "copies" ? (
             <div className="rounded-2xl border bg-white p-4">
               <div className="text-sm font-semibold text-gray-900">Your copies</div>
 
-              {copies.length === 0 ? (
-                <div className="mt-2 text-sm text-gray-700">No copies found.</div>
-              ) : (
-                <div className="mt-3 space-y-3">
-                  {copies.map((c, idx) => {
-                    const isPrimary = c.id === item.id;
-                    const score = c.graded_score ?? null;
-                    const condition = typeof score === "number" ? `Graded: ${score}` : labelCondition(c.condition);
+              <div className="mt-3 space-y-3">
+                {copies.map((c, idx) => {
+                  const isPrimary = c.id === primary.id;
+                  const score = c.graded_score ?? null;
+                  const condition = typeof score === "number" ? `Graded: ${score}` : labelCondition(c.condition);
 
-                    return (
-                      <div key={c.id} className="rounded-2xl border p-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="text-sm font-semibold text-gray-900">
-                              Copy {idx + 1}{" "}
-                              {isPrimary ? <span className="text-xs text-gray-500">(primary)</span> : null}
-                            </div>
-                            <div className="mt-1 text-sm text-gray-700">{condition}</div>
+                  return (
+                    <div key={c.id} className="rounded-2xl border p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-gray-900">
+                            Copy {idx + 1}{" "}
+                            {isPrimary ? <span className="text-xs text-gray-500">(primary)</span> : null}
                           </div>
-                          <div className="text-right">
-                            <div className="text-sm font-semibold text-gray-900">{money(c.paid_price)}</div>
-                            <div className="text-xs text-gray-500">Paid</div>
-                          </div>
+                          <div className="mt-1 text-sm text-gray-700">{condition}</div>
                         </div>
-
-                        {c.notes?.trim() ? (
-                          <div className="mt-2 text-sm text-gray-700 whitespace-pre-wrap">{c.notes}</div>
-                        ) : null}
+                        <div className="text-right">
+                          <div className="text-sm font-semibold text-gray-900">{money(c.paid_price)}</div>
+                          <div className="text-xs text-gray-500">Paid</div>
+                        </div>
                       </div>
-                    );
-                  })}
-                </div>
-              )}
+
+                      {c.notes?.trim() ? (
+                        <div className="mt-2 text-sm text-gray-700 whitespace-pre-wrap">{c.notes}</div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           ) : null}
         </div>
 
-        {/* Right panel */}
+        {/* Right */}
         <aside className="space-y-4 lg:sticky lg:top-6 lg:self-start">
           <div className="rounded-2xl border bg-white p-4">
             <div className="text-sm font-semibold text-gray-900">Ownership</div>
@@ -358,23 +321,16 @@ export default function CollectionItemPage() {
 
               <div className="flex items-center justify-between gap-3">
                 <div className="text-gray-600">Paid</div>
-                <div className="font-medium text-gray-900">{money(item.paid_price)}</div>
+                <div className="font-medium text-gray-900">{money(primary.paid_price)}</div>
               </div>
             </div>
 
-            {item.notes?.trim() ? (
+            {primary.notes?.trim() ? (
               <>
                 <div className="mt-4 text-sm font-semibold text-gray-900">Notes</div>
-                <div className="mt-2 text-sm text-gray-700 whitespace-pre-wrap">{item.notes}</div>
+                <div className="mt-2 text-sm text-gray-700 whitespace-pre-wrap">{primary.notes}</div>
               </>
             ) : null}
-          </div>
-
-          <div className="rounded-2xl border bg-white p-4">
-            <div className="text-sm font-semibold text-gray-900">Actions</div>
-            <div className="mt-2 text-sm text-gray-700">
-              Wire edit/remove actions here when you’re ready.
-            </div>
           </div>
         </aside>
       </div>
