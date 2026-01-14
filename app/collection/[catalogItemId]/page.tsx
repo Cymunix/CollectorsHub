@@ -5,11 +5,14 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
+// These are in /components/collection per your tree screenshot
+import Header from "@/components/collection/Header";
+import SecondaryNav from "@/components/collection/SecondaryNav";
+
 type CollectionItemRow = {
   id: string;
   user_id?: string | null;
   catalog_item_id: string | null;
-
   condition?: string | null;
   graded_score?: number | null;
   paid_price?: number | null;
@@ -21,15 +24,8 @@ type CatalogItemRow = {
   id: string;
   name: string | null;
   kind: string | null;
-
   description?: string | null;
   release_year?: number | null;
-
-  franchise_id?: string | null;
-  manufacturer_id?: string | null;
-  publisher_id?: string | null;
-
-  // Optional fields your schema may or may not have
   set_number?: string | null;
 };
 
@@ -78,8 +74,6 @@ function TabButton({
 export default function CollectionItemPage() {
   const params = useParams();
   const router = useRouter();
-
-  // Route is /collection/[catalogItemId]
   const catalogItemId = String(params?.catalogItemId ?? "");
 
   const [loading, setLoading] = useState(true);
@@ -105,7 +99,6 @@ export default function CollectionItemPage() {
       setErr(null);
 
       try {
-        // Auth
         const {
           data: { user },
           error: userErr,
@@ -119,7 +112,6 @@ export default function CollectionItemPage() {
           return;
         }
 
-        // Load catalog item
         const { data: catRow, error: catErr } = await supabase
           .from("catalog_items")
           .select("*")
@@ -135,7 +127,6 @@ export default function CollectionItemPage() {
           return;
         }
 
-        // Load all user copies for this catalog item
         const { data: ownedRows, error: ownedErr } = await supabase
           .from("user_collection_items")
           .select("*")
@@ -183,156 +174,155 @@ export default function CollectionItemPage() {
     return labelCondition(primary?.condition ?? null);
   }, [primary?.condition, primary?.graded_score]);
 
-  if (loading) {
-    return (
-      <div className="mx-auto max-w-6xl px-4 py-8">
-        <div className="rounded-2xl border bg-white p-6 text-sm text-gray-600">Loading…</div>
-      </div>
-    );
-  }
-
-  if (err) {
-    return (
-      <div className="mx-auto max-w-6xl px-4 py-8">
-        <div className="mb-4">
-          <button
-            className="rounded-full border bg-white px-4 py-2 text-sm hover:bg-gray-50"
-            onClick={() => router.back()}
-          >
-            Back
-          </button>
-        </div>
-        <div className="rounded-2xl border bg-white p-6">
-          <div className="text-sm font-semibold text-gray-900">Can’t load item</div>
-          <div className="mt-2 text-sm text-gray-700">{err}</div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!catalog || !primary) {
-    return (
-      <div className="mx-auto max-w-6xl px-4 py-8">
-        <div className="rounded-2xl border bg-white p-6 text-sm text-gray-700">
-          Missing data to render this page.
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="mx-auto max-w-6xl px-4 py-8">
-      {/* Header */}
-      <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-semibold text-gray-900 truncate">{title}</h1>
-          <div className="mt-1 text-sm text-gray-600">
-            {kind ? kind : "unknown"}
-            {catalog.release_year ? ` • ${catalog.release_year}` : ""}
-            {catalog.set_number ? ` • Set ${catalog.set_number}` : ""}
+    <div className="min-h-screen">
+      <Header />
+      <SecondaryNav />
+
+      <div className="mx-auto max-w-6xl px-4 py-8">
+        {loading ? (
+          <div className="rounded-2xl border bg-white p-6 text-sm text-gray-600">Loading…</div>
+        ) : err ? (
+          <div>
+            <div className="mb-4">
+              <button
+                className="rounded-full border bg-white px-4 py-2 text-sm hover:bg-gray-50"
+                onClick={() => router.back()}
+              >
+                Back
+              </button>
+            </div>
+            <div className="rounded-2xl border bg-white p-6">
+              <div className="text-sm font-semibold text-gray-900">Can’t load item</div>
+              <div className="mt-2 text-sm text-gray-700">{err}</div>
+            </div>
           </div>
-
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <Link
-              href="/collection"
-              className="rounded-full border bg-white px-4 py-2 text-sm hover:bg-gray-50"
-            >
-              Back to collection
-            </Link>
+        ) : !catalog || !primary ? (
+          <div className="rounded-2xl border bg-white p-6 text-sm text-gray-700">
+            Missing data to render this page.
           </div>
-        </div>
+        ) : (
+          <>
+            {/* Header */}
+            <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h1 className="text-2xl font-semibold text-gray-900 truncate">{title}</h1>
+                <div className="mt-1 text-sm text-gray-600">
+                  {kind ? kind : "unknown"}
+                  {catalog.release_year ? ` • ${catalog.release_year}` : ""}
+                  {catalog.set_number ? ` • Set ${catalog.set_number}` : ""}
+                </div>
 
-        <div className="rounded-2xl border bg-white px-4 py-3">
-          <div className="text-xs text-gray-500">Condition</div>
-          <div className="text-sm font-semibold text-gray-900">{conditionDisplay}</div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_360px]">
-        {/* Left */}
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <TabButton active={tab === "overview"} onClick={() => setTab("overview")}>
-              Overview
-            </TabButton>
-            <TabButton active={tab === "copies"} onClick={() => setTab("copies")}>
-              Copies ({copies.length})
-            </TabButton>
-          </div>
-
-          {tab === "overview" ? (
-            <div className="space-y-4">
-              <div className="rounded-2xl border bg-white p-4">
-                <div className="text-sm font-semibold text-gray-900">Description</div>
-                <div className="mt-2 text-sm text-gray-700 whitespace-pre-wrap">
-                  {catalog.description?.trim() ? catalog.description : "No description."}
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <Link
+                    href="/collection"
+                    className="rounded-full border bg-white px-4 py-2 text-sm hover:bg-gray-50"
+                  >
+                    Back to collection
+                  </Link>
                 </div>
               </div>
+
+              <div className="rounded-2xl border bg-white px-4 py-3">
+                <div className="text-xs text-gray-500">Condition</div>
+                <div className="text-sm font-semibold text-gray-900">{conditionDisplay}</div>
+              </div>
             </div>
-          ) : null}
 
-          {tab === "copies" ? (
-            <div className="rounded-2xl border bg-white p-4">
-              <div className="text-sm font-semibold text-gray-900">Your copies</div>
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_360px]">
+              {/* Left */}
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <TabButton active={tab === "overview"} onClick={() => setTab("overview")}>
+                    Overview
+                  </TabButton>
+                  <TabButton active={tab === "copies"} onClick={() => setTab("copies")}>
+                    Copies ({copies.length})
+                  </TabButton>
+                </div>
 
-              <div className="mt-3 space-y-3">
-                {copies.map((c, idx) => {
-                  const isPrimary = c.id === primary.id;
-                  const score = c.graded_score ?? null;
-                  const condition = typeof score === "number" ? `Graded: ${score}` : labelCondition(c.condition);
-
-                  return (
-                    <div key={c.id} className="rounded-2xl border p-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="text-sm font-semibold text-gray-900">
-                            Copy {idx + 1}{" "}
-                            {isPrimary ? <span className="text-xs text-gray-500">(primary)</span> : null}
-                          </div>
-                          <div className="mt-1 text-sm text-gray-700">{condition}</div>
-                        </div>
-                        <div className="text-right">
-                          <div className="text-sm font-semibold text-gray-900">{money(c.paid_price)}</div>
-                          <div className="text-xs text-gray-500">Paid</div>
-                        </div>
-                      </div>
-
-                      {c.notes?.trim() ? (
-                        <div className="mt-2 text-sm text-gray-700 whitespace-pre-wrap">{c.notes}</div>
-                      ) : null}
+                {tab === "overview" ? (
+                  <div className="rounded-2xl border bg-white p-4">
+                    <div className="text-sm font-semibold text-gray-900">Description</div>
+                    <div className="mt-2 text-sm text-gray-700 whitespace-pre-wrap">
+                      {catalog.description?.trim() ? catalog.description : "No description."}
                     </div>
-                  );
-                })}
+                  </div>
+                ) : null}
+
+                {tab === "copies" ? (
+                  <div className="rounded-2xl border bg-white p-4">
+                    <div className="text-sm font-semibold text-gray-900">Your copies</div>
+                    <div className="mt-3 space-y-3">
+                      {copies.map((c, idx) => {
+                        const isPrimary = c.id === primary.id;
+                        const score = c.graded_score ?? null;
+                        const condition =
+                          typeof score === "number" ? `Graded: ${score}` : labelCondition(c.condition);
+
+                        return (
+                          <div key={c.id} className="rounded-2xl border p-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="text-sm font-semibold text-gray-900">
+                                  Copy {idx + 1}{" "}
+                                  {isPrimary ? (
+                                    <span className="text-xs text-gray-500">(primary)</span>
+                                  ) : null}
+                                </div>
+                                <div className="mt-1 text-sm text-gray-700">{condition}</div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-sm font-semibold text-gray-900">
+                                  {money(c.paid_price)}
+                                </div>
+                                <div className="text-xs text-gray-500">Paid</div>
+                              </div>
+                            </div>
+
+                            {c.notes?.trim() ? (
+                              <div className="mt-2 text-sm text-gray-700 whitespace-pre-wrap">
+                                {c.notes}
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
               </div>
+
+              {/* Right */}
+              <aside className="space-y-4 lg:sticky lg:top-6 lg:self-start">
+                <div className="rounded-2xl border bg-white p-4">
+                  <div className="text-sm font-semibold text-gray-900">Ownership</div>
+
+                  <div className="mt-3 space-y-3 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-gray-600">Condition</div>
+                      <div className="font-medium text-gray-900">{conditionDisplay}</div>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-gray-600">Paid</div>
+                      <div className="font-medium text-gray-900">{money(primary.paid_price)}</div>
+                    </div>
+                  </div>
+
+                  {primary.notes?.trim() ? (
+                    <>
+                      <div className="mt-4 text-sm font-semibold text-gray-900">Notes</div>
+                      <div className="mt-2 text-sm text-gray-700 whitespace-pre-wrap">
+                        {primary.notes}
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+              </aside>
             </div>
-          ) : null}
-        </div>
-
-        {/* Right */}
-        <aside className="space-y-4 lg:sticky lg:top-6 lg:self-start">
-          <div className="rounded-2xl border bg-white p-4">
-            <div className="text-sm font-semibold text-gray-900">Ownership</div>
-
-            <div className="mt-3 space-y-3 text-sm">
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-gray-600">Condition</div>
-                <div className="font-medium text-gray-900">{conditionDisplay}</div>
-              </div>
-
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-gray-600">Paid</div>
-                <div className="font-medium text-gray-900">{money(primary.paid_price)}</div>
-              </div>
-            </div>
-
-            {primary.notes?.trim() ? (
-              <>
-                <div className="mt-4 text-sm font-semibold text-gray-900">Notes</div>
-                <div className="mt-2 text-sm text-gray-700 whitespace-pre-wrap">{primary.notes}</div>
-              </>
-            ) : null}
-          </div>
-        </aside>
+          </>
+        )}
       </div>
     </div>
   );
