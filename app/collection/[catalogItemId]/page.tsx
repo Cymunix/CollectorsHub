@@ -150,6 +150,7 @@ async function insertItemReview(args: {
 
 // ✅ Marketplace
 async function createMarketplaceListing(args: {
+  sellerUserId: string;
   userCollectionItemId: string;
   catalogItemId: string;
   title: string;
@@ -160,6 +161,7 @@ async function createMarketplaceListing(args: {
     .from("marketplace_listings")
     .insert([
       {
+        seller_user_id: args.sellerUserId, // ✅ REQUIRED (fix for NOT NULL)
         user_collection_item_id: args.userCollectionItemId,
         catalog_item_id: args.catalogItemId,
         title: args.title,
@@ -184,7 +186,6 @@ async function saveListingMinifigs(args: { listingId: string; rows: Array<{ mini
     included_qty: r.included_qty,
   }));
 
-  // upsert so re-listing / re-saving doesn't duplicate
   const res = await supabase
     .from("marketplace_listing_minifigs")
     .upsert(payload, { onConflict: "listing_id,minifig_id" });
@@ -483,7 +484,14 @@ function ListForSaleModal(props: {
 
     setLoading(true);
     try {
+      const { data, error } = await supabase.auth.getUser();
+      if (error) throw new Error(error.message);
+
+      const sellerUserId = data?.user?.id;
+      if (!sellerUserId) throw new Error("You must be signed in to create a listing.");
+
       const listing = await createMarketplaceListing({
+        sellerUserId,
         userCollectionItemId,
         catalogItemId,
         title: itemName,
@@ -649,7 +657,6 @@ export default function CollectionItemPage() {
 
   const [tab, setTab] = useState<TabKey>("overview");
 
-  // listing modal state
   const [listOpen, setListOpen] = useState(false);
   const [listCopy, setListCopy] = useState<CollectionItemRow | null>(null);
 
