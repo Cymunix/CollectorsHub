@@ -9,7 +9,7 @@ import Header from "@/components/Header";
 import SecondaryNav from "@/components/SecondaryNav";
 
 // ✅ your detailed description component
-import ItemDescription from "@/components/catalog/ItemDescription";
+import ItemDescription from "../../catalog/[id]/blocks/item_description";
 
 type CollectionItemRow = {
   id: string;
@@ -379,3 +379,4 @@ export default function CollectionItemPage() {
     </div>
   );
 }
+
