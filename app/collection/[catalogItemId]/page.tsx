@@ -5,9 +5,11 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
-// These are in /components/collection per your tree screenshot
 import Header from "@/components/Header";
 import SecondaryNav from "@/components/SecondaryNav";
+
+// ✅ your detailed description component
+import ItemDescription from "@/components/catalog/ItemDescription";
 
 type CollectionItemRow = {
   id: string;
@@ -27,6 +29,12 @@ type CatalogItemRow = {
   description?: string | null;
   release_year?: number | null;
   set_number?: string | null;
+
+  // may exist in your schema
+  category_id?: string | null;
+
+  // join payload if relationship exists
+  categories?: { name?: string | null } | null;
 };
 
 type TabKey = "overview" | "copies";
@@ -71,6 +79,35 @@ function TabButton({
   );
 }
 
+async function fetchIsAdmin(userId: string): Promise<boolean> {
+  // Best-effort: try likely profile tables/columns without hard failing.
+  // If your project uses a different table/column, swap it here.
+  try {
+    // 1) user_profiles.role
+    const { data, error } = await supabase
+      .from("user_profiles")
+      .select("role")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (!error && data?.role) return String(data.role).toLowerCase() === "admin";
+  } catch {}
+
+  try {
+    // 2) profiles.role
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (!error && data?.role) return String(data.role).toLowerCase() === "admin";
+  } catch {}
+
+  // default safe
+  return false;
+}
+
 export default function CollectionItemPage() {
   const params = useParams();
   const router = useRouter();
@@ -84,6 +121,8 @@ export default function CollectionItemPage() {
   const [catalog, setCatalog] = useState<CatalogItemRow | null>(null);
 
   const [tab, setTab] = useState<TabKey>("overview");
+
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,6 +143,7 @@ export default function CollectionItemPage() {
           error: userErr,
         } = await supabase.auth.getUser();
         if (userErr) throw userErr;
+
         if (!user) {
           if (!cancelled) {
             setErr("You must be signed in to view this item.");
@@ -112,13 +152,19 @@ export default function CollectionItemPage() {
           return;
         }
 
+        // admin check (best effort, safe default false)
+        const admin = await fetchIsAdmin(user.id);
+
+        // ✅ Fetch catalog item + category name (if relationship exists)
+        // If your FK relationship is not named "categories", change it to whatever Supabase generated.
         const { data: catRow, error: catErr } = await supabase
           .from("catalog_items")
-          .select("*")
+          .select("id,name,kind,description,release_year,set_number,category_id,categories(name)")
           .eq("id", catalogItemId)
           .maybeSingle();
 
         if (catErr) throw catErr;
+
         if (!catRow) {
           if (!cancelled) {
             setErr("Catalog item not found.");
@@ -146,7 +192,8 @@ export default function CollectionItemPage() {
         }
 
         if (!cancelled) {
-          setCatalog(catRow as CatalogItemRow);
+          setIsAdmin(admin);
+          setCatalog(catRow as any);
           setCopies(rows);
           setPrimary(rows[0]);
           setLoading(false);
@@ -167,6 +214,11 @@ export default function CollectionItemPage() {
 
   const title = catalog?.name ?? "Collection item";
   const kind = catalog?.kind ?? null;
+
+  const categoryName = useMemo(() => {
+    const n = (catalog as any)?.categories?.name ?? null;
+    return typeof n === "string" ? n : null;
+  }, [catalog]);
 
   const conditionDisplay = useMemo(() => {
     const score = primary?.graded_score ?? null;
@@ -242,12 +294,12 @@ export default function CollectionItemPage() {
                 </div>
 
                 {tab === "overview" ? (
-                  <div className="rounded-2xl border bg-white p-4">
-                    <div className="text-sm font-semibold text-gray-900">Description</div>
-                    <div className="mt-2 text-sm text-gray-700 whitespace-pre-wrap">
-                      {catalog.description?.trim() ? catalog.description : "No description."}
-                    </div>
-                  </div>
+                  // ✅ Replace the dumb “Description” block with your proper component
+                  <ItemDescription
+                    catalogItemId={catalog.id}
+                    isAdmin={isAdmin}
+                    categoryName={categoryName}
+                  />
                 ) : null}
 
                 {tab === "copies" ? (
@@ -327,4 +379,3 @@ export default function CollectionItemPage() {
     </div>
   );
 }
-
