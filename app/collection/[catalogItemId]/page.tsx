@@ -148,7 +148,7 @@ async function insertItemReview(args: {
   if (res.error) throw res.error;
 }
 
-// ✅ Marketplace
+// ✅ Marketplace (FIXED: user_id + seller_user_id are both NOT NULL in your schema)
 async function createMarketplaceListing(args: {
   sellerUserId: string;
   userCollectionItemId: string;
@@ -161,7 +161,10 @@ async function createMarketplaceListing(args: {
     .from("marketplace_listings")
     .insert([
       {
-        seller_user_id: args.sellerUserId, // ✅ REQUIRED (fix for NOT NULL)
+        // ✅ REQUIRED BY YOUR DB
+        seller_user_id: args.sellerUserId,
+        user_id: args.sellerUserId,
+
         user_collection_item_id: args.userCollectionItemId,
         catalog_item_id: args.catalogItemId,
         title: args.title,
