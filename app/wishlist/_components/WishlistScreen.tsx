@@ -36,7 +36,6 @@ type CatalogCard = {
   version: string | null;
   created_at: string | null;
 
-  // dynamic filter keys
   bb_theme_id?: string | null;
   bb_subtheme_id?: string | null;
 
@@ -342,6 +341,7 @@ export default function WishlistScreen({ onRequireAuth }: Props) {
 
       const itemRows = (itemsRes.data ?? []) as any[];
 
+      // IMPORTANT: if this fails (RLS / permissions), surface it instead of silently failing.
       const photosRes = await supabase
         .from("catalog_item_photos")
         .select("catalog_item_id,image_url,is_primary,sort_order")
@@ -350,15 +350,15 @@ export default function WishlistScreen({ onRequireAuth }: Props) {
         .order("sort_order", { ascending: true });
 
       if (photosRes.error) {
-        console.warn("Skipping catalog_item_photos:", photosRes.error.message);
+        // This is the likely reason you see no images.
+        throw new Error(`Failed to load photos: ${photosRes.error.message}`);
       }
 
       const photoMap = new Map<string, string>();
       for (const p of photosRes.data ?? []) {
         const cid = (p as any).catalog_item_id as string;
-        if (!photoMap.has(cid) && (p as any).image_url) {
-          photoMap.set(cid, (p as any).image_url as string);
-        }
+        const url = (p as any).image_url as string | null;
+        if (!photoMap.has(cid) && url) photoMap.set(cid, url);
       }
 
       const catNameMap = new Map<string, string>();
@@ -373,16 +373,38 @@ export default function WishlistScreen({ onRequireAuth }: Props) {
         return (res.data ?? []) as any[];
       };
 
-      const [bbDetails, tradingDetails, sportsDetails, musicDetails, toyDetails, gameDetails, comicDetails] =
-        await Promise.all([
-          safeSelect("catalog_building_blocks", "catalog_item_id,theme_id,subtheme_id,bb_themes(name),bb_subthemes(name)"),
-          safeSelect("catalog_trading_cards", "catalog_item_id,manufacturer_id,set_id,card_type_id,card_manufacturers(name),card_sets(name),card_types(name)"),
-          safeSelect("catalog_sports_cards", "catalog_item_id,manufacturer_id,set_id,card_type_id,card_manufacturers(name),card_sets(name),card_types(name)"),
-          safeSelect("catalog_music", "catalog_item_id,artist_id,music_artists(name)"),
-          safeSelect("catalog_toys", "catalog_item_id,manufacturer_id,brand_id,line_id,toy_manufacturers(name),toy_brands(name),toy_lines(name)"),
-          safeSelect("catalog_games", "catalog_item_id,platform_id,game_platforms(name)"),
-          safeSelect("catalog_comics", "catalog_item_id,publisher_id,series,issue_number,comic_publishers(name)"),
-        ]);
+      const [
+        bbDetails,
+        tradingDetails,
+        sportsDetails,
+        musicDetails,
+        toyDetails,
+        gameDetails,
+        comicDetails,
+      ] = await Promise.all([
+        safeSelect(
+          "catalog_building_blocks",
+          "catalog_item_id,theme_id,subtheme_id,bb_themes(name),bb_subthemes(name)"
+        ),
+        safeSelect(
+          "catalog_trading_cards",
+          "catalog_item_id,manufacturer_id,set_id,card_type_id,card_manufacturers(name),card_sets(name),card_types(name)"
+        ),
+        safeSelect(
+          "catalog_sports_cards",
+          "catalog_item_id,manufacturer_id,set_id,card_type_id,card_manufacturers(name),card_sets(name),card_types(name)"
+        ),
+        safeSelect("catalog_music", "catalog_item_id,artist_id,music_artists(name)"),
+        safeSelect(
+          "catalog_toys",
+          "catalog_item_id,manufacturer_id,brand_id,line_id,toy_manufacturers(name),toy_brands(name),toy_lines(name)"
+        ),
+        safeSelect("catalog_games", "catalog_item_id,platform_id,game_platforms(name)"),
+        safeSelect(
+          "catalog_comics",
+          "catalog_item_id,publisher_id,series,issue_number,comic_publishers(name)"
+        ),
+      ]);
 
       const bbMap = new Map<string, any>();
       bbDetails.forEach((d) => bbMap.set(d.catalog_item_id, d));
@@ -678,199 +700,515 @@ export default function WishlistScreen({ onRequireAuth }: Props) {
 
   return (
     <div className="w-full bg-[#F4F7FD] text-[#0F172A]">
-      <div className="px-0 py-0">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h1 className="text-xl font-semibold">Wishlist</h1>
-            <p className="text-xs text-gray-500">Everything you’ve saved for later.</p>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => isSavedTab && loadWishlist()}
-              className="rounded-full border bg-white px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-              disabled={loading || !isSavedTab}
-              title={!isSavedTab ? "Only applies to Saved tab for now" : "Refresh wishlist"}
-            >
-              Refresh
-            </button>
-          </div>
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h1 className="text-xl font-semibold">Wishlist</h1>
+          <p className="text-xs text-gray-500">Everything you’ve saved for later.</p>
         </div>
 
-        <div className="mb-5 flex flex-wrap items-center gap-2">
-          <TabButton active={activeTab === "saved"} label="Saved" onClick={() => setActiveTab("saved")} />
-          <TabButton active={activeTab === "alerts"} label="Alerts" onClick={() => setActiveTab("alerts")} />
-          <TabButton active={activeTab === "insights"} label="Insights" onClick={() => setActiveTab("insights")} />
-          <TabButton active={activeTab === "suggestions"} label="Suggestions" onClick={() => setActiveTab("suggestions")} />
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => isSavedTab && loadWishlist()}
+            className="rounded-full border bg-white px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            disabled={loading || !isSavedTab}
+            title={!isSavedTab ? "Only applies to Saved tab for now" : "Refresh wishlist"}
+          >
+            Refresh
+          </button>
         </div>
+      </div>
 
-        {activeTab !== "saved" ? (
-          <div className="grid grid-cols-12 gap-6">
-            <section className="col-span-12">
-              {activeTab === "alerts" ? (
-                <ComingSoonPanel
-                  title="Wishlist Alerts"
-                  subtitle="Get notified when wishlist items go on sale, drop in price, or become available."
-                />
-              ) : activeTab === "insights" ? (
-                <ComingSoonPanel
-                  title="Wishlist Insights"
-                  subtitle="See trends, movement, and value changes for the items you’re watching."
-                />
-              ) : (
-                <ComingSoonPanel
-                  title="Suggestions"
-                  subtitle="Recommended items based on your collection and wishlist—built to help complete sets, themes, and franchises."
-                />
-              )}
-            </section>
-          </div>
-        ) : (
-          <div className="grid grid-cols-12 gap-6">
-            <aside className="col-span-12 md:col-span-3 md:sticky md:top-28 self-start">
-              {/* filters unchanged */}
-              <div className="rounded-2xl border bg-white p-4 shadow-sm max-h-[calc(100vh-8rem)] overflow-y-auto">
-                {/* ... keep your filter JSX exactly as-is ... */}
-                {/* NOTE: I’m leaving the filter JSX out here to avoid duplicating 500 lines.
-                    Move it from your current page.tsx into this exact spot unchanged. */}
-                <div className="text-xs text-gray-500">
-                  Paste your existing Filters JSX block here (unchanged).
-                </div>
+      <div className="mb-5 flex flex-wrap items-center gap-2">
+        <TabButton active={activeTab === "saved"} label="Saved" onClick={() => setActiveTab("saved")} />
+        <TabButton active={activeTab === "alerts"} label="Alerts" onClick={() => setActiveTab("alerts")} />
+        <TabButton active={activeTab === "insights"} label="Insights" onClick={() => setActiveTab("insights")} />
+        <TabButton active={activeTab === "suggestions"} label="Suggestions" onClick={() => setActiveTab("suggestions")} />
+      </div>
+
+      {activeTab !== "saved" ? (
+        <div className="grid grid-cols-12 gap-6">
+          <section className="col-span-12">
+            {activeTab === "alerts" ? (
+              <ComingSoonPanel
+                title="Wishlist Alerts"
+                subtitle="Get notified when wishlist items go on sale, drop in price, or become available."
+              />
+            ) : activeTab === "insights" ? (
+              <ComingSoonPanel
+                title="Wishlist Insights"
+                subtitle="See trends, movement, and value changes for the items you’re watching."
+              />
+            ) : (
+              <ComingSoonPanel
+                title="Suggestions"
+                subtitle="Recommended items based on your collection and wishlist—built to help complete sets, themes, and franchises."
+              />
+            )}
+          </section>
+        </div>
+      ) : (
+        <div className="grid grid-cols-12 gap-6">
+          {/* Filters */}
+          <aside className="col-span-12 md:col-span-3 md:sticky md:top-28 self-start">
+            <div className="rounded-2xl border bg-white p-4 shadow-sm max-h-[calc(100vh-8rem)] overflow-y-auto">
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="text-sm font-semibold">Filters</h2>
+                <button type="button" onClick={clearFilters} className="text-[11px] text-blue-600 hover:underline">
+                  Clear
+                </button>
               </div>
-            </aside>
 
-            <section className="col-span-12 md:col-span-9">
-              <div className="rounded-2xl border bg-white p-4 shadow-sm">
-                {loading ? (
-                  <p className="text-sm text-gray-500">Loading wishlist…</p>
-                ) : loadError ? (
-                  <p className="text-sm text-red-600">{loadError}</p>
-                ) : (
-                  <>
-                    <div className="flex items-center justify-between mb-3">
-                      <p className="text-xs text-gray-500">
-                        {visibleCards.length === 0 ? (
-                          <>
-                            Showing <span className="font-semibold text-gray-700">0</span> items
-                          </>
-                        ) : (
-                          <>
-                            Showing{" "}
-                            <span className="font-semibold text-gray-700">
-                              {rangeStart}-{rangeEnd}
-                            </span>{" "}
-                            of <span className="font-semibold text-gray-700">{visibleCards.length}</span>
-                          </>
-                        )}
-                        {urlSearch ? (
-                          <>
-                            {" "}
-                            for search <span className="font-semibold">“{urlSearch}”</span>
-                          </>
-                        ) : null}
-                      </p>
+              {metaLoading && <p className="text-[11px] text-gray-500">Loading filters…</p>}
+              {metaError && <p className="text-[11px] text-red-600">{metaError}</p>}
 
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => loadWishlist()}
-                          className="rounded-full border bg-white px-3 py-1.5 text-[11px] text-gray-700 hover:bg-gray-50"
-                          disabled={loading}
-                        >
-                          Refresh
-                        </button>
-                      </div>
+              <div className="mt-3 space-y-3 text-xs">
+                <div className="space-y-1">
+                  <label className="font-medium">Type</label>
+                  <select
+                    value={selectedKind}
+                    onChange={(e) => setSelectedKind(e.target.value as any)}
+                    className="w-full rounded-xl border bg-white px-3 py-2"
+                  >
+                    <option value="all">All</option>
+                    <option value="building_blocks">Building Blocks</option>
+                    <option value="toy">Toys</option>
+                    <option value="gaming">Gaming</option>
+                    <option value="music">Music</option>
+                    <option value="comic">Comics</option>
+                    <option value="trading_card">Trading Cards</option>
+                    <option value="sports_card">Sports Cards</option>
+                    <option value="movie">Movies</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-medium">Category</label>
+                  <select
+                    value={categoryId}
+                    onChange={(e) => setCategoryId(e.target.value)}
+                    className="w-full rounded-xl border bg-white px-3 py-2"
+                  >
+                    <option value="">All</option>
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-medium">Subcategory</label>
+                  <select
+                    value={subcategoryId}
+                    onChange={(e) => setSubcategoryId(e.target.value)}
+                    className="w-full rounded-xl border bg-white px-3 py-2"
+                    disabled={!categoryId}
+                  >
+                    <option value="">{categoryId ? "All" : "Select category first"}</option>
+                    {subcategories
+                      .filter((s) => !categoryId || s.category_id === categoryId)
+                      .map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-medium">Franchise</label>
+                  <select
+                    value={franchiseId}
+                    onChange={(e) => setFranchiseId(e.target.value)}
+                    className="w-full rounded-xl border bg-white px-3 py-2"
+                  >
+                    <option value="">All</option>
+                    {franchises.map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <label className="font-medium">Min Year</label>
+                    <input
+                      value={minYear}
+                      onChange={(e) => setMinYear(e.target.value)}
+                      className="w-full rounded-xl border bg-white px-3 py-2"
+                      inputMode="numeric"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="font-medium">Max Year</label>
+                    <input
+                      value={maxYear}
+                      onChange={(e) => setMaxYear(e.target.value)}
+                      className="w-full rounded-xl border bg-white px-3 py-2"
+                      inputMode="numeric"
+                    />
+                  </div>
+                </div>
+
+                {selectedKind === "building_blocks" && (
+                  <div className="pt-2 border-t space-y-3">
+                    <p className="text-[11px] text-gray-500">Building Blocks filters</p>
+
+                    <div className="space-y-1">
+                      <label className="font-medium">Theme</label>
+                      <select
+                        value={bbThemeId}
+                        onChange={(e) => setBbThemeId(e.target.value)}
+                        className="w-full rounded-xl border bg-white px-3 py-2"
+                      >
+                        <option value="">All</option>
+                        {bbThemes.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name}
+                          </option>
+                        ))}
+                      </select>
                     </div>
 
-                    {visibleCards.length === 0 ? (
-                      <div className="rounded-xl border border-dashed p-8 text-center text-sm text-gray-500">
-                        Your wishlist is empty (or no items match your filters).
-                      </div>
-                    ) : (
-                      <>
-                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                          {pagedCards.map((it) => (
-                            <div
-                              key={it.id}
-                              className="group rounded-2xl border border-[#E5E9F2] bg-white shadow-sm overflow-hidden hover:shadow-md transition"
-                            >
-                              <button
-                                type="button"
-                                onClick={() => router.push(`/catalog/${it.id}`)}
-                                className="w-full text-left"
-                              >
-                                <div className="aspect-[4/3] bg-[#EEF2F7] flex items-center justify-center">
-                                  {it.image_url ? (
-                                    // eslint-disable-next-line @next/next/no-img-element
-                                    <img src={it.image_url} alt={it.name} className="h-full w-full object-cover" />
-                                  ) : (
-                                    <span className="text-xs text-gray-500">No image</span>
-                                  )}
-                                </div>
+                    <div className="space-y-1">
+                      <label className="font-medium">Subtheme</label>
+                      <select
+                        value={bbSubthemeId}
+                        onChange={(e) => setBbSubthemeId(e.target.value)}
+                        className="w-full rounded-xl border bg-white px-3 py-2"
+                      >
+                        <option value="">All</option>
+                        {bbSubthemes.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )}
 
-                                <div className="p-3">
-                                  <p className="text-sm font-semibold leading-tight line-clamp-2">{it.name}</p>
-                                  <p className="mt-1 text-[11px] text-gray-500 line-clamp-2">
-                                    {it.secondary || "—"}
-                                  </p>
+                {selectedKind === "toy" && (
+                  <div className="pt-2 border-t space-y-3">
+                    <p className="text-[11px] text-gray-500">Toy filters</p>
 
-                                  <div className="mt-2 flex items-center justify-between">
-                                    <span className="text-[10px] text-gray-400">
-                                      {it.release_year ? it.release_year : ""}
-                                    </span>
-                                    <span className="text-[10px] text-gray-400">{it.kind.replace("_", " ")}</span>
-                                  </div>
-                                </div>
-                              </button>
+                    <div className="space-y-1">
+                      <label className="font-medium">Manufacturer</label>
+                      <select
+                        value={toyManufacturerId}
+                        onChange={(e) => setToyManufacturerId(e.target.value)}
+                        className="w-full rounded-xl border bg-white px-3 py-2"
+                      >
+                        <option value="">All</option>
+                        {toyManufacturers.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
 
-                              <div className="px-3 pb-3">
-                                <button
-                                  type="button"
-                                  onClick={() => removeFromWishlist(it.id)}
-                                  className="w-full rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-700 hover:bg-red-100"
-                                >
-                                  Remove
-                                </button>
-                              </div>
-                            </div>
+                    <div className="space-y-1">
+                      <label className="font-medium">Brand</label>
+                      <select
+                        value={toyBrandId}
+                        onChange={(e) => setToyBrandId(e.target.value)}
+                        className="w-full rounded-xl border bg-white px-3 py-2"
+                        disabled={!toyManufacturerId}
+                      >
+                        <option value="">{toyManufacturerId ? "All" : "Select manufacturer first"}</option>
+                        {toyBrands
+                          .filter((b) => !toyManufacturerId || b.manufacturer_id === toyManufacturerId)
+                          .map((b) => (
+                            <option key={b.id} value={b.id}>
+                              {b.name}
+                            </option>
                           ))}
-                        </div>
+                      </select>
+                    </div>
 
-                        <div className="mt-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                          <p className="text-[11px] text-gray-500">
-                            Page <span className="font-semibold text-gray-700">{safePage}</span> of{" "}
-                            <span className="font-semibold text-gray-700">{totalPages}</span>
-                          </p>
+                    <div className="space-y-1">
+                      <label className="font-medium">Line</label>
+                      <select
+                        value={toyLineId}
+                        onChange={(e) => setToyLineId(e.target.value)}
+                        className="w-full rounded-xl border bg-white px-3 py-2"
+                        disabled={!toyBrandId}
+                      >
+                        <option value="">{toyBrandId ? "All" : "Select brand first"}</option>
+                        {toyLines
+                          .filter((l) => !toyBrandId || l.brand_id === toyBrandId)
+                          .map((l) => (
+                            <option key={l.id} value={l.id}>
+                              {l.name}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                  </div>
+                )}
 
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setPage((p) => Math.max(1, p - 1))}
-                              disabled={safePage === 1}
-                              className="rounded-full border bg-white px-3 py-1.5 text-[11px] text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                            >
-                              Prev
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                              disabled={safePage === totalPages}
-                              className="rounded-full border bg-white px-3 py-1.5 text-[11px] text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                            >
-                              Next
-                            </button>
-                          </div>
-                        </div>
-                      </>
-                    )}
-                  </>
+                {(selectedKind === "trading_card" || selectedKind === "sports_card") && (
+                  <div className="pt-2 border-t space-y-3">
+                    <p className="text-[11px] text-gray-500">Card filters</p>
+
+                    <div className="space-y-1">
+                      <label className="font-medium">Manufacturer</label>
+                      <select
+                        value={cardManufacturerId}
+                        onChange={(e) => setCardManufacturerId(e.target.value)}
+                        className="w-full rounded-xl border bg-white px-3 py-2"
+                      >
+                        <option value="">All</option>
+                        {cardManufacturers.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="font-medium">Set</label>
+                      <select
+                        value={cardSetId}
+                        onChange={(e) => setCardSetId(e.target.value)}
+                        className="w-full rounded-xl border bg-white px-3 py-2"
+                        disabled={!cardManufacturerId}
+                      >
+                        <option value="">{cardManufacturerId ? "All" : "Select manufacturer first"}</option>
+                        {cardSets
+                          .filter((s) => !cardManufacturerId || s.manufacturer_id === cardManufacturerId)
+                          .map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.name}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="font-medium">Card Type</label>
+                      <select
+                        value={cardTypeId}
+                        onChange={(e) => setCardTypeId(e.target.value)}
+                        className="w-full rounded-xl border bg-white px-3 py-2"
+                      >
+                        <option value="">All</option>
+                        {cardTypes.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )}
+
+                {selectedKind === "music" && (
+                  <div className="pt-2 border-t space-y-3">
+                    <p className="text-[11px] text-gray-500">Music filters</p>
+                    <div className="space-y-1">
+                      <label className="font-medium">Artist</label>
+                      <select
+                        value={musicArtistId}
+                        onChange={(e) => setMusicArtistId(e.target.value)}
+                        className="w-full rounded-xl border bg-white px-3 py-2"
+                      >
+                        <option value="">All</option>
+                        {musicArtists.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )}
+
+                {selectedKind === "gaming" && (
+                  <div className="pt-2 border-t space-y-3">
+                    <p className="text-[11px] text-gray-500">Gaming filters</p>
+                    <div className="space-y-1">
+                      <label className="font-medium">Platform</label>
+                      <select
+                        value={gamePlatformId}
+                        onChange={(e) => setGamePlatformId(e.target.value)}
+                        className="w-full rounded-xl border bg-white px-3 py-2"
+                      >
+                        <option value="">All</option>
+                        {gamePlatforms.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )}
+
+                {selectedKind === "comic" && (
+                  <div className="pt-2 border-t space-y-3">
+                    <p className="text-[11px] text-gray-500">Comic filters</p>
+                    <div className="space-y-1">
+                      <label className="font-medium">Publisher</label>
+                      <select
+                        value={comicPublisherId}
+                        onChange={(e) => setComicPublisherId(e.target.value)}
+                        className="w-full rounded-xl border bg-white px-3 py-2"
+                      >
+                        <option value="">All</option>
+                        {comicPublishers.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
                 )}
               </div>
-            </section>
-          </div>
-        )}
-      </div>
+            </div>
+          </aside>
+
+          {/* Grid */}
+          <section className="col-span-12 md:col-span-9">
+            <div className="rounded-2xl border bg-white p-4 shadow-sm">
+              {loading ? (
+                <p className="text-sm text-gray-500">Loading wishlist…</p>
+              ) : loadError ? (
+                <p className="text-sm text-red-600">{loadError}</p>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-xs text-gray-500">
+                      {visibleCards.length === 0 ? (
+                        <>
+                          Showing <span className="font-semibold text-gray-700">0</span> items
+                        </>
+                      ) : (
+                        <>
+                          Showing{" "}
+                          <span className="font-semibold text-gray-700">
+                            {rangeStart}-{rangeEnd}
+                          </span>{" "}
+                          of <span className="font-semibold text-gray-700">{visibleCards.length}</span>
+                        </>
+                      )}
+                      {urlSearch ? (
+                        <>
+                          {" "}
+                          for search <span className="font-semibold">“{urlSearch}”</span>
+                        </>
+                      ) : null}
+                    </p>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => loadWishlist()}
+                        className="rounded-full border bg-white px-3 py-1.5 text-[11px] text-gray-700 hover:bg-gray-50"
+                        disabled={loading}
+                      >
+                        Refresh
+                      </button>
+                    </div>
+                  </div>
+
+                  {visibleCards.length === 0 ? (
+                    <div className="rounded-xl border border-dashed p-8 text-center text-sm text-gray-500">
+                      Your wishlist is empty (or no items match your filters).
+                    </div>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                        {pagedCards.map((it) => (
+                          <div
+                            key={it.id}
+                            className="group rounded-2xl border border-[#E5E9F2] bg-white shadow-sm overflow-hidden hover:shadow-md transition"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => router.push(`/catalog/${it.id}`)}
+                              className="w-full text-left"
+                            >
+                              <div className="aspect-[4/3] bg-[#EEF2F7] flex items-center justify-center">
+                                {it.image_url ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img
+                                    src={it.image_url}
+                                    alt={it.name}
+                                    className="h-full w-full object-cover"
+                                    loading="lazy"
+                                  />
+                                ) : (
+                                  <span className="text-xs text-gray-500">No image</span>
+                                )}
+                              </div>
+
+                              <div className="p-3">
+                                <p className="text-sm font-semibold leading-tight line-clamp-2">{it.name}</p>
+                                <p className="mt-1 text-[11px] text-gray-500 line-clamp-2">{it.secondary || "—"}</p>
+
+                                <div className="mt-2 flex items-center justify-between">
+                                  <span className="text-[10px] text-gray-400">
+                                    {it.release_year ? it.release_year : ""}
+                                  </span>
+                                  <span className="text-[10px] text-gray-400">{it.kind.replace("_", " ")}</span>
+                                </div>
+                              </div>
+                            </button>
+
+                            <div className="px-3 pb-3">
+                              <button
+                                type="button"
+                                onClick={() => removeFromWishlist(it.id)}
+                                className="w-full rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-700 hover:bg-red-100"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="mt-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                        <p className="text-[11px] text-gray-500">
+                          Page <span className="font-semibold text-gray-700">{safePage}</span> of{" "}
+                          <span className="font-semibold text-gray-700">{totalPages}</span>
+                        </p>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setPage((p) => Math.max(1, p - 1))}
+                            disabled={safePage === 1}
+                            className="rounded-full border bg-white px-3 py-1.5 text-[11px] text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                          >
+                            Prev
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                            disabled={safePage === totalPages}
+                            className="rounded-full border bg-white px-3 py-1.5 text-[11px] text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                          >
+                            Next
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
